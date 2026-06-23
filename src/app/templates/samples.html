@@ -7,7 +7,11 @@
   <div class="control-main">
     <label class="stepper-field"><span>本次模拟上载</span><input id="sampleCount" type="number" min="1" max="16" value="8"><em>张</em></label>
     <button class="btn btn-primary btn-xl" onclick="scanSamples()">开始扫描样本区</button>
+    {% if user and user.role.value == 'admin' %}
     <button class="btn btn-soft btn-xl" onclick="location.href='/configure'">下一步：实验配置</button>
+    {% else %}
+    <button class="btn btn-soft btn-xl" onclick="location.href='/run'">下一步：运行监控</button>
+    {% endif %}
   </div>
   <div class="scan-hint"><b>扫描路径</b><span>通道1 → 通道2 → 通道3 → 通道4，单通道最多4张。</span></div>
 </section>

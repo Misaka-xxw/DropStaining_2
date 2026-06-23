@@ -7,7 +7,11 @@
   <article class="workflow-step {{ 'done' if state.initialized else 'active' }}" onclick="initializeSystem()"><i>01</i><b>仪器初始化</b><span>回零 / 制冷 / 液位 / 洗针</span></article>
   <article class="workflow-step {{ 'done' if slide_count else '' }}" onclick="location.href='/samples'"><i>02</i><b>样本扫描</b><span>4 通道 × 4 玻片</span></article>
   <article class="workflow-step {{ 'done' if state.reagents else '' }}" onclick="location.href='/reagents'"><i>03</i><b>试剂识别</b><span>5 列 × 8 瓶位</span></article>
+  {% if user and user.role.value == 'admin' %}
   <article class="workflow-step" onclick="location.href='/configure'"><i>04</i><b>实验配置</b><span>脚本 / 一抗 / 温度</span></article>
+  {% else %}
+  <article class="workflow-step" onclick="location.href='/run'"><i>04</i><b>任务确认</b><span>按已发布流程执行</span></article>
+  {% endif %}
   <article class="workflow-step {{ 'active' if state.status.value == 'running' else '' }}" onclick="location.href='/run'"><i>05</i><b>开始运行</b><span>暂停 / 继续 / 终止</span></article>
 </section>
 
@@ -78,7 +82,7 @@
 </section>
 
 <section class="modern-card">
-  <div class="section-title"><h2>最近日志</h2><button class="btn btn-soft" onclick="location.href='/admin'">查看后台记录</button></div>
+  <div class="section-title"><h2>最近日志</h2>{% if user and user.role.value == 'admin' %}<button class="btn btn-soft" onclick="location.href='/admin'">查看后台记录</button>{% endif %}</div>
   <div class="timeline">
     {% for item in state.logs[:8] %}<div><i></i><span>{{ item }}</span></div>{% else %}<div><i></i><span>暂无日志</span></div>{% endfor %}
   </div>

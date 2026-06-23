@@ -13,8 +13,10 @@
     ('/dashboard','主控台','总览','⌂'),
     ('/samples','样本','扫码','▦'),
     ('/reagents','试剂','识别','◉'),
+    ('/run','运行','监控','▶')
+  ] %}
+  {% set admin_nav_items = [
     ('/configure','配置','脚本','⚙'),
-    ('/run','运行','监控','▶'),
     ('/engineer','调试','工程','⌁'),
     ('/admin','管理','后台','☷')
   ] %}
@@ -33,6 +35,13 @@
           <i>{{ icon }}</i><span>{{ name }}</span><small>{{ sub }}</small>
         </a>
         {% endfor %}
+        {% if user and user.role.value == 'admin' %}
+          {% for href,name,sub,icon in admin_nav_items %}
+          <a href="{{ href }}" class="nav-item" data-href="{{ href }}">
+            <i>{{ icon }}</i><span>{{ name }}</span><small>{{ sub }}</small>
+          </a>
+          {% endfor %}
+        {% endif %}
       </nav>
       <div class="operator-card">
         <div class="avatar">{{ (user.display_name if user else '访')[0] }}</div>

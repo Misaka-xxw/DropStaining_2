@@ -11,7 +11,7 @@
     <section class="hero-panel glass-panel">
       <div class="machine-badge">GBS · IHC · V1</div>
       <h1>全自动冰冻切片染色机</h1>
-      <p>13.3 寸触屏优先设计，覆盖样本扫描、试剂识别、脚本配置、运行监控和工程调试。</p>
+      <p>13.3 寸触屏优先设计，覆盖样本扫描、试剂识别、运行监控，以及管理员配置/调试。</p>
       <div class="hero-device">
         <div class="device-top">
           <span></span><span></span><span></span><span></span>
@@ -37,9 +37,8 @@
         <div class="brand-orb big">郭</div>
         <div><h2>用户登录</h2><p>选择角色后进入对应工作台</p></div>
       </div>
-      <div class="role-picker" role="radiogroup">
+      <div class="role-picker two-roles" role="radiogroup">
         <label class="role-tile active"><input type="radio" name="role" value="operator" checked><i>👩‍🔬</i><b>实验员</b><span>实验操作</span></label>
-        <label class="role-tile"><input type="radio" name="role" value="engineer"><i>🛠</i><b>工程师</b><span>设备调试</span></label>
         <label class="role-tile"><input type="radio" name="role" value="admin"><i>🔐</i><b>管理员</b><span>用户管理</span></label>
       </div>
       <label class="field-label">用户名<input id="username" class="input input-xl" value="operator" placeholder="用户名"></label>
@@ -47,10 +46,9 @@
       <button class="btn btn-primary btn-xl full" onclick="login()">登录并初始化连接</button>
       <div class="quick-accounts">
         <button onclick="fillAccount('operator')">实验员演示</button>
-        <button onclick="fillAccount('engineer')">工程师演示</button>
         <button onclick="fillAccount('admin')">管理员演示</button>
       </div>
-      <p class="hint center">演示账号：operator / engineer / admin，密码均为 123456</p>
+      <p class="hint center">演示账号：operator / admin，密码均为 123456</p>
     </section>
   </div>
   <div id="toast" class="toast hidden"></div>

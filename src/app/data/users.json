@@ -7,13 +7,6 @@
     "enabled": true
   },
   {
-    "username": "engineer",
-    "password": "123456",
-    "role": "engineer",
-    "display_name": "工程师",
-    "enabled": true
-  },
-  {
     "username": "admin",
     "password": "123456",
     "role": "admin",

@@ -34,6 +34,11 @@ class JsonStore:
         raw = self._load_json(self.runtime_path, None)
         if raw:
             try:
+                # V1.8 权限模型只保留 admin/operator。
+                # 若旧运行文件中残留 engineer 登录态，启动时自动清空，避免枚举解析失败。
+                active_user = raw.get("active_user")
+                if active_user and active_user.get("role") not in {Role.admin.value, Role.operator.value}:
+                    raw["active_user"] = None
                 return RuntimeState(**raw)
             except Exception:
                 pass

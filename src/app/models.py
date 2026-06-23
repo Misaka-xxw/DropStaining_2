@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 class Role(str, Enum):
     operator = "operator"
-    engineer = "engineer"
     admin = "admin"
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.models import AddSlideRequest, EngineerCommand, LoginRequest, SlideUpdate
+from app.models import AddSlideRequest, EngineerCommand, LoginRequest, SlideUpdate, Role
 from app.services.dab import calculate_dab
 from app.services.device_gateway import gateway
 from app.services.protocol_engine import engine
@@ -21,6 +21,30 @@ def page_ctx(request: Request, **extra):
     return {"request": request, "state": store.state, "user": store.state.active_user, "slide_count": len(store.all_slides()), **extra}
 
 
+def require_login_page():
+    if store.state.active_user is None:
+        return RedirectResponse("/", status_code=303)
+    return None
+
+
+def require_admin_page():
+    user = store.state.active_user
+    if user is None:
+        return RedirectResponse("/", status_code=303)
+    if user.role != Role.admin:
+        raise HTTPException(403, "仅管理员可访问")
+    return None
+
+
+def require_admin_api():
+    user = store.state.active_user
+    if user is None:
+        raise HTTPException(401, "请先登录")
+    if user.role != Role.admin:
+        raise HTTPException(403, "仅管理员可执行该操作")
+
+
+
 @router.get("/", response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates(request).TemplateResponse("login.html", page_ctx(request))
@@ -28,21 +52,33 @@ async def login_page(request: Request):
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
+    guard = require_login_page()
+    if guard:
+        return guard
     return templates(request).TemplateResponse("dashboard.html", page_ctx(request))
 
 
 @router.get("/samples", response_class=HTMLResponse)
 async def samples_page(request: Request):
+    guard = require_login_page()
+    if guard:
+        return guard
     return templates(request).TemplateResponse("samples.html", page_ctx(request))
 
 
 @router.get("/reagents", response_class=HTMLResponse)
 async def reagents_page(request: Request):
+    guard = require_login_page()
+    if guard:
+        return guard
     return templates(request).TemplateResponse("reagents.html", page_ctx(request))
 
 
 @router.get("/configure", response_class=HTMLResponse)
 async def configure_page(request: Request):
+    guard = require_admin_page()
+    if guard:
+        return guard
     return templates(request).TemplateResponse(
         "configure.html",
         page_ctx(request, protocols=engine.list_protocols(), dab=engine.dab_for_slides(store.all_slides())),
@@ -51,16 +87,25 @@ async def configure_page(request: Request):
 
 @router.get("/run", response_class=HTMLResponse)
 async def run_page(request: Request):
+    guard = require_login_page()
+    if guard:
+        return guard
     return templates(request).TemplateResponse("run.html", page_ctx(request))
 
 
 @router.get("/engineer", response_class=HTMLResponse)
 async def engineer_page(request: Request):
+    guard = require_admin_page()
+    if guard:
+        return guard
     return templates(request).TemplateResponse("engineer.html", page_ctx(request))
 
 
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
+    guard = require_admin_page()
+    if guard:
+        return guard
     return templates(request).TemplateResponse("admin.html", page_ctx(request, users=store.get_users()))
 
 
@@ -113,6 +158,7 @@ async def list_protocols():
 
 @router.post("/api/slides/configure")
 async def configure_slide(payload: SlideUpdate):
+    require_admin_api()
     try:
         return store.update_slide_config(
             slide_id=payload.slide_id,
@@ -181,6 +227,7 @@ async def add_slide(payload: AddSlideRequest):
 
 @router.post("/api/engineer/command")
 async def engineer_command(payload: EngineerCommand):
+    require_admin_api()
     result = await gateway.test_command(
         payload.module,
         payload.action,

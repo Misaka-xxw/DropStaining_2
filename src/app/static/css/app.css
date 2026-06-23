@@ -43,3 +43,8 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 /* 13.3寸横屏时顶部状态簇位于浅色区域，使用浅底深字保证可读性 */
 .status-cluster .mini-metric,.status-cluster .clock-card,.status-cluster .icon-btn{background:rgba(255,255,255,.88);border-color:rgba(219,231,245,.95);color:#0d1726;box-shadow:0 10px 28px rgba(15,23,42,.06)}
 .status-cluster .mini-metric b,.status-cluster .clock-card span{color:#0d1726}.status-cluster .mini-metric span,.status-cluster .clock-card small{color:#8aa0b7}.status-cluster .icon-btn.danger{background:#fee2e2;color:#ef4444}
+
+.role-picker.two-roles{grid-template-columns:repeat(2,1fr)}
+@media(max-width:1000px){.role-picker.two-roles{grid-template-columns:1fr}}
+
+.login-card .quick-accounts{grid-template-columns:repeat(2,1fr)}

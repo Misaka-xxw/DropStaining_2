@@ -6,7 +6,11 @@
 <section class="control-strip modern-card">
   <div class="control-main">
     <button class="btn btn-primary btn-xl" onclick="scanReagents()">开始扫描试剂架</button>
+    {% if user and user.role.value == 'admin' %}
     <button class="btn btn-soft btn-xl" onclick="location.href='/configure'">下一步：实验配置</button>
+    {% else %}
+    <button class="btn btn-soft btn-xl" onclick="location.href='/run'">下一步：运行监控</button>
+    {% endif %}
   </div>
   <div class="scan-hint"><b>当前识别</b><span>{{ state.reagents|length }} 个有效试剂位；支持运行期间更换二抗或新增试剂。</span></div>
 </section>
