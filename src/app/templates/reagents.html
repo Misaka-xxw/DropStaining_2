@@ -1,38 +1,35 @@
 {% extends "base.html" %}
-{% block crumb %}试剂识别{% endblock %}
-{% block page_title %}试剂区域扫描{% endblock %}
-{% block page_subtitle %}试剂区 5 列试剂架，每列 8 个瓶位；瓶身条码与位置条码共同确定试剂位置。{% endblock %}
+{% block crumb %}试剂扫描与管理{% endblock %}
+{% block page_title %}试剂瓶条码、列扫码、目录与库存管理{% endblock %}
+{% block page_subtitle %}5×8 试剂架，ch1-ch5 按列扫描；R1-R40 建立位置、17 位条码、批号、有效期、余量与是否当前需要的关系。{% endblock %}
 {% block content %}
 <section class="control-strip modern-card">
-  <div class="control-main">
-    <button class="btn btn-primary btn-xl" onclick="scanReagents()">开始扫描试剂架</button>
-    {% if user and user.role.value == 'admin' %}
-    <button class="btn btn-soft btn-xl" onclick="location.href='/configure'">下一步：实验配置</button>
-    {% else %}
-    <button class="btn btn-soft btn-xl" onclick="location.href='/run'">下一步：运行监控</button>
-    {% endif %}
+  <div class="control-main reagent-scan-actions">
+    <button class="btn btn-primary btn-xl" onclick="scanReagents()">扫描全部试剂架</button>
+    {% for col in range(1,6) %}<button class="btn btn-soft btn-xl" onclick="mockColumnScan({{ col }})">扫描 ch{{ col }}</button>{% endfor %}
   </div>
-  <div class="scan-hint"><b>当前识别</b><span>{{ state.reagents|length }} 个有效试剂位；支持运行期间更换二抗或新增试剂。</span></div>
+  <div class="scan-hint"><b>启动强拦截</b><span>缺失、EMPTY、INVALID、格式错误、目录未知、已过期或总余量不足均禁止启动；不提供绕过。</span></div>
 </section>
 
-<section class="split-grid wide-left">
+<section class="split-grid wide-left reagent-v18-layout">
   <article class="modern-card">
     <div class="section-title">
-      <div><h2>试剂架地图</h2><p>绿色为已识别，灰色为空位；试剂不足或缺失时自动报警。</p></div>
-      <div class="badge-soft">5列 × 8位</div>
+      <div><h2>5×8 试剂架 / R1-R40</h2><p>每次列扫码返回 EMPTY / VALID / INVALID；点击瓶位可查看解析结果与当前任务是否需要。</p></div>
+      <div class="badge-soft">{{ state.reagents|length }} 个 VALID</div>
     </div>
-    <div class="reagent-deck">
+    <div class="reagent-deck v18-reagent-deck">
       {% for col in range(1,6) %}
       <div class="reagent-rack">
-        <header><b>试剂架 {{ col }}</b><span>传感器 {{ 'ON' if col <= 5 else 'OFF' }}</span></header>
+        <header><b>ch{{ col }}</b><span>R{{ (col-1)*8+1 }}-R{{ col*8 }}</span></header>
         {% for row in range(1,9) %}
           {% set pos = 'R' ~ ((col-1)*8 + row) %}
           {% set r = (state.reagents | selectattr('position','equalto',pos) | list | first) %}
-          <div class="vial {{ 'filled' if r else 'empty' }} {{ r.reagent_type if r else '' }}">
+          {% set scan_state = 'VALID' if r else ('INVALID' if pos in ['R18','R32'] else 'EMPTY') %}
+          <button type="button" class="vial {{ 'filled' if r else 'empty' }} scan-{{ scan_state|lower }} {{ r.reagent_type if r else '' }}" onclick="showReagentDetail('{{ pos }}','{{ scan_state }}','{{ r.barcode if r else '' }}','{{ r.name if r else '无瓶/未识别' }}','{{ r.code if r else '' }}','{{ r.volume_ml if r else '' }}','{{ r.lot_no if r else '' }}','{{ r.expire_date if r else '' }}')">
             <b>{{ pos }}</b>
-            <div><span>{{ r.name if r else '未识别' }}</span><small>{{ r.code if r else 'EMPTY' }}</small></div>
+            <div><span>{{ r.name if r else scan_state }}</span><small>{{ r.code if r else '扫码状态 ' ~ scan_state }}</small></div>
             <em>{{ r.volume_ml ~ 'mL' if r else '--' }}</em>
-          </div>
+          </button>
         {% endfor %}
       </div>
       {% endfor %}
@@ -41,33 +38,54 @@
 
   <aside class="stack-panel">
     <article class="modern-card compact-card">
-      <h3>试剂分类</h3>
-      <div class="category-list">
-        <div><i class="c-common"></i><span>通用试剂</span><b>阻断/苏木素</b></div>
-        <div><i class="c-primary"></i><span>一抗试剂</span><b>多抗体并行</b></div>
-        <div><i class="c-secondary"></i><span>二抗试剂</span><b>双套上载</b></div>
-        <div><i class="c-dab"></i><span>DAB</span><b>A/B/水配制</b></div>
-        <div><i class="c-wash"></i><span>清洗液</span><b>泵控注入</b></div>
+      <h3>列扫码状态</h3>
+      <div class="column-status-grid">
+        {% for col in range(1,6) %}<div><b>ch{{ col }}</b><span>{{ '完成' if state.reagents else '待扫描' }}</span><em>R{{ (col-1)*8+1 }}-R{{ col*8 }}</em></div>{% endfor %}
       </div>
     </article>
     <article class="modern-card compact-card">
-      <h3>缺失检查</h3>
-      <div class="check-list small">
-        <div><span class="check {{ 'ok' if state.reagents else '' }}"></span>阻断剂</div>
-        <div><span class="check {{ 'ok' if state.reagents else '' }}"></span>一抗 / 二抗</div>
-        <div><span class="check {{ 'ok' if state.reagents else '' }}"></span>DAB A/B + 纯水</div>
-        <div><span class="check {{ 'ok' if state.reagents else '' }}"></span>清洗液</div>
+      <h3>库存规则</h3>
+      <div class="decision-list compact">
+        <div><b>单瓶追溯</b><span>位置、完整条码、批号、初始/剩余量、最近扫描和消耗明细。</span></div>
+        <div><b>总余量</b><span>同代码多瓶合并判断，可跨瓶补足，不同批号允许混用。</span></div>
+        <div><b>0 mL 弹窗</b><span>首版不做低余量预警，仅耗尽提示。</span></div>
+        <div><b>当前未使用</b><span>VALID 但本批未引用的试剂可保留，仅提示不参与启动计算。</span></div>
       </div>
+    </article>
+    <article class="modern-card compact-card dab-mini">
+      <h3>DAB 临时配液区</h3>
+      <div class="dab-mini-grid">{% for i in range(1,9) %}<span>M{{ i }}</span>{% endfor %}</div>
+      <p class="hint-line">2 列 × 4 行；DAB A/B 原液位在配液区下方。</p>
+      <button class="btn btn-soft full" onclick="toast('Mock：DAB 配液区清洗确认已记录')">确认清洗完成</button>
     </article>
   </aside>
 </section>
+
+<div id="reagentDetail" class="modal-mask hidden">
+  <div class="modal-card">
+    <header><h2>试剂瓶解析详情</h2><button class="icon-btn" onclick="reagentDetail.classList.add('hidden')">×</button></header>
+    <div id="reagentDetailBody" class="detail-grid"></div>
+    <footer><button class="btn btn-soft" onclick="reagentDetail.classList.add('hidden')">关闭</button><button class="btn btn-primary" onclick="toast('Mock：已请求重新扫码该位置')">重新扫码</button></footer>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
 async function scanReagents(){
   await api('/api/reagents/scan', {method:'POST'});
-  toast('试剂扫描完成');
+  toast('试剂扫描完成，已进入目录/有效期/余量校验');
   setTimeout(()=>location.reload(), 500);
+}
+function mockColumnScan(col){ toast('Mock：ch' + col + ' 列扫码完成，返回 8 个位置状态'); }
+function showReagentDetail(pos,state,barcode,name,code,volume,lot,expire){
+  const validFormat = barcode && barcode.length === 17 ? '17位格式有效' : 'Mock条码/待替换为17位Code128';
+  reagentDetailBody.innerHTML = `
+    <div><span>位置</span><b>${pos}</b></div><div><span>SCAN_STATE</span><b>${state}</b></div>
+    <div><span>完整条码</span><b>${barcode || '--'}</b><small>${validFormat}</small></div><div><span>试剂名称</span><b>${name}</b></div>
+    <div><span>试剂代码</span><b>${code || '--'}</b></div><div><span>理论剩余量</span><b>${volume ? volume + ' mL' : '--'}</b></div>
+    <div><span>批号</span><b>${lot || '--'}</b></div><div><span>有效期</span><b>${expire || '--'}</b></div>
+  `;
+  reagentDetail.classList.remove('hidden');
 }
 </script>
 {% endblock %}

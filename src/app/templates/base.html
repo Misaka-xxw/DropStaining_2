@@ -10,23 +10,25 @@
 </head>
 <body data-status="{{ state.status.value }}">
   {% set nav_items = [
-    ('/dashboard','主控台','总览','⌂'),
-    ('/samples','样本','扫码','▦'),
-    ('/reagents','试剂','识别','◉'),
-    ('/run','运行','监控','▶')
+    ('/dashboard','总览','运行','⌂'),
+    ('/samples','样本','确认','▦'),
+    ('/reagents','试剂','扫描','◉'),
+    ('/run','运行','详情','▶'),
+    ('/alerts','告警','处理','!'),
+    ('/history','历史','导出','≡')
   ] %}
   {% set admin_nav_items = [
-    ('/configure','配置','脚本','⚙'),
-    ('/engineer','调试','工程','⌁'),
-    ('/admin','管理','后台','☷')
+    ('/configure','配置','协议','⚙'),
+    ('/engineer','工程','调试','⌁'),
+    ('/admin','管理','用户','☷')
   ] %}
   <div class="app-shell">
     <aside class="side-rail">
       <div class="brand-card" onclick="location.href='/dashboard'">
-        <div class="brand-orb">郭</div>
+        <div class="brand-orb">冻</div>
         <div class="brand-copy">
-          <strong>郭博士</strong>
-          <span>Auto Stainer HMI</span>
+          <strong>冰冻切片染色机</strong>
+          <span>V2.0 基线 / Mock</span>
         </div>
       </div>
       <nav class="nav-stack" aria-label="主导航">
@@ -37,7 +39,7 @@
         {% endfor %}
         {% if user and user.role.value == 'admin' %}
           {% for href,name,sub,icon in admin_nav_items %}
-          <a href="{{ href }}" class="nav-item" data-href="{{ href }}">
+          <a href="{{ href }}" class="nav-item admin-only" data-href="{{ href }}">
             <i>{{ icon }}</i><span>{{ name }}</span><small>{{ sub }}</small>
           </a>
           {% endfor %}
@@ -47,7 +49,7 @@
         <div class="avatar">{{ (user.display_name if user else '访')[0] }}</div>
         <div>
           <strong>{{ user.display_name if user else '未登录' }}</strong>
-          <span>{{ user.role.value if user else 'guest' }}</span>
+          <span>{{ '管理员 / 受控工程' if user and user.role.value == 'admin' else ('操作员' if user else 'guest') }}</span>
         </div>
       </div>
     </aside>
@@ -61,8 +63,9 @@
         </div>
         <div class="status-cluster">
           <div class="status-chip status-{{ state.status.value }}"><span></span><b data-status-label>{{ state.status.value }}</b></div>
-          <div class="mini-metric"><span>样本</span><b>{{ slide_count }}</b></div>
+          <div class="mini-metric"><span>玻片</span><b>{{ slide_count }}</b></div>
           <div class="mini-metric"><span>试剂</span><b>{{ state.reagents|length }}</b></div>
+          <div class="mini-metric"><span>告警</span><b>{{ state.alarms|length }}</b></div>
           <div class="clock-card"><span id="clockTime">--:--</span><small id="clockDate">----</small></div>
           <button class="icon-btn" onclick="location.href='/dashboard'" title="主控台">⌂</button>
           <button class="icon-btn danger" onclick="logout()" title="退出">⏻</button>
@@ -70,9 +73,9 @@
       </header>
 
       {% if state.alarms %}
-      <section class="alert-banner">
+      <section class="alert-banner" onclick="location.href='/alerts'">
         <div class="pulse-dot"></div>
-        <div><b>当前报警</b><span>{{ state.alarms[0] }}</span></div>
+        <div><b>当前告警</b><span>{{ state.alarms[0] }}</span></div>
         <button class="btn btn-soft">查看处理</button>
       </section>
       {% endif %}

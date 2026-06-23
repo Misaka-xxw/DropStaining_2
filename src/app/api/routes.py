@@ -74,6 +74,22 @@ async def reagents_page(request: Request):
     return templates(request).TemplateResponse("reagents.html", page_ctx(request))
 
 
+@router.get("/alerts", response_class=HTMLResponse)
+async def alerts_page(request: Request):
+    guard = require_login_page()
+    if guard:
+        return guard
+    return templates(request).TemplateResponse("alerts.html", page_ctx(request))
+
+
+@router.get("/history", response_class=HTMLResponse)
+async def history_page(request: Request):
+    guard = require_login_page()
+    if guard:
+        return guard
+    return templates(request).TemplateResponse("history.html", page_ctx(request))
+
+
 @router.get("/configure", response_class=HTMLResponse)
 async def configure_page(request: Request):
     guard = require_admin_page()
@@ -212,6 +228,9 @@ async def stop_run():
 
 @router.post("/api/run/add-slide")
 async def add_slide(payload: AddSlideRequest):
+    # V1.8 首版不支持任意运行中追加玻片；保留接口仅用于非运行态 Mock。
+    if store.state.status.value == "running":
+        raise HTTPException(400, "首版不支持运行中追加玻片")
     try:
         return store.add_slide(
             channel=payload.channel,

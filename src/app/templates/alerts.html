@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block crumb %}告警中心{% endblock %}
+{% block page_title %}告警中心{% endblock %}
+{% block page_subtitle %}显示告警等级、来源、影响任务、处理建议、确认记录，并允许按权限重试。{% endblock %}
+{% block content %}
+<section class="modern-card">
+  <div class="section-title"><div><h2>当前告警</h2><p>关键告警禁止启动或继续，需返回对应页面处理。</p></div><button class="btn btn-soft" onclick="toast('Mock：告警已确认记录')">确认选中告警</button></div>
+  <div class="alarm-list">
+    {% for alarm in state.alarms %}
+    <div class="alarm-row level-high"><b>高</b><span>{{ alarm }}</span><em>影响：当前任务/启动校验</em><small>建议：查看关联日志并处理对应试剂、设备或通道状态</small></div>
+    {% else %}
+    <div class="empty-state"><b>暂无告警</b><span>系统当前没有未处理告警。</span></div>
+    {% endfor %}
+  </div>
+</section>
+<section class="modern-card">
+  <div class="section-title"><h2>关联事件日志</h2><button class="btn btn-soft" onclick="location.href='/history'">历史与导出</button></div>
+  <div class="timeline large">{% for item in state.logs[:40] %}<div><i></i><span>{{ item }}</span></div>{% else %}<div><i></i><span>暂无日志</span></div>{% endfor %}</div>
+</section>
+{% endblock %}

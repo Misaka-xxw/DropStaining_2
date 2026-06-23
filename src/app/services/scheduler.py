@@ -66,8 +66,8 @@ class Scheduler:
         for ch in store.state.channels:
             if ch.status not in (ChannelStatus.empty, ChannelStatus.completed):
                 ch.status = ChannelStatus.waiting
-                ch.current_step = "已终止"
-        store.log("实验终止")
+                ch.current_step = "已停止/待处理"
+        store.log("普通整机停止：当前原子动作完成后停止后续调度")
         store.save()
 
     async def _wait_scaled(self, seconds: int) -> None:

@@ -24,9 +24,10 @@ async function logout(){
   location.href='/';
 }
 function statusText(s){
-  const map = {idle:'空闲',initialized:'已初始化',ready:'就绪',running:'运行中',paused:'暂停',stopped:'已终止',completed:'完成',error:'异常',empty:'空闲',loaded:'已上载',waiting:'等待',dispensing:'加样',incubating:'孵育',washing:'清洗',mixing:'混匀'};
+  const map = {idle:'空闲',initialized:'已初始化',ready:'就绪',running:'运行中',paused:'暂停',stopped:'已停止/待处理',completed:'完成',error:'故障',empty:'可上样',loaded:'待确认',configured:'待启动',waiting:'等待/待卸载',dispensing:'加液',incubating:'孵育',washing:'通道清洗',mixing:'通道混匀'};
   return map[s] || s;
 }
+
 function syncStatusLabels(root=document){
   root.querySelectorAll('[data-status-label]').forEach(el=>{ el.textContent=statusText(el.textContent.trim()); });
 }

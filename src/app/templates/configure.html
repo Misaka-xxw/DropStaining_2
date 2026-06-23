@@ -1,59 +1,67 @@
 {% extends "base.html" %}
-{% block crumb %}实验配置{% endblock %}
-{% block page_title %}实验配置{% endblock %}
-{% block page_subtitle %}为每张玻片配置脚本、一抗代码、加样体积和温度；DAB 配制量自动按玻片数计算。{% endblock %}
+{% block crumb %}协议 / 脚本 / 目录配置{% endblock %}
+{% block page_title %}协议、脚本、流程映射与版本管理{% endblock %}
+{% block page_subtitle %}管理员维护已发布流程、代码-脚本映射、试剂目录与配置版本；活动任务引用的关键配置不得直接修改。{% endblock %}
 {% block content %}
-<section class="split-grid dab-layout">
-  <article class="modern-card dab-card-large">
-    <div class="section-title"><div><h2>DAB 临时配制</h2><p>A液:B液:纯水 = 1:1:18，每轮额外多配 0.4mL。</p></div><div class="badge-soft">{{ dab.slide_count }} 张 IHC</div></div>
-    <div class="dab-mixer">
-      <div class="mix-beaker"><div style="height:72%"></div><b>{{ dab.total_ml }} mL</b><span>总量</span></div>
-      <div class="dab-numbers">
-        <div><span>DAB A液</span><b>{{ dab.dab_a_ml }}</b><em>mL</em></div>
-        <div><span>DAB B液</span><b>{{ dab.dab_b_ml }}</b><em>mL</em></div>
-        <div><span>纯水</span><b>{{ dab.pure_water_ml }}</b><em>mL</em></div>
-        <div><span>额外余量</span><b>0.4</b><em>mL</em></div>
-      </div>
-    </div>
-  </article>
+<section class="kpi-grid">
+  <article class="kpi-card"><span>流程生命周期</span><strong>草稿→发布</strong><small>发布后不可覆盖，修改形成新版本</small></article>
+  <article class="kpi-card"><span>首版流程</span><strong>HE / IHC</strong><small>特染、多重染色不在首版</small></article>
+  <article class="kpi-card"><span>映射关系</span><strong>一抗 1:N 脚本</strong><small>操作员只能从候选中选择</small></article>
+  <article class="kpi-card"><span>配置快照</span><strong>版本追溯</strong><small>流程/试剂/液体/坐标版本固化</small></article>
+</section>
 
-  <article class="modern-card compact-card">
-    <h3>流程模板</h3>
-    <div class="protocol-list">
+<section class="split-grid wide-left">
+  <article class="modern-card">
+    <div class="section-title"><div><h2>流程版本管理</h2><p>管理员可创建草稿、复制、编辑、发布、停用流程；已发布流程不允许直接覆盖。</p></div><div class="button-row"><button class="btn btn-primary">新建草稿</button><button class="btn btn-soft">复制为新版本</button></div></div>
+    <div class="protocol-version-table">
       {% for p in protocols %}
-      <div class="protocol-card"><b>{{ p.code }}</b><span>{{ p.name }}</span><small>{{ p.description }}</small></div>
+      <div class="protocol-version-row">
+        <b>{{ p.code }}</b><span>{{ p.name }}</span><em>v{{ p.version }}</em><small>{{ p.description }}</small>
+        <div><button class="btn btn-soft">查看步骤</button><button class="btn btn-soft">停用</button></div>
+      </div>
       {% endfor %}
     </div>
-    <button class="btn btn-primary full" onclick="location.href='/run'">确认配置并进入运行</button>
+  </article>
+  <aside class="stack-panel">
+    <article class="modern-card compact-card">
+      <h3>步骤类型</h3>
+      <div class="tag-cloud"><span>加液</span><span>等待/孵育</span><span>通道清洗</span><span>通道混匀</span><span>温控</span><span>洗针</span><span>DAB自动配制</span><span>排毒/排废</span><span>人工确认</span><span>大步骤边界</span></div>
+    </article>
+    <article class="modern-card compact-card">
+      <h3>DAB 计算预览</h3>
+      <div class="dab-numbers small-dab"><div><span>IHC 张数</span><b>{{ dab.slide_count }}</b></div><div><span>总量</span><b>{{ dab.total_ml }}</b><em>mL</em></div><div><span>A/B/水</span><b>{{ dab.dab_a_ml }}/{{ dab.dab_b_ml }}/{{ dab.pure_water_ml }}</b></div></div>
+    </article>
+  </aside>
+</section>
+
+<section class="split-grid">
+  <article class="modern-card">
+    <div class="section-title"><h2>一抗代码 - 已发布 IHC 脚本映射</h2><button class="btn btn-primary">新增映射</button></div>
+    <div class="data-table mapping-table">
+      <div class="table-row head"><span>一抗代码</span><span>脚本ID</span><span>脚本名称</span><span>版本</span><span>状态</span></div>
+      <div class="table-row"><span>010 / CK</span><span>IHC-CK</span><span>CK 快速染色</span><span>v1.0</span><span>已发布</span></div>
+      <div class="table-row"><span>011 / P63</span><span>IHC-P63</span><span>P63 标准染色</span><span>v1.1</span><span>已发布</span></div>
+      <div class="table-row"><span>012 / TTF-1</span><span>IHC-TTF1</span><span>TTF-1 冰冻版</span><span>v0.9</span><span>草稿</span></div>
+    </div>
+  </article>
+  <article class="modern-card">
+    <div class="section-title"><h2>试剂目录与液体参数引用</h2><button class="btn btn-soft">导入目录</button></div>
+    <div class="data-table reagent-catalog-table">
+      <div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>保质期</span><span>液体类型</span></div>
+      <div class="table-row"><span>010</span><span>一抗 CK</span><span>一抗</span><span>12月</span><span>LC_PRIMARY</span></div>
+      <div class="table-row"><span>BLK</span><span>阻断剂</span><span>前处理</span><span>12月</span><span>LC_BLOCK</span></div>
+      <div class="table-row"><span>SEC</span><span>二抗</span><span>二抗</span><span>12月</span><span>LC_SECONDARY</span></div>
+      <div class="table-row"><span>HRP</span><span>HRP 试剂</span><span>显色前处理</span><span>12月</span><span>LC_HRP</span></div>
+      <div class="table-row"><span>DAB</span><span>DAB A/B</span><span>DAB</span><span>6月</span><span>LC_DAB</span></div>
+      <div class="table-row"><span>HEM</span><span>苏木素</span><span>HE/IHC</span><span>12月</span><span>LC_HEMATOXYLIN</span></div>
+      <div class="table-row"><span>WAS</span><span>清洗液</span><span>清洗</span><span>12月</span><span>LC_WASH</span></div>
+    </div>
   </article>
 </section>
 
 <section class="modern-card">
-  <div class="section-title"><div><h2>玻片配置表</h2><p>一抗温度支持 40-55℃ 单片独立设置；清洗和混匀按通道同步执行。</p></div><button class="btn btn-soft" onclick="bulkFill()">批量填充默认值</button></div>
-  <div class="config-grid">
-  {% for ch in state.channels %}
-    {% for slide in ch.slides %}
-    <article class="slide-config-card" data-slide="{{ slide.id }}">
-      <header><b>{{ slide.id }}</b><span>通道{{ slide.channel }} - {{ slide.slot }}</span></header>
-      <small class="barcode">{{ slide.barcode }}</small>
-      <div class="form-grid-mini">
-        <label>脚本
-          <select class="input protocol">
-            {% for p in protocols %}<option value="{{ p.code }}" {% if slide.protocol_code == p.code %}selected{% endif %}>{{ p.code }}</option>{% endfor %}
-          </select>
-        </label>
-        <label>一抗代码<input class="input antibody" value="{{ slide.antibody_code }}"></label>
-        <label>体积 μL<input class="input volume" type="number" min="50" max="100" value="{{ slide.primary_volume_ul }}"></label>
-        <label>温度 ℃<input class="input temp" type="number" min="40" max="55" step="0.5" value="{{ slide.temperature_c }}"></label>
-      </div>
-      <footer><span class="badge-soft">{{ slide.status.value }}</span><button class="btn btn-primary" onclick="saveSlide('{{ slide.id }}')">保存</button></footer>
-    </article>
-    {% endfor %}
-  {% endfor %}
-  {% if slide_count == 0 %}
-    <div class="empty-state"><b>尚未识别玻片</b><span>请先进入样本扫描页面。</span><button class="btn btn-primary" onclick="location.href='/samples'">去扫描样本</button></div>
-  {% endif %}
-  </div>
+  <div class="section-title"><h2>配置版本、导入导出与恢复</h2><button class="btn btn-soft">导出当前配置包</button></div>
+  <div class="version-grid"><div><b>坐标版本</b><span>COORD-20260623-001</span></div><div><b>液体类型版本</b><span>LC-20260623-001</span></div><div><b>流程版本</b><span>PROC-IHC-1.0</span></div><div><b>试剂目录版本</b><span>REAG-TEST-001</span></div></div>
 </section>
 {% endblock %}
 {% block scripts %}<script src="/static/js/configure.js"></script>{% endblock %}

@@ -192,7 +192,7 @@ class JsonStore:
         ch.slides.append(slide)
         ch.slides.sort(key=lambda x: x.slot)
         ch.status = ChannelStatus.loaded
-        self.log(f"中途添加玻片：通道{channel}-{slot} {barcode}")
+        self.log(f"非运行态添加玻片：通道{channel}-{slot} {barcode}")
         self.save()
         return self.state
 
