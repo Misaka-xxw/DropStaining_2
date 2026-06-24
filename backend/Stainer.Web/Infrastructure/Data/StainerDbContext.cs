@@ -30,6 +30,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<ReagentScanSession> ReagentScanSessions => Set<ReagentScanSession>();
     public DbSet<ReagentScanItem> ReagentScanItems => Set<ReagentScanItem>();
     public DbSet<LiquidClassProfile> LiquidClassProfiles => Set<LiquidClassProfile>();
+    public DbSet<LegacyImportRun> LegacyImportRuns => Set<LegacyImportRun>();
+    public DbSet<LegacyImportIssue> LegacyImportIssues => Set<LegacyImportIssue>();
+    public DbSet<LegacyRuntimeSnapshot> LegacyRuntimeSnapshots => Set<LegacyRuntimeSnapshot>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -57,6 +60,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureReagentRackPlacement(modelBuilder);
         ConfigureReagentScanSession(modelBuilder);
         ConfigureReagentScanItem(modelBuilder);
+        ConfigureLegacyImportRun(modelBuilder);
+        ConfigureLegacyImportIssue(modelBuilder);
+        ConfigureLegacyRuntimeSnapshot(modelBuilder);
     }
 
     public override int SaveChanges()
@@ -281,6 +287,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         entity.Property(x => x.Username).HasColumnName("username").HasMaxLength(128).IsRequired();
         entity.Property(x => x.DisplayName).HasColumnName("display_name").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.PasswordHash).HasColumnName("password_hash").HasMaxLength(512);
+        entity.Property(x => x.PasswordHashAlgorithm).HasColumnName("password_hash_algorithm").HasMaxLength(128);
+        entity.Property(x => x.PasswordUpdatedAtUtc).HasColumnName("password_updated_at_utc");
         entity.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.HasIndex(x => x.Username).IsUnique();
@@ -479,6 +488,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Code).HasColumnName("code").HasMaxLength(128).IsRequired();
         entity.Property(x => x.Name).HasColumnName("name").HasMaxLength(256).IsRequired();
         entity.Property(x => x.WorkflowType).HasColumnName("workflow_type").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.Description).HasColumnName("description").HasMaxLength(4000).IsRequired();
         entity.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
@@ -499,6 +509,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         entity.Property(x => x.WorkflowDefinitionId).HasColumnName("workflow_definition_id").HasMaxLength(36).IsRequired();
         entity.Property(x => x.VersionNo).HasColumnName("version_no").IsRequired();
+        entity.Property(x => x.VersionLabel).HasColumnName("version_label").HasMaxLength(64).IsRequired();
         entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         entity.Property(x => x.ChangeNote).HasColumnName("change_note").HasMaxLength(2000).IsRequired();
         entity.Property(x => x.PublishedAtUtc).HasColumnName("published_at_utc");
@@ -506,6 +517,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
         entity.HasIndex(x => new { x.WorkflowDefinitionId, x.VersionNo }).IsUnique();
+        entity.HasIndex(x => new { x.WorkflowDefinitionId, x.VersionLabel }).IsUnique();
         entity.HasIndex(x => x.Status);
         entity.HasOne(x => x.WorkflowDefinition).WithMany(x => x.Versions).HasForeignKey(x => x.WorkflowDefinitionId).OnDelete(DeleteBehavior.Cascade);
     }
@@ -519,6 +531,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.WorkflowVersionId).HasColumnName("workflow_version_id").HasMaxLength(36).IsRequired();
         entity.Property(x => x.StepNo).HasColumnName("step_no").IsRequired();
         entity.Property(x => x.MajorStepCode).HasColumnName("major_step_code").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.StepName).HasColumnName("step_name").HasMaxLength(512).IsRequired();
         entity.Property(x => x.ActionType).HasColumnName("action_type").HasMaxLength(128).IsRequired();
         entity.Property(x => x.ReagentCode).HasColumnName("reagent_code").HasMaxLength(64);
         entity.Property(x => x.VolumeUl).HasColumnName("volume_ul");
@@ -526,6 +539,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.TargetTemperatureDeciC).HasColumnName("target_temperature_deci_c");
         entity.Property(x => x.MixParametersJson).HasColumnName("mix_parameters_json").HasMaxLength(4000).IsRequired();
         entity.Property(x => x.WashParametersJson).HasColumnName("wash_parameters_json").HasMaxLength(4000).IsRequired();
+        entity.Property(x => x.LegacyParametersJson).HasColumnName("legacy_parameters_json").HasMaxLength(8000).IsRequired();
         entity.Property(x => x.FailureStrategy).HasColumnName("failure_strategy").HasMaxLength(128).IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
@@ -576,8 +590,12 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Name).HasColumnName("name").HasMaxLength(256).IsRequired();
         entity.Property(x => x.AspirateSpeedUlPerSecond).HasColumnName("aspirate_speed_ul_per_second");
         entity.Property(x => x.DispenseSpeedUlPerSecond).HasColumnName("dispense_speed_ul_per_second");
+        entity.Property(x => x.LeadingAirGapUl).HasColumnName("leading_air_gap_ul");
+        entity.Property(x => x.TrailingAirGapUl).HasColumnName("trailing_air_gap_ul");
+        entity.Property(x => x.ExcessVolumeUl).HasColumnName("excess_volume_ul");
         entity.Property(x => x.PreWetCycles).HasColumnName("pre_wet_cycles");
         entity.Property(x => x.MixCycles).HasColumnName("mix_cycles");
+        entity.Property(x => x.LegacyParametersJson).HasColumnName("legacy_parameters_json").HasMaxLength(4000).IsRequired();
         entity.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
@@ -592,7 +610,10 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         entity.Property(x => x.ReagentCode).HasColumnName("reagent_code").HasMaxLength(64).IsRequired();
         entity.Property(x => x.Name).HasColumnName("name").HasMaxLength(256).IsRequired();
+        entity.Property(x => x.ReagentType).HasColumnName("reagent_type").HasMaxLength(64).IsRequired();
         entity.Property(x => x.LiquidClassProfileId).HasColumnName("liquid_class_profile_id").HasMaxLength(36);
+        entity.Property(x => x.MinimumAlarmVolumeUl).HasColumnName("minimum_alarm_volume_ul");
+        entity.Property(x => x.LegacyMetadataJson).HasColumnName("legacy_metadata_json").HasMaxLength(4000).IsRequired();
         entity.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
@@ -692,5 +713,58 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.HasIndex(x => x.ParsedReagentCode);
         entity.HasOne(x => x.ReagentScanSession).WithMany(x => x.Items).HasForeignKey(x => x.ReagentScanSessionId).OnDelete(DeleteBehavior.Cascade);
         entity.HasOne(x => x.ReagentRackPosition).WithMany().HasForeignKey(x => x.ReagentRackPositionId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureLegacyImportRun(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<LegacyImportRun>();
+        entity.ToTable("legacy_import_runs");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.ImportedAtUtc).HasColumnName("imported_at_utc").IsRequired();
+        entity.Property(x => x.SourcePath).HasColumnName("source_path").HasMaxLength(1024).IsRequired();
+        entity.Property(x => x.SourceHashJson).HasColumnName("source_hash_json").HasMaxLength(8000).IsRequired();
+        entity.Property(x => x.IsDryRun).HasColumnName("is_dry_run").IsRequired();
+        entity.Property(x => x.Result).HasColumnName("result").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.StatisticsJson).HasColumnName("statistics_json").HasMaxLength(8000).IsRequired();
+        entity.Property(x => x.ReportPath).HasColumnName("report_path").HasMaxLength(1024);
+        entity.HasIndex(x => x.ImportedAtUtc);
+        entity.HasIndex(x => new { x.SourcePath, x.ImportedAtUtc });
+    }
+
+    private static void ConfigureLegacyImportIssue(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<LegacyImportIssue>();
+        entity.ToTable("legacy_import_issues");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.LegacyImportRunId).HasColumnName("legacy_import_run_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.FilePath).HasColumnName("file_path").HasMaxLength(1024).IsRequired();
+        entity.Property(x => x.RecordIdentifier).HasColumnName("record_identifier").HasMaxLength(256);
+        entity.Property(x => x.FieldName).HasColumnName("field_name").HasMaxLength(256);
+        entity.Property(x => x.IssueType).HasColumnName("issue_type").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.Message).HasColumnName("message").HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.RawFragment).HasColumnName("raw_fragment").HasMaxLength(8000);
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.HasIndex(x => x.LegacyImportRunId);
+        entity.HasIndex(x => x.IssueType);
+        entity.HasOne(x => x.LegacyImportRun).WithMany(x => x.Issues).HasForeignKey(x => x.LegacyImportRunId).OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureLegacyRuntimeSnapshot(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<LegacyRuntimeSnapshot>();
+        entity.ToTable("legacy_runtime_snapshots");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.LegacyImportRunId).HasColumnName("legacy_import_run_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.SourceFilePath).HasColumnName("source_file_path").HasMaxLength(1024).IsRequired();
+        entity.Property(x => x.SourceFileHash).HasColumnName("source_file_hash").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.RunId).HasColumnName("run_id").HasMaxLength(128);
+        entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(64);
+        entity.Property(x => x.CapturedAtUtc).HasColumnName("captured_at_utc").IsRequired();
+        entity.Property(x => x.SnapshotJson).HasColumnName("snapshot_json").HasMaxLength(40000).IsRequired();
+        entity.HasIndex(x => x.SourceFileHash).IsUnique();
+        entity.HasOne(x => x.LegacyImportRun).WithMany(x => x.RuntimeSnapshots).HasForeignKey(x => x.LegacyImportRunId).OnDelete(DeleteBehavior.Cascade);
     }
 }

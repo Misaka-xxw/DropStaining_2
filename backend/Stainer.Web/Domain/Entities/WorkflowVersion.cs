@@ -5,6 +5,7 @@ public sealed class WorkflowVersion
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string WorkflowDefinitionId { get; set; } = string.Empty;
     public int VersionNo { get; set; }
+    public string VersionLabel { get; set; } = string.Empty;
     public string Status { get; set; } = WorkflowVersionStatus.Draft;
     public string ChangeNote { get; set; } = string.Empty;
     public DateTimeOffset? PublishedAtUtc { get; set; }

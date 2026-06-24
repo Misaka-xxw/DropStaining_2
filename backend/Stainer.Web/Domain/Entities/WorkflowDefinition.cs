@@ -6,6 +6,7 @@ public sealed class WorkflowDefinition
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string WorkflowType { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
     public bool IsEnabled { get; set; } = true;
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAtUtc { get; set; }

@@ -6,6 +6,7 @@ public sealed class WorkflowStep
     public string WorkflowVersionId { get; set; } = string.Empty;
     public int StepNo { get; set; }
     public string MajorStepCode { get; set; } = string.Empty;
+    public string StepName { get; set; } = string.Empty;
     public string ActionType { get; set; } = string.Empty;
     public string? ReagentCode { get; set; }
     public int? VolumeUl { get; set; }
@@ -13,6 +14,7 @@ public sealed class WorkflowStep
     public int? TargetTemperatureDeciC { get; set; }
     public string MixParametersJson { get; set; } = "{}";
     public string WashParametersJson { get; set; } = "{}";
+    public string LegacyParametersJson { get; set; } = "{}";
     public string FailureStrategy { get; set; } = string.Empty;
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAtUtc { get; set; }

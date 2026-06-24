@@ -5,7 +5,10 @@ public sealed class ReagentDefinition
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string ReagentCode { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+    public string ReagentType { get; set; } = string.Empty;
     public string? LiquidClassProfileId { get; set; }
+    public int? MinimumAlarmVolumeUl { get; set; }
+    public string LegacyMetadataJson { get; set; } = "{}";
     public bool IsEnabled { get; set; } = true;
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAtUtc { get; set; }

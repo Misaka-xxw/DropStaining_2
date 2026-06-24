@@ -9,6 +9,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Stainer.Web", "backend\Stai
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Stainer.Tests", "backend\Stainer.Tests\Stainer.Tests.csproj", "{B75685E1-70C9-4857-AB42-ACEB57EF7A34}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{07C2787E-EAC7-C090-1BA3-A61EC2A24D84}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Stainer.LegacyImporter", "tools\Stainer.LegacyImporter\Stainer.LegacyImporter.csproj", "{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -43,6 +47,18 @@ Global
 		{B75685E1-70C9-4857-AB42-ACEB57EF7A34}.Release|x64.Build.0 = Release|Any CPU
 		{B75685E1-70C9-4857-AB42-ACEB57EF7A34}.Release|x86.ActiveCfg = Release|Any CPU
 		{B75685E1-70C9-4857-AB42-ACEB57EF7A34}.Release|x86.Build.0 = Release|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Debug|x64.Build.0 = Debug|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Debug|x86.Build.0 = Debug|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Release|x64.ActiveCfg = Release|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Release|x64.Build.0 = Release|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Release|x86.ActiveCfg = Release|Any CPU
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -50,5 +66,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{B76347B4-F849-40DC-A5D0-AF7DC665B1E4} = {1AE8ACA6-933B-BF2A-3671-3E2EAC007D16}
 		{B75685E1-70C9-4857-AB42-ACEB57EF7A34} = {1AE8ACA6-933B-BF2A-3671-3E2EAC007D16}
+		{C1814E6E-A7FF-43FD-8228-B2DEE16A5A99} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 	EndGlobalSection
 EndGlobal

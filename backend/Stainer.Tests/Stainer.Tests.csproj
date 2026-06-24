@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Stainer.Web\Stainer.Web.csproj" />
+    <ProjectReference Include="..\..\tools\Stainer.LegacyImporter\Stainer.LegacyImporter.csproj" />
   </ItemGroup>
 
 </Project>
