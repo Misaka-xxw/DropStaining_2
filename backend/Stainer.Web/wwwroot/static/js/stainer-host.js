@@ -265,6 +265,81 @@ function showReagentDetail(pos,state,barcode,name,code,volume,lot,expire){
   document.getElementById('reagentDetail')?.classList.remove('hidden');
 }
 
+function commandId(prefix){
+  return prefix + '-' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(16).slice(2));
+}
+
+async function renderAdmin(state){
+  if(!document.getElementById('userTable')) return;
+  const users = await api('/api/users');
+  setText('adminUserCount', users.length);
+  setText('adminReagentCount', (state.reagents || []).length);
+  setText('adminLogCount', (state.logs || []).length);
+  setText('adminAlarmCount', (state.alarms || []).length);
+  wireAdminToolbar(users);
+  document.getElementById('userTable').innerHTML = '<div class="table-row head"><span>用户</span><span>显示名</span><span>角色</span><span>启用</span><span>操作</span></div>' + users.map(u => `<div class="table-row"><span>${escapeHtml(u.username)}</span><span>${escapeHtml(u.displayName)}</span><span class="badge-soft">${escapeHtml((u.roles || [u.role]).join(','))}</span><span>${u.enabled ? '是' : '否'}</span><span class="button-row"><button class="btn btn-soft" onclick="adminRenameUser('${u.id}', '${escapeHtml(u.displayName)}')">改名</button><button class="btn btn-soft" onclick="adminToggleUser('${u.id}', ${!u.enabled})">${u.enabled ? '禁用' : '启用'}</button><button class="btn btn-soft" onclick="adminResetPassword('${u.id}')">重置</button><button class="btn btn-soft" onclick="adminSetRoles('${u.id}', '${escapeHtml((u.roles || []).join(','))}')">角色</button><button class="btn btn-soft" onclick="adminDeleteUser('${u.id}')">删除</button></span></div>`).join('');
+  renderTimeline('adminLogs', state.logs || [], 50);
+}
+
+function wireAdminToolbar(users){
+  const buttons = document.querySelectorAll('.section-title .button-row .btn');
+  if(buttons[0]) buttons[0].onclick = adminCreateUser;
+  if(buttons[1]) buttons[1].onclick = () => {
+    const username = prompt('输入要重置密码的用户名');
+    const user = users.find(x => x.username === username);
+    if(user) adminResetPassword(user.id); else if(username) toast('用户不存在', true);
+  };
+}
+
+async function adminCreateUser(){
+  const username = prompt('用户名');
+  if(!username) return;
+  const displayName = prompt('显示名', username) || username;
+  const password = prompt('初始密码', '123456');
+  if(!password) return;
+  const rolesText = prompt('角色，逗号分隔', 'operator') || 'operator';
+  await api('/api/users', {method:'POST', body: JSON.stringify({commandId:commandId('user-create'), username, displayName, password, roles:rolesText.split(',').map(x=>x.trim()).filter(Boolean)})});
+  toast('用户已创建');
+  await loadHostState();
+}
+
+async function adminRenameUser(id, currentName){
+  const displayName = prompt('新的显示名', currentName);
+  if(!displayName) return;
+  await api(`/api/users/${id}/display-name`, {method:'PUT', body: JSON.stringify({commandId:commandId('user-rename'), displayName})});
+  toast('显示名已更新');
+  await loadHostState();
+}
+
+async function adminToggleUser(id, enabled){
+  if(!confirm(enabled ? '确认启用账号？' : '确认禁用账号？')) return;
+  await api(`/api/users/${id}/enabled`, {method:'PUT', body: JSON.stringify({commandId:commandId('user-enabled'), enabled})});
+  toast('账号状态已更新');
+  await loadHostState();
+}
+
+async function adminResetPassword(id){
+  const newPassword = prompt('新密码', '123456');
+  if(!newPassword) return;
+  await api(`/api/users/${id}/password`, {method:'PUT', body: JSON.stringify({commandId:commandId('user-password'), newPassword})});
+  toast('密码已重置');
+}
+
+async function adminSetRoles(id, currentRoles){
+  const rolesText = prompt('角色，逗号分隔', currentRoles || 'operator');
+  if(!rolesText) return;
+  await api(`/api/users/${id}/roles`, {method:'PUT', body: JSON.stringify({commandId:commandId('user-roles'), roles:rolesText.split(',').map(x=>x.trim()).filter(Boolean)})});
+  toast('角色已更新');
+  await loadHostState();
+}
+
+async function adminDeleteUser(id){
+  if(!confirm('确认删除账号？存在审计记录的用户会被拒绝删除。')) return;
+  await api(`/api/users/${id}?commandId=${encodeURIComponent(commandId('user-delete'))}`, {method:'DELETE'});
+  toast('用户已删除');
+  await loadHostState();
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   loadHostState().then(renderConfigure);
   setInterval(loadHostState, 2500);

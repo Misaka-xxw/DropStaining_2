@@ -33,6 +33,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<LegacyImportRun> LegacyImportRuns => Set<LegacyImportRun>();
     public DbSet<LegacyImportIssue> LegacyImportIssues => Set<LegacyImportIssue>();
     public DbSet<LegacyRuntimeSnapshot> LegacyRuntimeSnapshots => Set<LegacyRuntimeSnapshot>();
+    public DbSet<CommandReceipt> CommandReceipts => Set<CommandReceipt>();
+    public DbSet<StainingTask> StainingTasks => Set<StainingTask>();
+    public DbSet<HospitalBarcodeMapping> HospitalBarcodeMappings => Set<HospitalBarcodeMapping>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -63,6 +66,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureLegacyImportRun(modelBuilder);
         ConfigureLegacyImportIssue(modelBuilder);
         ConfigureLegacyRuntimeSnapshot(modelBuilder);
+        ConfigureCommandReceipt(modelBuilder);
+        ConfigureStainingTask(modelBuilder);
+        ConfigureHospitalBarcodeMapping(modelBuilder);
     }
 
     public override int SaveChanges()
@@ -766,5 +772,80 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.SnapshotJson).HasColumnName("snapshot_json").HasMaxLength(40000).IsRequired();
         entity.HasIndex(x => x.SourceFileHash).IsUnique();
         entity.HasOne(x => x.LegacyImportRun).WithMany(x => x.RuntimeSnapshots).HasForeignKey(x => x.LegacyImportRunId).OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureCommandReceipt(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<CommandReceipt>();
+        entity.ToTable("command_receipts");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.Operation).HasColumnName("operation").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.RequestHash).HasColumnName("request_hash").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.ResponseJson).HasColumnName("response_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.ActorUserId).HasColumnName("actor_user_id").HasMaxLength(36);
+        entity.Property(x => x.EntityType).HasColumnName("entity_type").HasMaxLength(128);
+        entity.Property(x => x.EntityId).HasColumnName("entity_id").HasMaxLength(128);
+        entity.Property(x => x.ErrorMessage).HasColumnName("error_message").HasMaxLength(2000);
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
+        entity.HasIndex(x => x.CommandId).IsUnique();
+        entity.HasIndex(x => new { x.Operation, x.CreatedAtUtc });
+        entity.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.SetNull);
+    }
+
+    private static void ConfigureStainingTask(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<StainingTask>();
+        entity.ToTable("staining_tasks", table =>
+        {
+            table.HasCheckConstraint(
+                "ck_staining_tasks_task_type",
+                $"task_type in ('{StainingTaskType.He}', '{StainingTaskType.Ihc}')");
+            table.HasCheckConstraint(
+                "ck_staining_tasks_status",
+                $"status in ('{StainingTaskStatus.Confirmed}', '{StainingTaskStatus.Cancelled}', '{StainingTaskStatus.Completed}')");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.TaskCode).HasColumnName("task_code").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.TaskType).HasColumnName("task_type").HasMaxLength(16).IsRequired();
+        entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        entity.Property(x => x.PhysicalSlotId).HasColumnName("physical_slot_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.WorkflowDefinitionId).HasColumnName("workflow_definition_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.WorkflowVersionId).HasColumnName("workflow_version_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.WorkflowSnapshotJson).HasColumnName("workflow_snapshot_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.InputMode).HasColumnName("input_mode").HasMaxLength(64);
+        entity.Property(x => x.RawCode).HasColumnName("raw_code").HasMaxLength(512);
+        entity.Property(x => x.NormalizedCode).HasColumnName("normalized_code").HasMaxLength(512);
+        entity.Property(x => x.PrimaryAntibodyCode).HasColumnName("primary_antibody_code").HasMaxLength(64);
+        entity.Property(x => x.CandidateResultsJson).HasColumnName("candidate_results_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.TaskCode).IsUnique();
+        entity.HasIndex(x => new { x.PhysicalSlotId, x.Status });
+        entity.HasIndex(x => x.WorkflowVersionId);
+        entity.HasIndex(x => x.PrimaryAntibodyCode);
+        entity.HasOne(x => x.PhysicalSlot).WithMany().HasForeignKey(x => x.PhysicalSlotId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.WorkflowDefinition).WithMany().HasForeignKey(x => x.WorkflowDefinitionId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.WorkflowVersion).WithMany().HasForeignKey(x => x.WorkflowVersionId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+    }
+
+    private static void ConfigureHospitalBarcodeMapping(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<HospitalBarcodeMapping>();
+        entity.ToTable("hospital_barcode_mappings");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.HospitalCode).HasColumnName("hospital_code").HasMaxLength(512).IsRequired();
+        entity.Property(x => x.PrimaryAntibodyCode).HasColumnName("primary_antibody_code").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.HasIndex(x => new { x.HospitalCode, x.PrimaryAntibodyCode }).IsUnique();
+        entity.HasIndex(x => x.PrimaryAntibodyCode);
     }
 }

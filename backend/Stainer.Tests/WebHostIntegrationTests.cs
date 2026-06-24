@@ -126,7 +126,7 @@ public sealed class WebHostIntegrationTests
 
             var liquidClass = new LiquidClassProfile
             {
-                Code = "LC-DB",
+                Code = "LC-WEB",
                 Name = "SQLite Liquid Class",
                 AspirateSpeedUlPerSecond = 11,
                 DispenseSpeedUlPerSecond = 22
@@ -174,7 +174,7 @@ public sealed class WebHostIntegrationTests
         Assert.Contains(protocols!, x => x.Code == "DB-IHC" && x.Version == "9.0");
 
         var catalog = await client.GetFromJsonAsync<List<ReagentCatalogItemResponse>>("/api/reagents/catalog");
-        Assert.Contains(catalog!, x => x.ReagentCode == "TDB" && x.Name == "SQLite Test Reagent" && x.LiquidClassCode == "LC-DB");
+        Assert.Contains(catalog!, x => x.ReagentCode == "TDB" && x.Name == "SQLite Test Reagent" && x.LiquidClassCode == "LC-WEB");
 
         var rack = await client.GetFromJsonAsync<List<ReagentRackPositionResponse>>("/api/reagents/rack");
         var rackR1 = Assert.Single(rack!, x => x.Position == "R1");
@@ -194,7 +194,7 @@ public sealed class WebHostIntegrationTests
         Assert.Contains(factoryDefault.Points, x => x.PointCode == "Needle2" && x.PresetXUm == 25000 && x.PresetYUm == 0);
 
         var liquidClasses = await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes");
-        Assert.Contains(liquidClasses!, x => x.Code == "LC-DB" && x.AspirateSpeedUlPerSecond == 11);
+        Assert.Contains(liquidClasses!, x => x.Code == "LC-WEB" && x.AspirateSpeedUlPerSecond == 11);
 
         var users = await client.GetFromJsonAsync<List<UserListItemResponse>>("/api/users");
         Assert.Contains(users!, x => x.Username == "db-reader" && x.Roles.Contains("operator"));
@@ -212,6 +212,7 @@ public sealed class WebHostIntegrationTests
             .WithWebHostBuilder(builder =>
             {
                 builder.UseEnvironment("Testing");
+                builder.UseSetting("ConnectionStrings:StainerDatabase", $"Data Source={databasePath}");
                 builder.ConfigureAppConfiguration((_, config) =>
                 {
                     config.AddInMemoryCollection(new Dictionary<string, string?>

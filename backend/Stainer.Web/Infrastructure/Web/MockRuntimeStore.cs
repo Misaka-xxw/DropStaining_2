@@ -23,6 +23,15 @@ public sealed class MockRuntimeStore
 
     public IReadOnlyList<MockUser> GetUsers() => users;
 
+    public void SetActiveUser(MockUser user)
+    {
+        lock (syncRoot)
+        {
+            state.ActiveUser = user;
+            AddLog($"User login: {user.DisplayName} / {user.Role}");
+        }
+    }
+
     public object? Authenticate(string username, string password, string role)
     {
         var user = users.FirstOrDefault(x =>

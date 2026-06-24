@@ -30,6 +30,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ReagentQueryService>();
         services.AddScoped<EngineeringQueryService>();
         services.AddScoped<UserQueryService>();
+        services.AddScoped<PasswordHashService>();
+        services.AddScoped<CommandIdempotencyService>();
+        services.AddScoped<UserSessionService>();
+        services.AddScoped<UserManagementService>();
+        services.AddScoped<TaskCreationService>();
+        services.AddScoped<ReagentScanWriteService>();
+        services.AddScoped<EngineeringWriteService>();
+        services.AddScoped<PreflightValidationService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
 
         return services;

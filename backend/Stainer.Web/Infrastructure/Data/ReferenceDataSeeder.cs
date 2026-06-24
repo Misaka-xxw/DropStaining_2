@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Stainer.Web.Application.Services;
 using Stainer.Web.Domain.Entities;
 
 namespace Stainer.Web.Infrastructure.Data;
@@ -13,6 +14,8 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         var now = DateTimeOffset.UtcNow;
 
         await SeedRolesAsync(now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await SeedDefaultUsersAsync(now, cancellationToken);
         await SeedDeviceProfileAsync(now, cancellationToken);
         await SeedPhysicalLayoutAsync(now, cancellationToken);
         var coordinateProfile = await SeedCoordinateProfileAsync(now, cancellationToken);
@@ -35,6 +38,57 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             if (!await dbContext.Roles.AnyAsync(x => x.Code == code, cancellationToken))
             {
                 dbContext.Roles.Add(new Role { Code = code, Name = name, CreatedAtUtc = now });
+            }
+        }
+    }
+
+    private async Task SeedDefaultUsersAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var passwordHashService = new PasswordHashService();
+        var roles = await dbContext.Roles.ToDictionaryAsync(x => x.Code, cancellationToken);
+        var users = new[]
+        {
+            ("operator", "Operator", new[] { "operator" }),
+            ("engineer", "Engineer", new[] { "engineer" }),
+            ("admin", "Administrator", new[] { "admin" })
+        };
+
+        foreach (var (username, displayName, roleCodes) in users)
+        {
+            var user = await dbContext.Users
+                .Include(x => x.UserRoles)
+                .SingleOrDefaultAsync(x => x.Username == username, cancellationToken);
+            if (user is null)
+            {
+                user = new User
+                {
+                    Username = username,
+                    DisplayName = displayName,
+                    PasswordHash = passwordHashService.Hash("123456"),
+                    PasswordHashAlgorithm = "PBKDF2-SHA256",
+                    PasswordUpdatedAtUtc = now,
+                    CreatedAtUtc = now
+                };
+                dbContext.Users.Add(user);
+            }
+            else if (string.IsNullOrWhiteSpace(user.PasswordHash))
+            {
+                user.PasswordHash = passwordHashService.Hash("123456");
+                user.PasswordHashAlgorithm = "PBKDF2-SHA256";
+                user.PasswordUpdatedAtUtc = now;
+            }
+
+            foreach (var roleCode in roleCodes)
+            {
+                var role = roles[roleCode];
+                if (!user.UserRoles.Any(x => x.RoleId == role.Id))
+                {
+                    user.UserRoles.Add(new UserRole
+                    {
+                        RoleId = role.Id,
+                        CreatedAtUtc = now
+                    });
+                }
             }
         }
     }

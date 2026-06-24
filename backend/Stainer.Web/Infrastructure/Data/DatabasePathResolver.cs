@@ -6,6 +6,18 @@ public static class DatabasePathResolver
 
     public static string ResolveConnectionString(IConfiguration configuration, IHostEnvironment environment)
     {
+        if (environment.IsEnvironment("Testing"))
+        {
+            var testingConfiguredValue =
+                configuration.GetConnectionString("StainerDatabase")
+                ?? configuration.GetSection(DatabaseOptions.SectionName).Get<DatabaseOptions>()?.ConnectionString;
+
+            if (!string.IsNullOrWhiteSpace(testingConfiguredValue))
+            {
+                return NormalizeConnectionString(testingConfiguredValue, environment.ContentRootPath);
+            }
+        }
+
         var environmentValue = Environment.GetEnvironmentVariable(EnvironmentVariableName);
         if (!string.IsNullOrWhiteSpace(environmentValue))
         {
