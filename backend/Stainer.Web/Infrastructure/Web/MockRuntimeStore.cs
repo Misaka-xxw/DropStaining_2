@@ -249,7 +249,7 @@ public sealed class MockRuntimeStore
             app = "Stainer ASP.NET Core Web Host",
             uiHost = "ASP.NET Core",
             pythonRuntimeRequired = false,
-            dataSource = "Mock runtime state; SQLite remains a reliable copy",
+            dataSource = "SQLite read models for configuration/reference data; Mock runtime state for active run controls",
             urls = new[] { "http://127.0.0.1:5205" },
             timeUtc = DateTimeOffset.UtcNow
         };

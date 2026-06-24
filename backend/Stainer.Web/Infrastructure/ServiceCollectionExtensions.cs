@@ -22,6 +22,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IReferenceDataRepository, EfReferenceDataRepository>();
         services.AddScoped<IWorkflowRepository, EfWorkflowRepository>();
         services.AddScoped<IReagentRepository, EfReagentRepository>();
+        services.AddScoped<IWorkflowReadRepository, EfWorkflowReadRepository>();
+        services.AddScoped<IReagentReadRepository, EfReagentReadRepository>();
+        services.AddScoped<IEngineeringReadRepository, EfEngineeringReadRepository>();
+        services.AddScoped<IUserReadRepository, EfUserReadRepository>();
+        services.AddScoped<WorkflowQueryService>();
+        services.AddScoped<ReagentQueryService>();
+        services.AddScoped<EngineeringQueryService>();
+        services.AddScoped<UserQueryService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
 
         return services;

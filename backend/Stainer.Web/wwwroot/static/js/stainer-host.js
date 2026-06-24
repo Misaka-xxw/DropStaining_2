@@ -130,24 +130,34 @@ function renderSamples(state){
 
 function renderReagents(state){
   if(!document.getElementById('reagentDeck')) return;
-  const reagents = state.reagents || [];
-  setText('reagentBadge', `${reagents.length} 个 VALID`);
-  const byPosition = new Map(reagents.map(x => [x.position, x]));
+  api('/api/reagents/rack').then(rack => renderReagentRackFromDatabase(rack)).catch(() => renderReagentRackFromDatabase([]));
+}
+
+function renderReagentRackFromDatabase(rack){
+  const occupied = rack.filter(x => x.bottle);
+  setText('reagentBadge', `${occupied.length} 个 DATABASE`);
+  const byPosition = new Map(rack.map(x => [x.position, x]));
   const deck = document.getElementById('reagentDeck');
+  if(!deck) return;
   deck.innerHTML = [1,2,3,4,5].map(col => {
     const rows = [1,2,3,4,5,6,7,8].map(row => {
       const pos = 'R' + (((col - 1) * 8) + row);
-      const reagent = byPosition.get(pos);
-      const scanState = reagent ? 'VALID' : (pos === 'R18' || pos === 'R32' ? 'INVALID' : 'EMPTY');
-      const args = [pos, scanState, reagent?.barcode || '', reagent?.name || '无瓶/未识别', reagent?.code || '', reagent?.volumeMl || '', reagent?.lotNo || '', reagent?.expireDate || ''].map(x => `'${String(x).replaceAll("'", "\\'")}'`).join(',');
-      return `<button type="button" class="vial ${reagent ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(reagent?.reagentType || '')}" onclick="showReagentDetail(${args})"><b>${pos}</b><div><span>${escapeHtml(reagent ? reagent.name : scanState)}</span><small>${escapeHtml(reagent ? reagent.code : '扫码状态 ' + scanState)}</small></div><em>${reagent ? reagent.volumeMl + 'mL' : '--'}</em></button>`;
+      const position = byPosition.get(pos);
+      const bottle = position?.bottle;
+      const scanState = bottle ? 'VALID' : 'EMPTY';
+      const volumeMl = bottle ? Math.round((bottle.remainingVolumeUl / 1000) * 10) / 10 : '';
+      const args = [pos, scanState, bottle?.fullBarcode || '', bottle?.name || '无瓶/未识别', bottle?.reagentCode || '', volumeMl, bottle?.lotNo || '', bottle?.expirationDate || ''].map(x => `'${String(x).replaceAll("'", "\\'")}'`).join(',');
+      return `<button type="button" class="vial ${bottle ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(bottle?.reagentType || '')}" onclick="showReagentDetail(${args})"><b>${pos}</b><div><span>${escapeHtml(bottle ? bottle.name : scanState)}</span><small>${escapeHtml(bottle ? bottle.reagentCode : '数据库位置 ' + scanState)}</small></div><em>${bottle ? volumeMl + 'mL' : '--'}</em></button>`;
     }).join('');
     return `<div class="reagent-rack"><header><b>ch${col}</b><span>R${(col-1)*8+1}-R${col*8}</span></header>${rows}</div>`;
   }).join('');
 
   const columnStatus = document.getElementById('columnStatus');
   if(columnStatus){
-    columnStatus.innerHTML = [1,2,3,4,5].map(col => `<div><b>ch${col}</b><span>${reagents.length ? '完成' : '待扫描'}</span><em>R${(col-1)*8+1}-R${col*8}</em></div>`).join('');
+    columnStatus.innerHTML = [1,2,3,4,5].map(col => {
+      const count = rack.filter(x => x.columnNo === col && x.bottle).length;
+      return `<div><b>ch${col}</b><span>${count ? count + ' 个数据库瓶' : '数据库空位'}</span><em>R${(col-1)*8+1}-R${col*8}</em></div>`;
+    }).join('');
   }
 }
 
@@ -191,11 +201,19 @@ function renderEngineer(state){
 
 async function renderConfigure(){
   if(!document.getElementById('protocolTable')) return;
-  const protocols = await api('/api/protocols');
+  const workflows = await api('/api/workflows');
+  const catalog = await api('/api/reagents/catalog');
+  const liquidClasses = await api('/api/engineering/liquid-classes');
   const dab = await api('/api/dab');
-  document.getElementById('protocolTable').innerHTML = protocols.map(p => `<div class="protocol-version-row"><b>${escapeHtml(p.code)}</b><span>${escapeHtml(p.name)}</span><em>v${escapeHtml(p.version)}</em><small>${escapeHtml(p.description)}</small><div><button class="btn btn-soft">查看步骤</button><button class="btn btn-soft">停用</button></div></div>`).join('');
+  document.getElementById('protocolTable').innerHTML = workflows.map(w => {
+    const version = (w.versions || []).slice(-1)[0];
+    return `<div class="protocol-version-row"><b>${escapeHtml(w.code)}</b><span>${escapeHtml(w.name)}</span><em>v${escapeHtml(version?.versionLabel || '')}</em><small>${escapeHtml(w.description)}</small><div><button class="btn btn-soft" onclick="api('/api/workflows/${w.id}').then(()=>toast('已从数据库读取流程详情'))">查看步骤</button><button class="btn btn-soft">停用</button></div></div>`;
+  }).join('') || '<div class="empty-state"><b>暂无数据库流程</b><span>请先导入或创建流程版本。</span></div>';
   document.getElementById('dabPreview').innerHTML = `<div><span>IHC 张数</span><b>${dab.slideCount}</b></div><div><span>总量</span><b>${dab.totalMl}</b><em>mL</em></div><div><span>A/B/水</span><b>${dab.dabAMl}/${dab.dabBMl}/${dab.pureWaterMl}</b></div>`;
-  document.getElementById('catalogTable').innerHTML = '<div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>保质期</span><span>液体类型</span></div><div class="table-row"><span>BLOCK</span><span>Block</span><span>common</span><span>12月</span><span>Ab</span></div><div class="table-row"><span>WASH</span><span>Wash</span><span>wash</span><span>12月</span><span>Wash</span></div>';
+  const liquidByCode = new Map(liquidClasses.map(x => [x.code, x]));
+  document.getElementById('catalogTable').innerHTML = '<div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>报警余量</span><span>液体类型</span></div>'
+    + (catalog.map(item => `<div class="table-row"><span>${escapeHtml(item.reagentCode)}</span><span>${escapeHtml(item.name)}</span><span>${escapeHtml(item.reagentType || '--')}</span><span>${item.minimumAlarmVolumeUl ?? '--'} μL</span><span>${escapeHtml(item.liquidClassCode || '--')}</span></div>`).join('')
+    || '<div class="empty-state"><b>暂无数据库试剂目录</b><span>请先导入或维护试剂目录。</span></div>');
 }
 
 function renderTimeline(id, items, limit){

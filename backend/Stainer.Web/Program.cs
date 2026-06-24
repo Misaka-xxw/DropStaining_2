@@ -43,6 +43,9 @@ using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
     await DatabaseInitializer.InitializeAsync(dbContext);
+    await dbContext.Database.MigrateAsync();
+    var seeder = scope.ServiceProvider.GetRequiredService<ReferenceDataSeeder>();
+    await seeder.SeedAsync();
 }
 
 app.Run();

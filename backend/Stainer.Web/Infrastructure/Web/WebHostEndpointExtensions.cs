@@ -1,5 +1,7 @@
 namespace Stainer.Web.Infrastructure.Web;
 
+using Stainer.Web.Application.Services;
+
 public static class WebHostEndpointExtensions
 {
     private static readonly string[] PageRoutes =
@@ -27,8 +29,29 @@ public static class WebHostEndpointExtensions
 
         app.MapGet("/api/system/info", (MockRuntimeStore store) => Results.Ok(store.SystemInfo()));
         app.MapGet("/api/state", (MockRuntimeStore store) => Results.Ok(store.GetState()));
-        app.MapGet("/api/users", (MockRuntimeStore store) => Results.Ok(store.GetUsers()));
-        app.MapGet("/api/protocols", (MockRuntimeStore store) => Results.Ok(store.GetProtocols()));
+        app.MapGet("/api/users", async (UserQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListUsersAsync(cancellationToken)));
+        app.MapGet("/api/roles", async (UserQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListRolesAsync(cancellationToken)));
+        app.MapGet("/api/workflows", async (WorkflowQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListAsync(cancellationToken)));
+        app.MapGet("/api/workflows/{id}", async (string id, WorkflowQueryService service, CancellationToken cancellationToken) =>
+        {
+            var workflow = await service.GetAsync(id, cancellationToken);
+            return workflow is null ? Results.NotFound() : Results.Ok(workflow);
+        });
+        app.MapGet("/api/protocols", async (WorkflowQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListProtocolCompatAsync(cancellationToken)));
+        app.MapGet("/api/reagents/catalog", async (ReagentQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListCatalogAsync(cancellationToken)));
+        app.MapGet("/api/reagents/rack", async (ReagentQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListRackAsync(cancellationToken)));
+        app.MapGet("/api/engineering/layout", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.GetLayoutAsync(cancellationToken)));
+        app.MapGet("/api/engineering/coordinate-profiles", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListCoordinateProfilesAsync(cancellationToken)));
+        app.MapGet("/api/engineering/liquid-classes", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.ListLiquidClassesAsync(cancellationToken)));
         app.MapGet("/api/dab", (MockRuntimeStore store, int? slideCount) => Results.Ok(store.GetDab(slideCount)));
         app.MapGet("/api/logs", (MockRuntimeStore store) =>
         {
