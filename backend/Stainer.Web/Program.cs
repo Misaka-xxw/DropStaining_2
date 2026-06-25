@@ -1,4 +1,5 @@
 using Stainer.Web.Infrastructure;
+using Stainer.Web.Application.Services;
 using Stainer.Web.Infrastructure.Data;
 using Stainer.Web.Infrastructure.Health;
 using Stainer.Web.Infrastructure.Web;
@@ -23,6 +24,8 @@ if (args.Contains("--seed-reference-data", StringComparer.OrdinalIgnoreCase))
     var dbContext = seedScope.ServiceProvider.GetRequiredService<StainerDbContext>();
     await DatabaseInitializer.InitializeAsync(dbContext);
     await dbContext.Database.MigrateAsync();
+    var backfill = seedScope.ServiceProvider.GetRequiredService<ChannelBatchWorkflowBackfillService>();
+    await backfill.BackfillAsync();
     var seeder = seedScope.ServiceProvider.GetRequiredService<ReferenceDataSeeder>();
     await seeder.SeedAsync();
     Console.WriteLine("Reference data seeded.");
@@ -44,6 +47,8 @@ using (var scope = app.Services.CreateScope())
     var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
     await DatabaseInitializer.InitializeAsync(dbContext);
     await dbContext.Database.MigrateAsync();
+    var backfill = scope.ServiceProvider.GetRequiredService<ChannelBatchWorkflowBackfillService>();
+    await backfill.BackfillAsync();
     var seeder = scope.ServiceProvider.GetRequiredService<ReferenceDataSeeder>();
     await seeder.SeedAsync();
 }

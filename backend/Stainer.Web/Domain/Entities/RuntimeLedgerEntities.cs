@@ -11,6 +11,8 @@ public sealed class ChannelBatch
     public string? SelectedWorkflowVersionId { get; set; }
     public string WorkflowSnapshotJson { get; set; } = "{}";
     public string WorkflowSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.WorkflowSelectionStatus.Unselected;
+    public bool NeedsManualResolution { get; set; }
+    public string ManualResolutionReason { get; set; } = string.Empty;
     public DateTimeOffset? WorkflowSelectedAtUtc { get; set; }
     public string? WorkflowSelectedByUserId { get; set; }
     public DateTimeOffset? WorkflowLockedAtUtc { get; set; }

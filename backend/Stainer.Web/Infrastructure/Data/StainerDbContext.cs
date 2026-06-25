@@ -901,6 +901,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         batches.Property(x => x.SelectedWorkflowVersionId).HasColumnName("selected_workflow_version_id").HasMaxLength(36);
         batches.Property(x => x.WorkflowSnapshotJson).HasColumnName("workflow_snapshot_json").HasMaxLength(40000).IsRequired();
         batches.Property(x => x.WorkflowSelectionStatus).HasColumnName("workflow_selection_status").HasMaxLength(32).IsRequired();
+        batches.Property(x => x.NeedsManualResolution).HasColumnName("needs_manual_resolution").IsRequired();
+        batches.Property(x => x.ManualResolutionReason).HasColumnName("manual_resolution_reason").HasMaxLength(2000).IsRequired();
         batches.Property(x => x.WorkflowSelectedAtUtc).HasColumnName("workflow_selected_at_utc");
         batches.Property(x => x.WorkflowSelectedByUserId).HasColumnName("workflow_selected_by_user_id").HasMaxLength(36);
         batches.Property(x => x.WorkflowLockedAtUtc).HasColumnName("workflow_locked_at_utc");
