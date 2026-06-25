@@ -38,7 +38,7 @@ public sealed class RuntimeLedgerExecutorTests
                     ("HEMATOXYLIN", "Dispense", "HEM", 100)
                 ],
                 [("ABC", 800), ("HEM", 100)]);
-            heTaskId = await CreateConfirmedTaskAsync(dbContext, "HE-RUN", StainingTaskType.He, "A-02",
+            heTaskId = await CreateConfirmedTaskAsync(dbContext, "HE-RUN", StainingTaskType.He, "B-01",
                 [
                     ("HEMATOXYLIN", "Dispense", "HEM", 100),
                     ("TERMINAL_WASH", "Wash", null, null)
@@ -563,7 +563,8 @@ public sealed class RuntimeLedgerExecutorTests
             });
         }
 
-        var slot = await dbContext.PhysicalSlots.SingleAsync(x => x.Code == slotCode);
+        var slot = await dbContext.PhysicalSlots.Include(x => x.Drawer).SingleAsync(x => x.Code == slotCode);
+        var snapshot = $$"""{"workflowVersionId":"{{workflowVersion.Id}}","workflowType":"{{workflowType}}","source":"runtime-test"}""";
         var task = new StainingTask
         {
             TaskCode = $"TASK-{workflowCode}",
@@ -572,11 +573,46 @@ public sealed class RuntimeLedgerExecutorTests
             PhysicalSlotId = slot.Id,
             WorkflowDefinition = workflowDefinition,
             WorkflowVersion = workflowVersion,
-            WorkflowSnapshotJson = "{}",
+            WorkflowSnapshotJson = snapshot,
             CandidateResultsJson = "[]",
             CreatedAtUtc = DateTimeOffset.UtcNow
         };
         dbContext.StainingTasks.Add(task);
+        var batch = await dbContext.ChannelBatches
+            .Include(x => x.SlideTasks)
+            .SingleOrDefaultAsync(x => x.DrawerId == slot.DrawerId && x.Status == RuntimeLedgerStatus.Pending);
+        if (batch is null)
+        {
+            batch = new ChannelBatch
+            {
+                DrawerId = slot.DrawerId,
+                DrawerCode = slot.Drawer!.Code,
+                Status = RuntimeLedgerStatus.Pending,
+                ExperimentType = workflowType,
+                SelectedWorkflowVersion = workflowVersion,
+                WorkflowSnapshotJson = snapshot,
+                WorkflowSelectionStatus = WorkflowSelectionStatus.Selected,
+                WorkflowSelectedAtUtc = DateTimeOffset.UtcNow,
+                CreatedAtUtc = DateTimeOffset.UtcNow
+            };
+            dbContext.ChannelBatches.Add(batch);
+        }
+        else
+        {
+            Assert.Equal(workflowType, batch.ExperimentType);
+            Assert.Equal(workflowVersion.Id, batch.SelectedWorkflowVersionId);
+        }
+
+        dbContext.SlideTasks.Add(new SlideTask
+        {
+            ChannelBatch = batch,
+            StainingTask = task,
+            PhysicalSlot = slot,
+            SlotCode = slot.Code,
+            TaskType = workflowType,
+            Status = RuntimeLedgerStatus.Pending,
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        });
         await dbContext.SaveChangesAsync();
         return task.Id;
     }

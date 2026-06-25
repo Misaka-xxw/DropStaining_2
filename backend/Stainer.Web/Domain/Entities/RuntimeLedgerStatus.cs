@@ -16,6 +16,23 @@ public static class RuntimeLedgerStatus
     public const string Expired = "Expired";
 }
 
+public static class WorkflowSelectionStatus
+{
+    public const string Unselected = "Unselected";
+    public const string Selected = "Selected";
+    public const string Locked = "Locked";
+    public const string NeedsManualResolution = "NeedsManualResolution";
+}
+
+public static class WorkflowAssignmentAction
+{
+    public const string InitialSelection = "InitialSelection";
+    public const string PreStartChange = "PreStartChange";
+    public const string Lock = "Lock";
+    public const string Backfill = "Backfill";
+    public const string ManualResolutionRequired = "ManualResolutionRequired";
+}
+
 public static class DeviceCommandStatus
 {
     public const string Planned = "Planned";

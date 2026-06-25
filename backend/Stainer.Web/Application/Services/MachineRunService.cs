@@ -55,60 +55,63 @@ public sealed class MachineRunService(StainerDbContext dbContext, CommandIdempot
                     throw new BusinessRuleException("task_not_confirmed", "All tasks must be confirmed before creating a run.", StatusCodes.Status409Conflict);
                 }
 
-                var drawerGroups = tasks.GroupBy(x => x.PhysicalSlot!.Drawer!.Code).ToList();
-                if (drawerGroups.Any(x => x.Count() is < 1 or > 3))
+                var slideTasks = await dbContext.SlideTasks
+                    .Include(x => x.StainingTask)
+                    .Include(x => x.PhysicalSlot)
+                    .ThenInclude(x => x!.Drawer)
+                    .Include(x => x.ChannelBatch)
+                    .ThenInclude(x => x!.SelectedWorkflowVersion)
+                    .ThenInclude(x => x!.WorkflowDefinition)
+                    .Where(x => request.StainingTaskIds.Contains(x.StainingTaskId))
+                    .ToListAsync(cancellationToken);
+                if (slideTasks.Count != tasks.Count)
                 {
-                    throw new BusinessRuleException("drawer_batch_size_invalid", "Each drawer batch must contain 1 to 3 confirmed slides.", StatusCodes.Status409Conflict);
+                    throw new BusinessRuleException("channel_batch_required", "All tasks must belong to a selected channel batch before creating a run.", StatusCodes.Status409Conflict);
                 }
 
+                var batchIds = slideTasks.Select(x => x.ChannelBatchId).Distinct().ToList();
+                var batches = await dbContext.ChannelBatches
+                    .Include(x => x.SlideTasks)
+                    .ThenInclude(x => x.StainingTask)
+                    .Include(x => x.SelectedWorkflowVersion)
+                    .ThenInclude(x => x!.WorkflowDefinition)
+                    .Where(x => batchIds.Contains(x.Id))
+                    .ToListAsync(cancellationToken);
+                ValidateBatchesForRun(request.StainingTaskIds, batches);
+
+                var now = DateTimeOffset.UtcNow;
                 var run = new MachineRun
                 {
-                    RunCode = $"RUN-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}"[..30],
+                    RunCode = $"RUN-{now:yyyyMMddHHmmss}-{Guid.NewGuid():N}"[..30],
                     Status = RuntimeLedgerStatus.Created,
                     RequestedByUserId = actor.UserId,
-                    CreatedAtUtc = DateTimeOffset.UtcNow
+                    CreatedAtUtc = now
                 };
                 dbContext.MachineRuns.Add(run);
 
-                foreach (var drawerGroup in drawerGroups.OrderBy(x => x.Key))
+                foreach (var batch in batches.OrderBy(x => x.DrawerCode))
                 {
-                    var firstTask = drawerGroup.First();
-                    var batch = new ChannelBatch
-                    {
-                        MachineRun = run,
-                        DrawerId = firstTask.PhysicalSlot!.DrawerId,
-                        DrawerCode = drawerGroup.Key,
-                        Status = RuntimeLedgerStatus.Pending,
-                        CreatedAtUtc = DateTimeOffset.UtcNow
-                    };
+                    batch.MachineRun = run;
+                    batch.Status = RuntimeLedgerStatus.Pending;
                     run.ChannelBatches.Add(batch);
 
-                    foreach (var task in drawerGroup.OrderBy(x => x.PhysicalSlot!.SlotNo))
+                    var selectedWorkflowVersionId = batch.SelectedWorkflowVersionId!;
+                    foreach (var slideTask in batch.SlideTasks.OrderBy(x => x.PhysicalSlot?.SlotNo ?? int.MaxValue).ThenBy(x => x.SlotCode))
                     {
-                        var slideTask = new SlideTask
-                        {
-                            ChannelBatch = batch,
-                            StainingTaskId = task.Id,
-                            PhysicalSlotId = task.PhysicalSlotId,
-                            SlotCode = task.PhysicalSlot!.Code,
-                            TaskType = task.TaskType,
-                            Status = RuntimeLedgerStatus.Pending,
-                            CreatedAtUtc = DateTimeOffset.UtcNow
-                        };
-                        batch.SlideTasks.Add(slideTask);
+                        slideTask.Status = RuntimeLedgerStatus.Pending;
 
                         var workflowExecution = new WorkflowExecution
                         {
                             MachineRun = run,
                             SlideTask = slideTask,
-                            WorkflowVersionId = task.WorkflowVersionId,
+                            WorkflowVersionId = selectedWorkflowVersionId,
                             Status = RuntimeLedgerStatus.Pending,
-                            CreatedAtUtc = DateTimeOffset.UtcNow
+                            CreatedAtUtc = now
                         };
                         slideTask.WorkflowExecutions.Add(workflowExecution);
                         run.WorkflowExecutions.Add(workflowExecution);
 
-                        foreach (var step in await BuildStepExecutionsAsync(task, workflowExecution, cancellationToken))
+                        foreach (var step in await BuildStepExecutionsAsync(batch, slideTask, workflowExecution, cancellationToken))
                         {
                             workflowExecution.StepExecutions.Add(step);
                         }
@@ -126,29 +129,85 @@ public sealed class MachineRunService(StainerDbContext dbContext, CommandIdempot
             cancellationToken);
     }
 
+    private static void ValidateBatchesForRun(IReadOnlyList<string> requestedTaskIds, IReadOnlyList<ChannelBatch> batches)
+    {
+        var requested = requestedTaskIds.ToHashSet(StringComparer.Ordinal);
+        foreach (var batch in batches)
+        {
+            if (batch.WorkflowSelectionStatus == WorkflowSelectionStatus.NeedsManualResolution)
+            {
+                throw new BusinessRuleException("channel_batch_needs_manual_resolution", "Channel batch needs manual workflow resolution before it can start.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.WorkflowSelectionStatus != WorkflowSelectionStatus.Selected
+                || string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
+                || string.IsNullOrWhiteSpace(batch.WorkflowSnapshotJson)
+                || batch.WorkflowSnapshotJson == "{}")
+            {
+                throw new BusinessRuleException("channel_workflow_required", "Each channel batch must have a selected workflow before creating a run.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.WorkflowLockedAtUtc is not null || batch.StartedAtUtc is not null || !string.IsNullOrWhiteSpace(batch.MachineRunId))
+            {
+                throw new BusinessRuleException("channel_batch_locked", "Channel batch is already assigned to a run.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.SlideTasks.Count is < 1 or > 4)
+            {
+                throw new BusinessRuleException("drawer_batch_size_invalid", "Each drawer batch must contain 1 to 4 confirmed slides.", StatusCodes.Status409Conflict);
+            }
+
+            var batchTaskIds = batch.SlideTasks.Select(x => x.StainingTaskId).ToHashSet(StringComparer.Ordinal);
+            if (!batchTaskIds.IsSubsetOf(requested) || !batchTaskIds.SetEquals(requested.Intersect(batchTaskIds, StringComparer.Ordinal)))
+            {
+                throw new BusinessRuleException("channel_batch_incomplete", "A run must include every slide in each selected channel batch.", StatusCodes.Status409Conflict);
+            }
+
+            foreach (var slideTask in batch.SlideTasks)
+            {
+                if (slideTask.StainingTask is null || slideTask.StainingTask.Status != StainingTaskStatus.Confirmed)
+                {
+                    throw new BusinessRuleException("task_not_confirmed", "All slides in the channel batch must be confirmed before creating a run.", StatusCodes.Status409Conflict);
+                }
+
+                if (slideTask.TaskType != batch.ExperimentType || slideTask.StainingTask.TaskType != batch.ExperimentType)
+                {
+                    throw new BusinessRuleException("channel_experiment_type_mismatch", "All slides in a channel must match the selected experiment type.", StatusCodes.Status409Conflict);
+                }
+
+                if (slideTask.StainingTask.WorkflowVersionId != batch.SelectedWorkflowVersionId)
+                {
+                    throw new BusinessRuleException("channel_workflow_mismatch", "Slide workflow must match the selected channel workflow.", StatusCodes.Status409Conflict);
+                }
+            }
+        }
+    }
+
     private async Task<IReadOnlyList<WorkflowStepExecution>> BuildStepExecutionsAsync(
-        StainingTask task,
+        ChannelBatch batch,
+        SlideTask slideTask,
         WorkflowExecution workflowExecution,
         CancellationToken cancellationToken)
     {
+        var workflowVersionId = batch.SelectedWorkflowVersionId!;
         var steps = await dbContext.WorkflowSteps
             .AsNoTracking()
-            .Where(x => x.WorkflowVersionId == task.WorkflowVersionId)
+            .Where(x => x.WorkflowVersionId == workflowVersionId)
             .OrderBy(x => x.StepNo)
             .ToListAsync(cancellationToken);
 
         if (steps.Count == 0)
         {
-            steps = task.TaskType == StainingTaskType.He
-                ? SyntheticHeSteps(task.WorkflowVersionId)
-                : SyntheticIhcSteps(task.WorkflowVersionId);
+            steps = batch.ExperimentType == StainingTaskType.He
+                ? SyntheticHeSteps(workflowVersionId)
+                : SyntheticIhcSteps(workflowVersionId);
         }
 
         return steps.Select(x => new WorkflowStepExecution
         {
             WorkflowExecution = workflowExecution,
             StepNo = x.StepNo,
-            MajorStepCode = NormalizeMajorStep(task.TaskType, x.MajorStepCode),
+            MajorStepCode = NormalizeMajorStep(batch.ExperimentType ?? slideTask.TaskType, x.MajorStepCode),
             StepName = string.IsNullOrWhiteSpace(x.StepName) ? x.MajorStepCode : x.StepName,
             ActionType = x.ActionType,
             ReagentCode = x.ReagentCode,

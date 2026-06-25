@@ -63,8 +63,16 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         receipt.EntityId = result.EntityId;
         receipt.ResponseJson = JsonSerializer.Serialize(result.Response, JsonOptions);
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        try
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex) when (IsActiveChannelBatchConflict(ex))
+        {
+            throw new BusinessRuleException("active_channel_batch_exists", "Drawer already has an active channel batch.", StatusCodes.Status409Conflict);
+        }
+
         return result.Response;
     }
 
@@ -85,6 +93,13 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         return Convert.ToHexString(bytes);
     }
 
+    private static bool IsActiveChannelBatchConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains("channel_batches.drawer_id", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("ix_channel_batches_drawer_id", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static T MarkReplay<T>(T response)
         where T : class
     {
@@ -92,6 +107,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         {
             UserMutationResponse x => x with { Replayed = true } as T ?? response,
             WorkflowDraftMutationResponse x => x with { Replayed = true } as T ?? response,
+            ChannelBatchWorkflowResponse x => x with { Replayed = true } as T ?? response,
             TaskCreationResponse x => x with { Replayed = true } as T ?? response,
             ReagentScanConfirmationResponse x => x with { Replayed = true } as T ?? response,
             EngineeringWriteResponse x => x with { Replayed = true } as T ?? response,

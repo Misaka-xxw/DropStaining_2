@@ -146,10 +146,19 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
             return;
         }
 
+        var now = DateTimeOffset.UtcNow;
         run.Status = RuntimeLedgerStatus.Running;
-        run.StartedAtUtc ??= DateTimeOffset.UtcNow;
+        run.StartedAtUtc ??= now;
         run.PauseRequested = false;
         run.StopRequested = false;
+        foreach (var batch in run.ChannelBatches)
+        {
+            batch.Status = RuntimeLedgerStatus.Running;
+            batch.StartedAtUtc ??= now;
+            batch.WorkflowLockedAtUtc ??= now;
+            batch.WorkflowSelectionStatus = WorkflowSelectionStatus.Locked;
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         PublishMachineState(run, "Run started or resumed.");
         eventPublisher.Publish(MachineEventMessage.Create(
@@ -636,9 +645,19 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
 
     private async Task PauseRunAsync(StainerDbContext dbContext, string runId, CancellationToken cancellationToken)
     {
-        var run = await dbContext.MachineRuns.SingleAsync(x => x.Id == runId, cancellationToken);
+        var run = await LoadRunAsync(dbContext, runId, cancellationToken);
+        if (run is null)
+        {
+            return;
+        }
+
         run.Status = RuntimeLedgerStatus.Paused;
         run.PauseRequested = true;
+        foreach (var batch in run.ChannelBatches)
+        {
+            batch.Status = RuntimeLedgerStatus.Paused;
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         PublishMachineState(run, "Run paused after current atomic action.");
     }
@@ -653,7 +672,22 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
 
         run.Status = RuntimeLedgerStatus.Stopped;
         run.StopRequested = true;
-        run.CompletedAtUtc = DateTimeOffset.UtcNow;
+        var now = DateTimeOffset.UtcNow;
+        run.CompletedAtUtc = now;
+        foreach (var batch in run.ChannelBatches)
+        {
+            batch.Status = RuntimeLedgerStatus.Stopped;
+            batch.CompletedAtUtc ??= now;
+        }
+
+        foreach (var slideTask in run.WorkflowExecutions.Select(x => x.SlideTask).Where(x => x is not null).Cast<SlideTask>())
+        {
+            if (slideTask.Status is RuntimeLedgerStatus.Pending or RuntimeLedgerStatus.Running or RuntimeLedgerStatus.Paused)
+            {
+                slideTask.Status = RuntimeLedgerStatus.Stopped;
+            }
+        }
+
         foreach (var step in run.WorkflowExecutions.SelectMany(x => x.StepExecutions).Where(x => x.Status == RuntimeLedgerStatus.Pending))
         {
             step.Status = RuntimeLedgerStatus.Stopped;
@@ -679,6 +713,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
 
         run.Status = RuntimeLedgerStatus.Faulted;
         run.FaultMessage = message;
+        foreach (var batch in run.ChannelBatches)
+        {
+            batch.Status = RuntimeLedgerStatus.Faulted;
+        }
+
         await AddAlarmAsync(dbContext, runId, "mock_fault", "Critical", message, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         PublishMachineState(run, message);
@@ -687,13 +726,15 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
     private async Task CompleteRunAsync(StainerDbContext dbContext, MachineRun run, CancellationToken cancellationToken)
     {
         run.Status = RuntimeLedgerStatus.Completed;
-        run.CompletedAtUtc = DateTimeOffset.UtcNow;
+        var now = DateTimeOffset.UtcNow;
+        run.CompletedAtUtc = now;
         foreach (var workflow in run.WorkflowExecutions)
         {
             workflow.Status = RuntimeLedgerStatus.Completed;
-            workflow.CompletedAtUtc = DateTimeOffset.UtcNow;
+            workflow.CompletedAtUtc = now;
             workflow.SlideTask!.Status = RuntimeLedgerStatus.WaitingUnload;
             workflow.SlideTask.ChannelBatch!.Status = RuntimeLedgerStatus.Completed;
+            workflow.SlideTask.ChannelBatch.CompletedAtUtc ??= now;
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);

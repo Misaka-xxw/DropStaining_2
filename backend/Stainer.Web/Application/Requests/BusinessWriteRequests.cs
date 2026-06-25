@@ -33,9 +33,15 @@ public sealed record CreateWorkflowDraftRequest(
     string? VersionLabel,
     string? ChangeNote);
 
+public sealed record SelectChannelWorkflowRequest(
+    string CommandId,
+    string DrawerCode,
+    string WorkflowVersionId,
+    string? Reason);
+
 public sealed record CreateHeTaskRequest(
     string CommandId,
-    string WorkflowVersionId,
+    string? WorkflowVersionId,
     string SlotCode);
 
 public sealed record CreateIhcTaskRequest(

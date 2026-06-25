@@ -141,7 +141,13 @@ public sealed class WebHostIntegrationTests
                 MachineRun = run,
                 DrawerId = drawer.Id,
                 DrawerCode = "A",
-                Status = RuntimeLedgerStatus.Running
+                Status = RuntimeLedgerStatus.Running,
+                ExperimentType = StainingTaskType.He,
+                SelectedWorkflowVersion = version,
+                WorkflowSnapshotJson = "{\"workflowVersionId\":\"state-test\"}",
+                WorkflowSelectionStatus = WorkflowSelectionStatus.Locked,
+                WorkflowLockedAtUtc = DateTimeOffset.UtcNow,
+                StartedAtUtc = DateTimeOffset.UtcNow
             };
             var slide = new SlideTask
             {

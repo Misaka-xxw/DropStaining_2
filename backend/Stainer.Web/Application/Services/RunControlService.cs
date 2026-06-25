@@ -14,7 +14,19 @@ public sealed class RunControlService(
 {
     public Task<RunCommandResponse> StartAsync(string runId, RunCommandRequest request, AuthenticatedUser actor, CancellationToken cancellationToken = default)
     {
-        return EnqueueAsync(runId, request.CommandId, "run.start", request, actor, async () => await executor.EnqueueStartAsync(runId, cancellationToken), "Start command queued.", cancellationToken);
+        return EnqueueAsync(
+            runId,
+            request.CommandId,
+            "run.start",
+            request,
+            actor,
+            async () =>
+            {
+                await LockChannelBatchesForStartAsync(runId, request.CommandId, actor, cancellationToken);
+                await executor.EnqueueStartAsync(runId, cancellationToken);
+            },
+            "Start command queued.",
+            cancellationToken);
     }
 
     public Task<RunCommandResponse> PauseAsync(string runId, RunCommandRequest request, AuthenticatedUser actor, CancellationToken cancellationToken = default)
@@ -72,5 +84,53 @@ public sealed class RunControlService(
                     runId);
             },
             cancellationToken);
+    }
+
+    private async Task LockChannelBatchesForStartAsync(
+        string runId,
+        string commandId,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken)
+    {
+        var run = await dbContext.MachineRuns
+            .Include(x => x.ChannelBatches)
+            .SingleAsync(x => x.Id == runId, cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        foreach (var batch in run.ChannelBatches)
+        {
+            if (batch.WorkflowSelectionStatus == WorkflowSelectionStatus.NeedsManualResolution)
+            {
+                throw new BusinessRuleException("channel_batch_needs_manual_resolution", "Channel batch needs manual workflow resolution before it can start.", StatusCodes.Status409Conflict);
+            }
+
+            if (string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
+                || string.IsNullOrWhiteSpace(batch.WorkflowSnapshotJson)
+                || batch.WorkflowSnapshotJson == "{}")
+            {
+                throw new BusinessRuleException("channel_workflow_required", "Each channel batch must have a selected workflow before start.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.WorkflowLockedAtUtc is null)
+            {
+                dbContext.WorkflowAssignmentHistory.Add(new WorkflowAssignmentHistory
+                {
+                    ChannelBatch = batch,
+                    OldExperimentType = batch.ExperimentType,
+                    OldWorkflowVersionId = batch.SelectedWorkflowVersionId,
+                    OldWorkflowSnapshotJson = batch.WorkflowSnapshotJson,
+                    NewExperimentType = batch.ExperimentType,
+                    NewWorkflowVersionId = batch.SelectedWorkflowVersionId,
+                    NewWorkflowSnapshotJson = batch.WorkflowSnapshotJson,
+                    ActionType = WorkflowAssignmentAction.Lock,
+                    ActorUserId = actor.UserId,
+                    CreatedAtUtc = now,
+                    Reason = "Run start locked channel workflow.",
+                    CommandId = commandId
+                });
+            }
+
+            batch.WorkflowSelectionStatus = WorkflowSelectionStatus.Locked;
+            batch.WorkflowLockedAtUtc ??= now;
+        }
     }
 }

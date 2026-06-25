@@ -3,15 +3,47 @@ namespace Stainer.Web.Domain.Entities;
 public sealed class ChannelBatch
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
-    public string MachineRunId { get; set; } = string.Empty;
+    public string? MachineRunId { get; set; }
     public string DrawerId { get; set; } = string.Empty;
     public string DrawerCode { get; set; } = string.Empty;
     public string Status { get; set; } = RuntimeLedgerStatus.Pending;
+    public string? ExperimentType { get; set; }
+    public string? SelectedWorkflowVersionId { get; set; }
+    public string WorkflowSnapshotJson { get; set; } = "{}";
+    public string WorkflowSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.WorkflowSelectionStatus.Unselected;
+    public DateTimeOffset? WorkflowSelectedAtUtc { get; set; }
+    public string? WorkflowSelectedByUserId { get; set; }
+    public DateTimeOffset? WorkflowLockedAtUtc { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? StartedAtUtc { get; set; }
+    public DateTimeOffset? CompletedAtUtc { get; set; }
 
     public MachineRun? MachineRun { get; set; }
     public Drawer? Drawer { get; set; }
+    public WorkflowVersion? SelectedWorkflowVersion { get; set; }
+    public User? WorkflowSelectedByUser { get; set; }
     public ICollection<SlideTask> SlideTasks { get; set; } = new List<SlideTask>();
+    public ICollection<WorkflowAssignmentHistory> WorkflowAssignmentHistory { get; set; } = new List<WorkflowAssignmentHistory>();
+}
+
+public sealed class WorkflowAssignmentHistory
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string ChannelBatchId { get; set; } = string.Empty;
+    public string? OldExperimentType { get; set; }
+    public string? OldWorkflowVersionId { get; set; }
+    public string? OldWorkflowSnapshotJson { get; set; }
+    public string? NewExperimentType { get; set; }
+    public string? NewWorkflowVersionId { get; set; }
+    public string? NewWorkflowSnapshotJson { get; set; }
+    public string ActionType { get; set; } = WorkflowAssignmentAction.InitialSelection;
+    public string? ActorUserId { get; set; }
+    public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+    public string Reason { get; set; } = string.Empty;
+    public string? CommandId { get; set; }
+
+    public ChannelBatch? ChannelBatch { get; set; }
+    public User? ActorUser { get; set; }
 }
 
 public sealed class SlideTask

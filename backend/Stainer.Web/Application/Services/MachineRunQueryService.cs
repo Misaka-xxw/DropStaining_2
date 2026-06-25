@@ -37,6 +37,10 @@ public sealed class MachineRunQueryService(StainerDbContext dbContext)
                     x.Id,
                     x.DrawerCode,
                     x.Status,
+                    x.ExperimentType,
+                    x.SelectedWorkflowVersionId,
+                    x.WorkflowSelectionStatus,
+                    x.WorkflowLockedAtUtc,
                     x.SlideTasks
                         .OrderBy(s => s.SlotCode)
                         .Select(s => new SlideTaskResponse(s.Id, s.SlotCode, s.TaskType, s.Status))

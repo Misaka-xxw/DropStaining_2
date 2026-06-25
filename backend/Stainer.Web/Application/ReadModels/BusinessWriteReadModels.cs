@@ -30,6 +30,18 @@ public sealed record WorkflowDraftMutationResponse(
     string Status,
     string Message);
 
+public sealed record ChannelBatchWorkflowResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string ChannelBatchId,
+    string DrawerCode,
+    string ExperimentType,
+    string WorkflowVersionId,
+    string WorkflowSelectionStatus,
+    DateTimeOffset? WorkflowSelectedAtUtc,
+    string Message);
+
 public sealed record TaskWorkflowCandidateResponse(
     string WorkflowVersionId,
     string WorkflowDefinitionId,

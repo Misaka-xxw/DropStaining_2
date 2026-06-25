@@ -8,7 +8,10 @@ using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Application.Services;
 
-public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdempotencyService idempotencyService)
+public sealed class TaskCreationService(
+    StainerDbContext dbContext,
+    CommandIdempotencyService idempotencyService,
+    ChannelBatchWorkflowService channelBatchWorkflowService)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -25,11 +28,14 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
             async () =>
             {
                 var slot = await LoadIdleSlotAsync(request.SlotCode, cancellationToken);
-                var version = await LoadPublishedWorkflowVersionAsync(request.WorkflowVersionId, StainingTaskType.He, cancellationToken);
+                var batch = await channelBatchWorkflowService.RequireSelectedActiveBatchAsync(slot.Drawer!.Code, cancellationToken);
+                EnsureCanAddSlideToBatch(batch, StainingTaskType.He, request.WorkflowVersionId);
+                var version = await LoadChannelWorkflowVersionAsync(batch, StainingTaskType.He, cancellationToken);
                 var task = CreateTask(
                     request.CommandId,
                     StainingTaskType.He,
                     slot,
+                    batch,
                     version,
                     actor,
                     inputMode: "ManualHE",
@@ -38,7 +44,8 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
                     primaryAntibodyCode: null,
                     candidateResults: Array.Empty<object>());
                 dbContext.StainingTasks.Add(task);
-                AddAudit(actor, "task.create_he", task.Id, new { task.TaskCode, slot = slot.Code, workflowVersionId = version.Id });
+                AddSlideTask(batch, task, slot, StainingTaskType.He);
+                AddAudit(actor, "task.create_he", task.Id, new { task.TaskCode, slot = slot.Code, channelBatchId = batch.Id, workflowVersionId = batch.SelectedWorkflowVersionId });
                 return new CommandExecutionResult<TaskCreationResponse>(
                     CreatedResponse(request.CommandId, false, task, "HE task created."),
                     "StainingTask",
@@ -75,11 +82,15 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
             async () =>
             {
                 var slot = await LoadIdleSlotAsync(request.SlotCode, cancellationToken);
-                var version = await LoadPublishedWorkflowVersionAsync(resolution.WorkflowVersionId!, StainingTaskType.Ihc, cancellationToken);
+                var batch = await channelBatchWorkflowService.RequireSelectedActiveBatchAsync(slot.Drawer!.Code, cancellationToken);
+                EnsureCanAddSlideToBatch(batch, StainingTaskType.Ihc, request.SelectedWorkflowVersionId);
+                var version = await LoadChannelWorkflowVersionAsync(batch, StainingTaskType.Ihc, cancellationToken);
+                await EnsurePrimaryAntibodyCompatibleAsync(resolution.PrimaryAntibodyCode!, version.Id, cancellationToken);
                 var task = CreateTask(
                     request.CommandId,
                     StainingTaskType.Ihc,
                     slot,
+                    batch,
                     version,
                     actor,
                     request.InputMode,
@@ -93,18 +104,20 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
                             candidatePrimaryAntibodyCodes = resolution.CandidatePrimaryAntibodyCodes,
                             candidateWorkflows = resolution.CandidateWorkflows,
                             selectedPrimaryAntibodyCode = resolution.PrimaryAntibodyCode,
-                            selectedWorkflowVersionId = resolution.WorkflowVersionId
+                            selectedWorkflowVersionId = version.Id
                         }
                     });
                 dbContext.StainingTasks.Add(task);
+                AddSlideTask(batch, task, slot, StainingTaskType.Ihc);
                 AddAudit(actor, "task.create_ihc", task.Id, new
                 {
                     task.TaskCode,
                     slot = slot.Code,
+                    channelBatchId = batch.Id,
                     task.RawCode,
                     task.NormalizedCode,
                     task.PrimaryAntibodyCode,
-                    workflowVersionId = version.Id
+                    workflowVersionId = batch.SelectedWorkflowVersionId
                 });
                 return new CommandExecutionResult<TaskCreationResponse>(
                     CreatedResponse(request.CommandId, false, task, "IHC task created."),
@@ -203,19 +216,8 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
             throw new BusinessRuleException("ihc_workflow_not_found", "No published IHC workflow is mapped to the selected primary antibody code.", StatusCodes.Status404NotFound);
         }
 
-        if (workflowCandidates.Count > 1 && string.IsNullOrWhiteSpace(request.SelectedWorkflowVersionId))
-        {
-            return IhcResolution.Selection(
-                "Multiple IHC workflows are mapped to this primary antibody code. Operator selection is required.",
-                normalizedCode,
-                antibodyCandidates,
-                workflowCandidates);
-        }
-
-        var workflowVersionId = string.IsNullOrWhiteSpace(request.SelectedWorkflowVersionId)
-            ? workflowCandidates.Single().WorkflowVersionId
-            : request.SelectedWorkflowVersionId.Trim();
-        if (!workflowCandidates.Any(x => x.WorkflowVersionId == workflowVersionId))
+        if (!string.IsNullOrWhiteSpace(request.SelectedWorkflowVersionId)
+            && !workflowCandidates.Any(x => x.WorkflowVersionId == request.SelectedWorkflowVersionId.Trim()))
         {
             throw new BusinessRuleException("invalid_workflow_selection", "Selected workflow version is not in the candidate list.");
         }
@@ -223,7 +225,7 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
         return IhcResolution.Final(
             normalizedCode,
             primaryAntibodyCode,
-            workflowVersionId,
+            request.SelectedWorkflowVersionId?.Trim(),
             antibodyCandidates,
             workflowCandidates);
     }
@@ -231,7 +233,9 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
     private async Task<PhysicalSlot> LoadIdleSlotAsync(string slotCode, CancellationToken cancellationToken)
     {
         var normalized = (slotCode ?? string.Empty).Trim();
-        var slot = await dbContext.PhysicalSlots.SingleOrDefaultAsync(x => x.Code == normalized, cancellationToken);
+        var slot = await dbContext.PhysicalSlots
+            .Include(x => x.Drawer)
+            .SingleOrDefaultAsync(x => x.Code == normalized, cancellationToken);
         if (slot is null)
         {
             throw new BusinessRuleException("slot_not_found", "Physical slot was not found.", StatusCodes.Status404NotFound);
@@ -271,10 +275,33 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
         return version;
     }
 
+    private async Task<WorkflowVersion> LoadChannelWorkflowVersionAsync(
+        ChannelBatch batch,
+        string workflowType,
+        CancellationToken cancellationToken)
+    {
+        if (batch.WorkflowSelectionStatus != WorkflowSelectionStatus.Selected
+            || string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
+            || string.IsNullOrWhiteSpace(batch.WorkflowSnapshotJson)
+            || batch.WorkflowSnapshotJson == "{}")
+        {
+            throw new BusinessRuleException("channel_workflow_required", "Select a channel workflow before adding slides.", StatusCodes.Status409Conflict);
+        }
+
+        var version = await LoadPublishedWorkflowVersionAsync(batch.SelectedWorkflowVersionId, workflowType, cancellationToken);
+        if (batch.ExperimentType != workflowType)
+        {
+            throw new BusinessRuleException("channel_experiment_type_mismatch", "Task type must match the selected channel workflow.", StatusCodes.Status409Conflict);
+        }
+
+        return version;
+    }
+
     private static StainingTask CreateTask(
         string commandId,
         string taskType,
         PhysicalSlot slot,
+        ChannelBatch batch,
         WorkflowVersion version,
         AuthenticatedUser actor,
         string? inputMode,
@@ -290,8 +317,8 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
             Status = StainingTaskStatus.Confirmed,
             PhysicalSlotId = slot.Id,
             WorkflowDefinitionId = version.WorkflowDefinitionId,
-            WorkflowVersionId = version.Id,
-            WorkflowSnapshotJson = JsonSerializer.Serialize(ToWorkflowSnapshot(version), JsonOptions),
+            WorkflowVersionId = batch.SelectedWorkflowVersionId!,
+            WorkflowSnapshotJson = batch.WorkflowSnapshotJson,
             InputMode = inputMode,
             RawCode = rawCode,
             NormalizedCode = normalizedCode,
@@ -302,37 +329,64 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
         };
     }
 
-    private static object ToWorkflowSnapshot(WorkflowVersion version)
+    private void AddSlideTask(ChannelBatch batch, StainingTask task, PhysicalSlot slot, string taskType)
     {
-        return new
+        dbContext.SlideTasks.Add(new SlideTask
         {
-            workflowDefinitionId = version.WorkflowDefinitionId,
-            workflowCode = version.WorkflowDefinition?.Code,
-            workflowName = version.WorkflowDefinition?.Name,
-            workflowType = version.WorkflowDefinition?.WorkflowType,
-            workflowVersionId = version.Id,
-            version.VersionNo,
-            version.VersionLabel,
-            version.Status,
-            steps = version.Steps.OrderBy(x => x.StepNo).Select(x => new
-            {
-                x.StepNo,
-                x.MajorStepCode,
-                x.StepName,
-                x.ActionType,
-                x.ReagentCode,
-                x.VolumeUl,
-                x.DurationSeconds,
-                x.TargetTemperatureDeciC,
-                x.FailureStrategy
-            }),
-            reagentRequirements = version.ReagentRequirements.OrderBy(x => x.ReagentCode).Select(x => new
-            {
-                x.ReagentCode,
-                x.RequiredVolumeUl,
-                x.IsRequired
-            })
-        };
+            ChannelBatch = batch,
+            StainingTask = task,
+            PhysicalSlotId = slot.Id,
+            SlotCode = slot.Code,
+            TaskType = taskType,
+            Status = RuntimeLedgerStatus.Pending,
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        });
+    }
+
+    private static void EnsureCanAddSlideToBatch(ChannelBatch batch, string taskType, string? requestedWorkflowVersionId)
+    {
+        if (batch.WorkflowLockedAtUtc is not null || batch.StartedAtUtc is not null || !string.IsNullOrWhiteSpace(batch.MachineRunId))
+        {
+            throw new BusinessRuleException("channel_batch_locked", "Cannot add slides after the channel batch has started.", StatusCodes.Status409Conflict);
+        }
+
+        if (batch.WorkflowSelectionStatus == WorkflowSelectionStatus.NeedsManualResolution)
+        {
+            throw new BusinessRuleException("channel_batch_needs_manual_resolution", "Channel batch needs manual workflow resolution.", StatusCodes.Status409Conflict);
+        }
+
+        if (batch.ExperimentType != taskType)
+        {
+            throw new BusinessRuleException("channel_experiment_type_mismatch", "All slides in a channel must share the selected experiment type.", StatusCodes.Status409Conflict);
+        }
+
+        if (!string.IsNullOrWhiteSpace(requestedWorkflowVersionId)
+            && requestedWorkflowVersionId.Trim() != batch.SelectedWorkflowVersionId)
+        {
+            throw new BusinessRuleException("channel_workflow_mismatch", "Slide workflow must match the selected channel workflow.", StatusCodes.Status409Conflict);
+        }
+
+        if (batch.SlideTasks.Count >= 4)
+        {
+            throw new BusinessRuleException("channel_batch_full", "A channel batch can contain at most 4 slides.", StatusCodes.Status409Conflict);
+        }
+    }
+
+    private async Task EnsurePrimaryAntibodyCompatibleAsync(
+        string primaryAntibodyCode,
+        string workflowVersionId,
+        CancellationToken cancellationToken)
+    {
+        var compatible = await dbContext.PrimaryAntibodyWorkflowMappings
+            .AsNoTracking()
+            .AnyAsync(x => x.IsEnabled
+                && x.PrimaryAntibodyCode == primaryAntibodyCode
+                && x.WorkflowVersionId == workflowVersionId,
+                cancellationToken);
+        if (!compatible)
+        {
+            throw new BusinessRuleException("channel_workflow_incompatible", "Selected primary antibody is not compatible with the channel workflow.", StatusCodes.Status409Conflict);
+        }
     }
 
     private void AddAudit(AuthenticatedUser actor, string action, string entityId, object details)
@@ -385,7 +439,7 @@ public sealed class TaskCreationService(StainerDbContext dbContext, CommandIdemp
         public static IhcResolution Final(
             string normalizedCode,
             string primaryAntibodyCode,
-            string workflowVersionId,
+            string? workflowVersionId,
             IReadOnlyList<string> candidatePrimaryAntibodyCodes,
             IReadOnlyList<TaskWorkflowCandidateResponse> candidateWorkflows)
         {

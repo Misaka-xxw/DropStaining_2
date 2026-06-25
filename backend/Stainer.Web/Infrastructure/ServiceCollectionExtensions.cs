@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<UserSessionService>();
         services.AddScoped<UserManagementService>();
         services.AddScoped<WorkflowWriteService>();
+        services.AddScoped<ChannelBatchWorkflowService>();
         services.AddScoped<TaskCreationService>();
         services.AddScoped<ReagentScanWriteService>();
         services.AddScoped<EngineeringWriteService>();

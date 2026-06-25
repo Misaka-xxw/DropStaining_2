@@ -37,6 +37,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<StainingTask> StainingTasks => Set<StainingTask>();
     public DbSet<HospitalBarcodeMapping> HospitalBarcodeMappings => Set<HospitalBarcodeMapping>();
     public DbSet<ChannelBatch> ChannelBatches => Set<ChannelBatch>();
+    public DbSet<WorkflowAssignmentHistory> WorkflowAssignmentHistory => Set<WorkflowAssignmentHistory>();
     public DbSet<SlideTask> SlideTasks => Set<SlideTask>();
     public DbSet<MachineRun> MachineRuns => Set<MachineRun>();
     public DbSet<WorkflowExecution> WorkflowExecutions => Set<WorkflowExecution>();
@@ -884,17 +885,58 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         runs.HasOne(x => x.RequestedByUser).WithMany().HasForeignKey(x => x.RequestedByUserId).OnDelete(DeleteBehavior.SetNull);
 
         var batches = modelBuilder.Entity<ChannelBatch>();
-        batches.ToTable("channel_batches");
+        batches.ToTable("channel_batches", table =>
+        {
+            table.HasCheckConstraint(
+                "ck_channel_batches_workflow_selection_status",
+                $"workflow_selection_status in ('{WorkflowSelectionStatus.Unselected}', '{WorkflowSelectionStatus.Selected}', '{WorkflowSelectionStatus.Locked}', '{WorkflowSelectionStatus.NeedsManualResolution}')");
+        });
         batches.HasKey(x => x.Id);
         batches.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
-        batches.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36).IsRequired();
+        batches.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
         batches.Property(x => x.DrawerId).HasColumnName("drawer_id").HasMaxLength(36).IsRequired();
         batches.Property(x => x.DrawerCode).HasColumnName("drawer_code").HasMaxLength(8).IsRequired();
         batches.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        batches.Property(x => x.ExperimentType).HasColumnName("experiment_type").HasMaxLength(16);
+        batches.Property(x => x.SelectedWorkflowVersionId).HasColumnName("selected_workflow_version_id").HasMaxLength(36);
+        batches.Property(x => x.WorkflowSnapshotJson).HasColumnName("workflow_snapshot_json").HasMaxLength(40000).IsRequired();
+        batches.Property(x => x.WorkflowSelectionStatus).HasColumnName("workflow_selection_status").HasMaxLength(32).IsRequired();
+        batches.Property(x => x.WorkflowSelectedAtUtc).HasColumnName("workflow_selected_at_utc");
+        batches.Property(x => x.WorkflowSelectedByUserId).HasColumnName("workflow_selected_by_user_id").HasMaxLength(36);
+        batches.Property(x => x.WorkflowLockedAtUtc).HasColumnName("workflow_locked_at_utc");
         batches.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        batches.Property(x => x.StartedAtUtc).HasColumnName("started_at_utc");
+        batches.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
         batches.HasIndex(x => new { x.MachineRunId, x.DrawerCode }).IsUnique();
-        batches.HasOne(x => x.MachineRun).WithMany(x => x.ChannelBatches).HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.Cascade);
+        batches.HasIndex(x => x.SelectedWorkflowVersionId);
+        batches.HasIndex(x => x.DrawerId)
+            .IsUnique()
+            .HasFilter($"status in ('{RuntimeLedgerStatus.Pending}', '{RuntimeLedgerStatus.Running}', '{RuntimeLedgerStatus.Paused}', '{RuntimeLedgerStatus.Faulted}')");
+        batches.HasOne(x => x.MachineRun).WithMany(x => x.ChannelBatches).HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.SetNull);
         batches.HasOne(x => x.Drawer).WithMany().HasForeignKey(x => x.DrawerId).OnDelete(DeleteBehavior.Restrict);
+        batches.HasOne(x => x.SelectedWorkflowVersion).WithMany().HasForeignKey(x => x.SelectedWorkflowVersionId).OnDelete(DeleteBehavior.Restrict);
+        batches.HasOne(x => x.WorkflowSelectedByUser).WithMany().HasForeignKey(x => x.WorkflowSelectedByUserId).OnDelete(DeleteBehavior.SetNull);
+
+        var histories = modelBuilder.Entity<WorkflowAssignmentHistory>();
+        histories.ToTable("workflow_assignment_history");
+        histories.HasKey(x => x.Id);
+        histories.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        histories.Property(x => x.ChannelBatchId).HasColumnName("channel_batch_id").HasMaxLength(36).IsRequired();
+        histories.Property(x => x.OldExperimentType).HasColumnName("old_experiment_type").HasMaxLength(16);
+        histories.Property(x => x.OldWorkflowVersionId).HasColumnName("old_workflow_version_id").HasMaxLength(36);
+        histories.Property(x => x.OldWorkflowSnapshotJson).HasColumnName("old_workflow_snapshot_json").HasMaxLength(40000);
+        histories.Property(x => x.NewExperimentType).HasColumnName("new_experiment_type").HasMaxLength(16);
+        histories.Property(x => x.NewWorkflowVersionId).HasColumnName("new_workflow_version_id").HasMaxLength(36);
+        histories.Property(x => x.NewWorkflowSnapshotJson).HasColumnName("new_workflow_snapshot_json").HasMaxLength(40000);
+        histories.Property(x => x.ActionType).HasColumnName("action_type").HasMaxLength(64).IsRequired();
+        histories.Property(x => x.ActorUserId).HasColumnName("actor_user_id").HasMaxLength(36);
+        histories.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        histories.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(2000).IsRequired();
+        histories.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128);
+        histories.HasIndex(x => new { x.ChannelBatchId, x.CreatedAtUtc });
+        histories.HasIndex(x => x.CommandId);
+        histories.HasOne(x => x.ChannelBatch).WithMany(x => x.WorkflowAssignmentHistory).HasForeignKey(x => x.ChannelBatchId).OnDelete(DeleteBehavior.Cascade);
+        histories.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.SetNull);
 
         var slides = modelBuilder.Entity<SlideTask>();
         slides.ToTable("slide_tasks");
@@ -908,6 +950,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         slides.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         slides.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         slides.HasIndex(x => x.StainingTaskId).IsUnique();
+        slides.HasIndex(x => x.PhysicalSlotId)
+            .IsUnique()
+            .HasFilter($"status in ('{RuntimeLedgerStatus.Pending}', '{RuntimeLedgerStatus.Running}', '{RuntimeLedgerStatus.Paused}', '{RuntimeLedgerStatus.Faulted}', '{RuntimeLedgerStatus.WaitingUnload}')");
         slides.HasOne(x => x.ChannelBatch).WithMany(x => x.SlideTasks).HasForeignKey(x => x.ChannelBatchId).OnDelete(DeleteBehavior.Cascade);
         slides.HasOne(x => x.StainingTask).WithMany().HasForeignKey(x => x.StainingTaskId).OnDelete(DeleteBehavior.Restrict);
         slides.HasOne(x => x.PhysicalSlot).WithMany().HasForeignKey(x => x.PhysicalSlotId).OnDelete(DeleteBehavior.Restrict);

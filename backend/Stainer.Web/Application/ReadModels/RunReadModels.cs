@@ -30,6 +30,10 @@ public sealed record ChannelBatchResponse(
     string Id,
     string DrawerCode,
     string Status,
+    string? ExperimentType,
+    string? WorkflowVersionId,
+    string WorkflowSelectionStatus,
+    DateTimeOffset? WorkflowLockedAtUtc,
     IReadOnlyList<SlideTaskResponse> Slides);
 
 public sealed record SlideTaskResponse(

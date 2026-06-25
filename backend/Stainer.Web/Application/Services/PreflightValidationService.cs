@@ -20,20 +20,115 @@ public sealed class PreflightValidationService(StainerDbContext dbContext)
             issues.Add(new PreflightValidationIssueResponse("Tasks", "no_confirmed_tasks", "No confirmed staining tasks were found."));
         }
 
-        var workflowVersionIds = tasks.Select(x => x.WorkflowVersionId).Distinct().ToList();
+        var taskIds = tasks.Select(x => x.Id).ToList();
+        var slideTasks = await dbContext.SlideTasks
+            .AsNoTracking()
+            .Include(x => x.StainingTask)
+            .Include(x => x.ChannelBatch)
+            .ThenInclude(x => x!.SelectedWorkflowVersion)
+            .ThenInclude(x => x!.WorkflowDefinition)
+            .Where(x => taskIds.Contains(x.StainingTaskId))
+            .ToListAsync(cancellationToken);
+        var slideTaskIds = slideTasks.Select(x => x.StainingTaskId).ToHashSet(StringComparer.Ordinal);
+        foreach (var task in tasks.Where(x => !slideTaskIds.Contains(x.Id)))
+        {
+            issues.Add(new PreflightValidationIssueResponse("Workflow", "channel_batch_required", $"Task {task.TaskCode} is not assigned to a channel batch."));
+        }
+
+        var channelBatches = slideTasks
+            .Select(x => x.ChannelBatch)
+            .Where(x => x is not null)
+            .Cast<ChannelBatch>()
+            .GroupBy(x => x.Id)
+            .Select(x => x.First())
+            .ToList();
+        foreach (var batch in channelBatches.OrderBy(x => x.DrawerCode))
+        {
+            if (batch.WorkflowSelectionStatus == WorkflowSelectionStatus.NeedsManualResolution)
+            {
+                issues.Add(new PreflightValidationIssueResponse("Workflow", "channel_batch_needs_manual_resolution", $"Channel {batch.DrawerCode} needs manual workflow resolution."));
+                continue;
+            }
+
+            if (batch.WorkflowSelectionStatus is not (WorkflowSelectionStatus.Selected or WorkflowSelectionStatus.Locked)
+                || string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
+                || string.IsNullOrWhiteSpace(batch.WorkflowSnapshotJson)
+                || batch.WorkflowSnapshotJson == "{}")
+            {
+                issues.Add(new PreflightValidationIssueResponse("Workflow", "channel_workflow_required", $"Channel {batch.DrawerCode} has no selected workflow."));
+                continue;
+            }
+
+            var batchSlides = slideTasks.Where(x => x.ChannelBatchId == batch.Id).ToList();
+            if (batchSlides.Count is < 1 or > 4)
+            {
+                issues.Add(new PreflightValidationIssueResponse("Tasks", "drawer_batch_size_invalid", $"Channel {batch.DrawerCode} must contain 1 to 4 slides."));
+            }
+
+            if (batchSlides.Any(x => x.TaskType != batch.ExperimentType || x.StainingTask?.TaskType != batch.ExperimentType))
+            {
+                issues.Add(new PreflightValidationIssueResponse("Workflow", "channel_experiment_type_mismatch", $"Channel {batch.DrawerCode} contains slides that do not match its experiment type."));
+            }
+
+            if (batchSlides.Any(x => x.StainingTask?.WorkflowVersionId != batch.SelectedWorkflowVersionId))
+            {
+                issues.Add(new PreflightValidationIssueResponse("Workflow", "channel_workflow_mismatch", $"Channel {batch.DrawerCode} contains slides whose compatibility copy does not match the channel workflow."));
+            }
+
+            if (batch.ExperimentType == StainingTaskType.Ihc)
+            {
+                var antibodyCodes = batchSlides
+                    .Select(x => x.StainingTask?.PrimaryAntibodyCode)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Cast<string>()
+                    .Distinct()
+                    .ToList();
+                var missingAntibodyCount = batchSlides.Count(x => string.IsNullOrWhiteSpace(x.StainingTask?.PrimaryAntibodyCode));
+                if (missingAntibodyCount > 0)
+                {
+                    issues.Add(new PreflightValidationIssueResponse("Workflow", "primary_antibody_required", $"Channel {batch.DrawerCode} has {missingAntibodyCount} IHC slide(s) without primary antibody code."));
+                }
+
+                var compatibleCodes = await dbContext.PrimaryAntibodyWorkflowMappings
+                    .AsNoTracking()
+                    .Where(x => x.IsEnabled
+                        && x.WorkflowVersionId == batch.SelectedWorkflowVersionId
+                        && antibodyCodes.Contains(x.PrimaryAntibodyCode))
+                    .Select(x => x.PrimaryAntibodyCode)
+                    .Distinct()
+                    .ToListAsync(cancellationToken);
+                var incompatible = antibodyCodes.Except(compatibleCodes, StringComparer.OrdinalIgnoreCase).ToList();
+                if (incompatible.Count > 0)
+                {
+                    issues.Add(new PreflightValidationIssueResponse("Workflow", "channel_workflow_incompatible", $"Channel {batch.DrawerCode} has incompatible primary antibody code(s): {string.Join(", ", incompatible)}."));
+                }
+            }
+        }
+
+        var workflowVersionIds = channelBatches
+            .Select(x => x.SelectedWorkflowVersionId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .Distinct()
+            .ToList();
         var workflowVersions = await dbContext.WorkflowVersions
             .AsNoTracking()
+            .Include(x => x.WorkflowDefinition)
             .Where(x => workflowVersionIds.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, cancellationToken);
-        foreach (var task in tasks)
+        foreach (var batch in channelBatches.Where(x => !string.IsNullOrWhiteSpace(x.SelectedWorkflowVersionId)))
         {
-            if (!workflowVersions.TryGetValue(task.WorkflowVersionId, out var version))
+            if (!workflowVersions.TryGetValue(batch.SelectedWorkflowVersionId!, out var version))
             {
-                issues.Add(new PreflightValidationIssueResponse("Workflow", "workflow_version_missing", $"Workflow version is missing for task {task.TaskCode}."));
+                issues.Add(new PreflightValidationIssueResponse("Workflow", "workflow_version_missing", $"Workflow version is missing for channel {batch.DrawerCode}."));
             }
             else if (version.Status != WorkflowVersionStatus.Published)
             {
-                issues.Add(new PreflightValidationIssueResponse("Workflow", "workflow_version_not_published", $"Workflow version is not published for task {task.TaskCode}."));
+                issues.Add(new PreflightValidationIssueResponse("Workflow", "workflow_version_not_published", $"Workflow version is not published for channel {batch.DrawerCode}."));
+            }
+            else if (version.WorkflowDefinition?.WorkflowType != batch.ExperimentType)
+            {
+                issues.Add(new PreflightValidationIssueResponse("Workflow", "channel_experiment_type_mismatch", $"Workflow version type does not match channel {batch.DrawerCode}."));
             }
         }
 
