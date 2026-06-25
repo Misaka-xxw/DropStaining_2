@@ -57,6 +57,12 @@ public static class WebHostEndpointExtensions
             var workflow = await service.GetAsync(id, cancellationToken);
             return workflow is null ? Results.NotFound() : Results.Ok(workflow);
         });
+        app.MapPost("/api/workflows/drafts", async (HttpContext context, CreateWorkflowDraftRequest request, UserSessionService sessionService, WorkflowWriteService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireRoleAsync(context, "admin", cancellationToken);
+                return Results.Ok(await service.CreateDraftAsync(request, actor, cancellationToken));
+            }));
         app.MapGet("/api/protocols", async (WorkflowQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListProtocolCompatAsync(cancellationToken)));
         app.MapGet("/api/reagents/catalog", async (ReagentQueryService service, CancellationToken cancellationToken) =>

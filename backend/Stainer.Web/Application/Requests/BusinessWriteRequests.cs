@@ -23,6 +23,16 @@ public sealed record SetUserRolesRequest(
     string CommandId,
     IReadOnlyList<string> Roles);
 
+public sealed record CreateWorkflowDraftRequest(
+    string CommandId,
+    string? SourceWorkflowId,
+    string? Code,
+    string? Name,
+    string? WorkflowType,
+    string? Description,
+    string? VersionLabel,
+    string? ChangeNote);
+
 public sealed record CreateHeTaskRequest(
     string CommandId,
     string WorkflowVersionId,

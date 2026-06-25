@@ -5,7 +5,7 @@ namespace Stainer.Web.Infrastructure.Web;
 
 public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
-    private const string AssetVersion = "20260625-r3";
+    private const string AssetVersion = "20260625-r5";
 
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {
@@ -154,7 +154,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
           <title>登录 - 全自动冰冻切片染色机</title>
-          <link rel="stylesheet" href="/static/css/app.css?v=20260625-r3">
+          <link rel="stylesheet" href="/static/css/app.css?v=20260625-r4">
         </head>
         <body class="login-screen">
           <div class="login-grid">
@@ -194,7 +194,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
             </section>
           </div>
           <div id="toast" class="toast hidden"></div>
-          <script src="/static/js/api.js?v=20260625-r3"></script>
+          <script src="/static/js/api.js?v=20260625-r4"></script>
           <script>
             function selectedRole(){ return document.querySelector('input[name="role"]:checked').value; }
             function fillAccount(role){ username.value=role; password.value='123456'; document.querySelector(`input[value="${role}"]`).checked=true; syncRoles(); }
@@ -256,6 +256,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
         </section>
         <section class="split-grid wide-left"><article class="modern-card"><div class="section-title"><div><h2>A-D 样本区</h2><p>Slot 状态应与物理抽屉、任务和确认结果保持一致。</p></div><div class="badge-soft" id="sampleBadge">0/16 已装载</div></div><div class="sample-cabinet v18-slot-grid" id="sampleCabinet"></div></article><aside class="stack-panel"><article class="modern-card compact-card"><h3>识别路径</h3><div class="decision-list"><div><b>通灵 IHC 码</b><span>二维码内容为一抗代码，操作员选择最终脚本。</span></div><div><b>医院自由码</b><span>原始码保留，后续接入 LIS。</span></div><div><b>HE 玻片</b><span>操作员选择 HE 实验与已发布流程。</span></div></div></article></aside></section>
         <div id="sampleConfirmModal" class="modal-mask hidden"><div class="modal-card sample-confirm-card"><header><h2 id="confirmTitle">任务确认</h2><button class="icon-btn" onclick="closeConfirmModal()">×</button></header><div class="form-grid-mini"><label>目标 Slot<select id="confirmSlot" class="input"></select></label><label>识别路径<select id="confirmPath" class="input"><option>通灵 IHC 一抗码</option><option>医院自由码/LIS</option><option>HE 手动确认</option></select></label><label>原始码<input class="input" id="rawCode" value="010"></label><label>标准化码<input class="input" id="normalizedCode" value="010"></label></div><div class="notice-box">确认后将固化原始码、流程版本、确认人和确认时间；本阶段为 Mock。</div><footer><button class="btn btn-soft" onclick="closeConfirmModal()">取消</button><button class="btn btn-primary" onclick="confirmMockTask()">确认任务</button></footer></div></div>
+        <div id="channelScriptModal" class="modal-mask hidden"><div class="modal-card sample-confirm-card"><header><h2 id="channelScriptTitle">通道统一选择脚本</h2><button class="icon-btn" onclick="closeChannelScriptModal()">×</button></header><label class="field-label">已发布流程<select id="channelScriptSelect" class="input"></select></label><div class="notice-box" id="channelScriptHint">该选择会应用于当前通道的 1-4 号 Slot。</div><footer><button class="btn btn-soft" onclick="clearChannelScriptSelection()">清除选择</button><button class="btn btn-soft" onclick="closeChannelScriptModal()">取消</button><button class="btn btn-primary" onclick="applyChannelScriptSelection()">应用到通道</button></footer></div></div>
         """;
     }
 
@@ -290,7 +291,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 
     private static string ConfigureContent()
     {
-        return """<section class="kpi-grid"><article class="kpi-card"><span>流程生命周期</span><strong>草稿→发布</strong><small>发布后不可覆盖</small></article><article class="kpi-card"><span>首版流程</span><strong>HE / IHC</strong><small>特染、多重染色不在首版</small></article><article class="kpi-card"><span>映射关系</span><strong>一抗 1:N 脚本</strong><small>操作员从候选中选择</small></article><article class="kpi-card"><span>配置快照</span><strong>版本追溯</strong><small>流程/试剂/液体/坐标固化</small></article></section><section class="split-grid wide-left"><article class="modern-card"><div class="section-title"><div><h2>流程版本管理</h2><p>管理员可创建草稿、复制、发布、停用；已发布流程不允许直接覆盖。</p></div><div class="button-row"><button class="btn btn-primary">新建草稿</button><button class="btn btn-soft">复制为新版本</button></div></div><div class="protocol-version-table" id="protocolTable"></div></article><aside class="stack-panel"><article class="modern-card compact-card"><h3>步骤类型</h3><div class="tag-cloud"><span>加液</span><span>等待/孵育</span><span>通道清洗</span><span>混匀</span><span>温控</span><span>DAB 自动配制</span><span>人工确认</span></div></article><article class="modern-card compact-card"><h3>DAB 计算预览</h3><div class="dab-numbers small-dab" id="dabPreview"></div></article></aside></section><section class="split-grid"><article class="modern-card"><div class="section-title"><h2>一抗代码 - 已发布 IHC 脚本映射</h2><button class="btn btn-primary">新增映射</button></div><div class="data-table mapping-table"><div class="table-row head"><span>一抗代码</span><span>脚本ID</span><span>脚本名称</span><span>版本</span><span>状态</span></div><div class="table-row"><span>010 / CK</span><span>IHC-CK</span><span>CK 快速染色</span><span>v1.0</span><span>已发布</span></div></div></article><article class="modern-card"><div class="section-title"><h2>试剂目录与液体参数引用</h2><button class="btn btn-soft">导入目录</button></div><div class="data-table reagent-catalog-table" id="catalogTable"></div></article></section>""";
+        return """<section class="kpi-grid"><article class="kpi-card"><span>流程生命周期</span><strong>草稿→发布</strong><small>发布后不可覆盖</small></article><article class="kpi-card"><span>首版流程</span><strong>HE / IHC</strong><small>特染、多重染色不在首版</small></article><article class="kpi-card"><span>映射关系</span><strong>一抗 1:N 脚本</strong><small>操作员从候选中选择</small></article><article class="kpi-card"><span>配置快照</span><strong>版本追溯</strong><small>流程/试剂/液体/坐标固化</small></article></section><section class="split-grid wide-left"><article class="modern-card"><div class="section-title"><div><h2>流程版本管理</h2><p>管理员可创建草稿、复制、发布、停用；已发布流程不允许直接覆盖。</p></div><div class="button-row"><button class="btn btn-primary" onclick="createWorkflowDraft()">新建草稿</button><button class="btn btn-soft" onclick="copyWorkflowDraft()">复制为新版本</button></div></div><div class="protocol-version-table" id="protocolTable"></div></article><aside class="stack-panel"><article class="modern-card compact-card"><h3>步骤类型</h3><div class="tag-cloud"><span>加液</span><span>等待/孵育</span><span>通道清洗</span><span>混匀</span><span>温控</span><span>DAB 自动配制</span><span>人工确认</span></div></article><article class="modern-card compact-card"><h3>DAB 计算预览</h3><div class="dab-numbers small-dab" id="dabPreview"></div></article></aside></section><section class="split-grid"><article class="modern-card"><div class="section-title"><h2>一抗代码 - 已发布 IHC 脚本映射</h2><button class="btn btn-primary">新增映射</button></div><div class="data-table mapping-table"><div class="table-row head"><span>一抗代码</span><span>脚本ID</span><span>脚本名称</span><span>版本</span><span>状态</span></div><div class="table-row"><span>010 / CK</span><span>IHC-CK</span><span>CK 快速染色</span><span>v1.0</span><span>已发布</span></div></div></article><article class="modern-card"><div class="section-title"><h2>试剂目录与液体参数引用</h2><button class="btn btn-soft">导入目录</button></div><div class="data-table reagent-catalog-table" id="catalogTable"></div></article></section>""";
     }
 
     private static string EngineerContent()

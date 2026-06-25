@@ -101,6 +101,76 @@ public sealed class BusinessWriteApiIntegrationTests
     }
 
     [Fact]
+    public async Task Workflow_draft_creation_is_authorized_idempotent_audited_and_can_copy_latest_version()
+    {
+        await using var factory = CreateFactory();
+        using var adminClient = factory.CreateClient();
+        await LoginAsync(adminClient, "admin", "admin");
+
+        var createRequest = new
+        {
+            commandId = "cmd-workflow-draft-create-001",
+            code = "DRAFT-API",
+            name = "API Draft Workflow",
+            workflowType = StainingTaskType.Ihc,
+            description = "Created by API integration test.",
+            versionLabel = "0.1",
+            changeNote = "Create blank draft."
+        };
+
+        var created = await PostJsonAsync<WorkflowDraftMutationResponse>(adminClient, "/api/workflows/drafts", createRequest);
+        Assert.False(created.Replayed);
+        Assert.Equal(WorkflowVersionStatus.Draft, created.Status);
+        Assert.Equal(1, created.VersionNo);
+
+        var replayed = await PostJsonAsync<WorkflowDraftMutationResponse>(adminClient, "/api/workflows/drafts", createRequest);
+        Assert.True(replayed.Replayed);
+        Assert.Equal(created.WorkflowVersionId, replayed.WorkflowVersionId);
+
+        string sourceWorkflowId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var sourceVersion = await CreatePublishedWorkflowVersionAsync(dbContext, "COPY-SOURCE", StainingTaskType.Ihc, "SRC", 500);
+            sourceWorkflowId = sourceVersion.WorkflowDefinition!.Id;
+        }
+
+        var copied = await PostJsonAsync<WorkflowDraftMutationResponse>(adminClient, "/api/workflows/drafts", new
+        {
+            commandId = "cmd-workflow-draft-copy-001",
+            sourceWorkflowId,
+            versionLabel = "2.0",
+            changeNote = "Copy latest version."
+        });
+        Assert.Equal(sourceWorkflowId, copied.WorkflowDefinitionId);
+        Assert.Equal(2, copied.VersionNo);
+        Assert.Equal("2.0", copied.VersionLabel);
+        Assert.Equal(WorkflowVersionStatus.Draft, copied.Status);
+
+        await using (var verifyScope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var blank = await dbContext.WorkflowVersions.SingleAsync(x => x.Id == created.WorkflowVersionId);
+            Assert.Equal(WorkflowVersionStatus.Draft, blank.Status);
+            Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "workflow.draft.create" && x.EntityId == created.WorkflowVersionId));
+            Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "workflow.draft.copy" && x.EntityId == copied.WorkflowVersionId));
+            Assert.Equal(1, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == copied.WorkflowVersionId));
+            Assert.Equal(1, await dbContext.WorkflowReagentRequirements.CountAsync(x => x.WorkflowVersionId == copied.WorkflowVersionId));
+        }
+
+        using var operatorClient = factory.CreateClient();
+        await LoginAsync(operatorClient, "operator", "operator");
+        var forbidden = await operatorClient.PostAsJsonAsync("/api/workflows/drafts", new
+        {
+            commandId = "cmd-workflow-draft-forbidden-001",
+            code = "NOPE",
+            name = "Forbidden",
+            workflowType = StainingTaskType.He
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
     public async Task Task_creation_covers_he_manual_confirmation_and_ihc_selection_rules()
     {
         await using var factory = CreateFactory();

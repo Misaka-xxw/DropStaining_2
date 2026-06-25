@@ -17,6 +17,19 @@ public sealed record UserMutationResponse(
     IReadOnlyList<string> Roles,
     string Message);
 
+public sealed record WorkflowDraftMutationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string WorkflowDefinitionId,
+    string WorkflowVersionId,
+    string Code,
+    string Name,
+    int VersionNo,
+    string VersionLabel,
+    string Status,
+    string Message);
+
 public sealed record TaskWorkflowCandidateResponse(
     string WorkflowVersionId,
     string WorkflowDefinitionId,

@@ -91,6 +91,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         return response switch
         {
             UserMutationResponse x => x with { Replayed = true } as T ?? response,
+            WorkflowDraftMutationResponse x => x with { Replayed = true } as T ?? response,
             TaskCreationResponse x => x with { Replayed = true } as T ?? response,
             ReagentScanConfirmationResponse x => x with { Replayed = true } as T ?? response,
             EngineeringWriteResponse x => x with { Replayed = true } as T ?? response,

@@ -12,6 +12,37 @@ function setText(id, value){
 }
 
 window.machineStateSnapshot = null;
+const ChannelWorkflowSelectionStorageKey = 'stainer.channelWorkflowSelections.v1';
+window.channelWorkflowSelections = loadChannelWorkflowSelections();
+window.sampleWorkflowOptions = null;
+let activeChannelScriptLetter = null;
+
+function loadChannelWorkflowSelections(){
+  try{
+    return JSON.parse(localStorage.getItem(ChannelWorkflowSelectionStorageKey) || '{}') || {};
+  }catch(e){
+    return {};
+  }
+}
+
+function saveChannelWorkflowSelections(){
+  try{
+    localStorage.setItem(ChannelWorkflowSelectionStorageKey, JSON.stringify(window.channelWorkflowSelections || {}));
+  }catch(e){}
+}
+
+function channelScriptSelection(letter){
+  return (window.channelWorkflowSelections || {})[letter] || null;
+}
+
+function channelScriptLabel(selection){
+  return selection ? `${selection.code} v${selection.versionLabel}` : '未选择脚本';
+}
+
+function channelScriptDetail(selection){
+  if(!selection) return '点击后为本通道 1-4 号 Slot 统一选择已发布流程。';
+  return `${selection.workflowType} · ${selection.name}`;
+}
 
 async function loadHostState(){
   try{
@@ -119,11 +150,15 @@ function renderSamples(state){
   root.innerHTML = (state.channels || []).map((channel, index) => {
     const letter = ['A','B','C','D'][index] || channel.id;
     const slides = channel.slides || [];
+    const selectedScript = channelScriptSelection(letter);
+    const scriptLabel = channelScriptLabel(selectedScript);
+    const scriptDetail = channelScriptDetail(selectedScript);
     const slots = [4,3,2,1].map(slot => {
       const slide = slides.find(x => x.slot === slot);
-      return `<div class="sample-slot ${slide ? 'occupied' : 'empty'}"><div class="slot-no">${letter}-${String(slot).padStart(2,'0')}</div><div><b>${escapeHtml(slide ? slide.barcode : '未装载')}</b><span>${escapeHtml(slide ? slide.currentStep : '可上样 / 等待确认')}</span></div><em>${escapeHtml(slide ? slide.protocolCode : '--')}</em></div>`;
+      const protocolCode = selectedScript ? selectedScript.code : (slide ? slide.protocolCode : '--');
+      return `<div class="sample-slot ${slide ? 'occupied' : 'empty'}"><div class="slot-no">${letter}-${String(slot).padStart(2,'0')}</div><div><b>${escapeHtml(slide ? slide.barcode : '未装载')}</b><span>${escapeHtml(slide ? slide.currentStep : '可上样 / 等待确认')}</span></div><em>${escapeHtml(protocolCode)}</em></div>`;
     }).join('');
-    return `<div class="sample-column status-${channel.status}"><div class="column-handle"><span>${letter} 通道</span><b>${slides.length}/4</b></div>${slots}<small class="slot-order-note">显示顺序：4 在上，1 在下</small></div>`;
+    return `<div class="sample-column status-${channel.status}"><div class="column-handle"><span>${letter} 通道</span><b>${slides.length}/4</b></div>${slots}<div class="channel-script-picker ${selectedScript ? 'selected' : 'unselected'}"><div><span>通道统一脚本</span><b>${escapeHtml(scriptLabel)}</b><small>${escapeHtml(scriptDetail)}</small></div><button class="btn btn-soft full" onclick="openChannelScriptModal('${letter}')">统一选择脚本</button></div><small class="slot-order-note">显示顺序：4 在上，1 在下</small></div>`;
   }).join('');
 
   const select = document.getElementById('confirmSlot');
@@ -213,14 +248,19 @@ async function renderConfigure(){
   const liquidClasses = await api('/api/engineering/liquid-classes');
   const dab = await api('/api/dab');
   document.getElementById('protocolTable').innerHTML = workflows.map(w => {
-    const version = (w.versions || []).slice(-1)[0];
-    return `<div class="protocol-version-row"><b>${escapeHtml(w.code)}</b><span>${escapeHtml(w.name)}</span><em>v${escapeHtml(version?.versionLabel || '')}</em><small>${escapeHtml(w.description)}</small><div><button class="btn btn-soft" onclick="api('/api/workflows/${w.id}').then(()=>toast('已从数据库读取流程详情'))">查看步骤</button><button class="btn btn-soft">停用</button></div></div>`;
+    const versions = (w.versions || []).slice().sort((a, b) => (a.versionNo || 0) - (b.versionNo || 0));
+    const version = versions[versions.length - 1];
+    const status = workflowStatusText(version?.status);
+    return `<div class="protocol-version-row"><b>${escapeHtml(w.code)}</b><span>${escapeHtml(w.name)}</span><em>${version ? 'v' + escapeHtml(version.versionLabel) + ' · ' + status : '无版本'}</em><small>${escapeHtml(w.description)}</small><div><button class="btn btn-soft" onclick="api('/api/workflows/${w.id}').then(()=>toast('已从数据库读取流程详情'))">查看步骤</button><button class="btn btn-soft" onclick="copyWorkflowDraft('${w.id}')">复制</button><button class="btn btn-soft">停用</button></div></div>`;
   }).join('') || '<div class="empty-state"><b>暂无数据库流程</b><span>请先导入或创建流程版本。</span></div>';
   document.getElementById('dabPreview').innerHTML = `<div><span>IHC 张数</span><b>${dab.slideCount}</b></div><div><span>总量</span><b>${dab.totalMl}</b><em>mL</em></div><div><span>A/B/水</span><b>${dab.dabAMl}/${dab.dabBMl}/${dab.pureWaterMl}</b></div>`;
-  const liquidByCode = new Map(liquidClasses.map(x => [x.code, x]));
   document.getElementById('catalogTable').innerHTML = '<div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>报警余量</span><span>液体类型</span></div>'
     + (catalog.map(item => `<div class="table-row"><span>${escapeHtml(item.reagentCode)}</span><span>${escapeHtml(item.name)}</span><span>${escapeHtml(item.reagentType || '--')}</span><span>${item.minimumAlarmVolumeUl ?? '--'} μL</span><span>${escapeHtml(item.liquidClassCode || '--')}</span></div>`).join('')
     || '<div class="empty-state"><b>暂无数据库试剂目录</b><span>请先导入或维护试剂目录。</span></div>');
+}
+
+function workflowStatusText(status){
+  return ({Draft:'草稿', Published:'已发布', Retired:'已停用'}[status] || status || '--');
 }
 
 function renderTimeline(id, items, limit){
@@ -365,6 +405,96 @@ async function scanSamples(){
   await loadHostState();
 }
 
+async function loadSampleWorkflowOptions(forceRefresh){
+  if(!forceRefresh && window.sampleWorkflowOptions) return window.sampleWorkflowOptions;
+  const workflows = await api('/api/workflows');
+  window.sampleWorkflowOptions = (workflows || []).flatMap(workflow => {
+    return (workflow.versions || [])
+      .filter(version => String(version.status || '').toLowerCase() === 'published')
+      .map(version => ({
+        workflowId: workflow.id,
+        workflowVersionId: version.id,
+        code: workflow.code,
+        name: workflow.name,
+        workflowType: workflow.workflowType,
+        versionNo: version.versionNo,
+        versionLabel: version.versionLabel
+      }));
+  }).sort((a, b) => `${a.workflowType}-${a.code}-${a.versionNo}`.localeCompare(`${b.workflowType}-${b.code}-${b.versionNo}`));
+  return window.sampleWorkflowOptions;
+}
+
+async function openChannelScriptModal(letter){
+  activeChannelScriptLetter = letter;
+  const modal = document.getElementById('channelScriptModal');
+  const title = document.getElementById('channelScriptTitle');
+  const select = document.getElementById('channelScriptSelect');
+  if(!modal || !select) return;
+  if(title) title.textContent = `${letter} 通道统一选择脚本`;
+  select.disabled = true;
+  select.innerHTML = '<option value="">正在加载已发布流程...</option>';
+  setText('channelScriptHint', '正在读取流程配置。');
+  modal.classList.remove('hidden');
+  try{
+    const options = await loadSampleWorkflowOptions(true);
+    if(options.length === 0){
+      select.innerHTML = '<option value="">暂无 Published 流程</option>';
+      setText('channelScriptHint', '请先在流程配置中准备并发布 HE/IHC 流程。');
+      return;
+    }
+    const selected = channelScriptSelection(letter);
+    select.disabled = false;
+    select.innerHTML = options.map(option => {
+      const label = `${option.workflowType} · ${option.code} v${option.versionLabel} · ${option.name}`;
+      const isSelected = selected?.workflowVersionId === option.workflowVersionId ? ' selected' : '';
+      return `<option value="${escapeHtml(option.workflowVersionId)}"${isSelected}>${escapeHtml(label)}</option>`;
+    }).join('');
+    setText('channelScriptHint', '该选择会应用于当前通道的 1-4 号 Slot。');
+  }catch(e){
+    select.innerHTML = '<option value="">流程加载失败</option>';
+    setText('channelScriptHint', '请检查服务和流程配置接口。');
+    toast('流程脚本加载失败', true);
+  }
+}
+
+function closeChannelScriptModal(){
+  document.getElementById('channelScriptModal')?.classList.add('hidden');
+}
+
+async function applyChannelScriptSelection(){
+  const select = document.getElementById('channelScriptSelect');
+  const workflowVersionId = select?.value;
+  if(!activeChannelScriptLetter || !workflowVersionId){
+    toast('请选择已发布流程脚本', true);
+    return;
+  }
+  const options = await loadSampleWorkflowOptions();
+  const selected = options.find(x => x.workflowVersionId === workflowVersionId);
+  if(!selected){
+    toast('选择的流程脚本不存在或未发布', true);
+    return;
+  }
+  window.channelWorkflowSelections = {
+    ...(window.channelWorkflowSelections || {}),
+    [activeChannelScriptLetter]: selected
+  };
+  saveChannelWorkflowSelections();
+  closeChannelScriptModal();
+  if(window.machineStateSnapshot) renderSamples(window.machineStateSnapshot);
+  toast(`${activeChannelScriptLetter} 通道已统一选择 ${channelScriptLabel(selected)}`);
+}
+
+function clearChannelScriptSelection(){
+  if(!activeChannelScriptLetter) return;
+  const next = {...(window.channelWorkflowSelections || {})};
+  delete next[activeChannelScriptLetter];
+  window.channelWorkflowSelections = next;
+  saveChannelWorkflowSelections();
+  closeChannelScriptModal();
+  if(window.machineStateSnapshot) renderSamples(window.machineStateSnapshot);
+  toast(`${activeChannelScriptLetter} 通道脚本选择已清除`);
+}
+
 function openConfirmModal(mode){
   const modal = document.getElementById('sampleConfirmModal');
   const title = document.getElementById('confirmTitle');
@@ -379,7 +509,12 @@ function closeConfirmModal(){
 }
 
 function confirmMockTask(){
-  toast('Mock: 任务已确认并生成流程快照');
+  const selectedChannels = Object.entries(window.channelWorkflowSelections || {})
+    .filter(([, script]) => script && script.code)
+    .map(([letter, script]) => `${letter}:${script.code} v${script.versionLabel}`);
+  toast(selectedChannels.length
+    ? `Mock: 任务已确认，通道脚本 ${selectedChannels.join(' / ')}`
+    : 'Mock: 任务已确认并生成流程快照');
   closeConfirmModal();
 }
 
@@ -403,6 +538,69 @@ function showReagentDetail(pos,state,barcode,name,code,volume,lot,expire){
 
 function commandId(prefix){
   return prefix + '-' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(16).slice(2));
+}
+
+async function createWorkflowDraft(){
+  const code = prompt('流程代码', 'CUSTOM-' + new Date().toISOString().slice(0, 10).replaceAll('-', ''));
+  if(!code) return;
+  const name = prompt('流程名称', code + ' 草稿') || code;
+  const workflowType = (prompt('流程类型：HE 或 IHC', 'IHC') || 'IHC').trim().toUpperCase();
+  if(!['HE', 'IHC'].includes(workflowType)){
+    toast('流程类型必须是 HE 或 IHC', true);
+    return;
+  }
+  const versionLabel = prompt('草稿版本标签', '0.1') || '0.1';
+  const description = prompt('流程说明', '管理员新建流程草稿。') || '管理员新建流程草稿。';
+  const changeNote = prompt('变更说明', '创建空白草稿。') || '创建空白草稿。';
+  const result = await api('/api/workflows/drafts', {
+    method:'POST',
+    body: JSON.stringify({
+      commandId: commandId('workflow-draft'),
+      code,
+      name,
+      workflowType,
+      description,
+      versionLabel,
+      changeNote
+    })
+  });
+  toast(`已创建草稿：${result.code} v${result.versionLabel}`);
+  await renderConfigure();
+}
+
+async function copyWorkflowDraft(sourceWorkflowId){
+  let workflowId = sourceWorkflowId;
+  let workflow = null;
+  const workflows = await api('/api/workflows');
+  if(workflowId){
+    workflow = workflows.find(x => x.id === workflowId);
+  }else{
+    const code = prompt('输入要复制的流程代码');
+    if(!code) return;
+    workflow = workflows.find(x => String(x.code).toUpperCase() === code.trim().toUpperCase());
+    workflowId = workflow?.id;
+  }
+  if(!workflowId || !workflow){
+    toast('未找到要复制的流程', true);
+    return;
+  }
+  const versions = (workflow.versions || []).slice().sort((a, b) => (a.versionNo || 0) - (b.versionNo || 0));
+  const latest = versions[versions.length - 1];
+  const defaultLabel = latest ? String(Number.parseInt(String(latest.versionLabel).split('.')[0], 10) + 1 || (latest.versionNo + 1)) + '.0' : '0.1';
+  const versionLabel = prompt('新草稿版本标签', defaultLabel);
+  if(versionLabel === null) return;
+  const changeNote = prompt('变更说明', `复制 ${workflow.code} ${latest ? 'v' + latest.versionLabel : ''} 为新草稿。`) || '复制现有流程为新草稿。';
+  const result = await api('/api/workflows/drafts', {
+    method:'POST',
+    body: JSON.stringify({
+      commandId: commandId('workflow-copy'),
+      sourceWorkflowId: workflowId,
+      versionLabel,
+      changeNote
+    })
+  });
+  toast(`已复制为草稿：${result.code} v${result.versionLabel}`);
+  await renderConfigure();
 }
 
 async function renderAdmin(state){

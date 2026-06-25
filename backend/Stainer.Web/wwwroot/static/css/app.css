@@ -138,3 +138,9 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 .column-status-grid div.empty span{color:#64748b;font-weight:900}
 @media(max-width:1500px){.split-grid.wide-left.reagent-v18-layout{grid-template-columns:1fr}.v18-reagent-deck{grid-template-columns:repeat(5,minmax(150px,1fr))}}
 @media(max-width:1000px){.v18-reagent-deck{grid-template-columns:1fr}.split-grid.wide-left.reagent-v18-layout{grid-template-columns:1fr}}
+.channel-script-picker{margin:14px 0 10px;padding:14px;border-radius:20px;background:#fff;border:1px solid #d6eaff;display:grid;gap:12px;box-shadow:inset 4px 0 0 #93c5fd}
+.channel-script-picker.unselected{background:#f8fbff;border-style:dashed;box-shadow:inset 4px 0 0 #cbd5e1}
+.channel-script-picker span{display:block;color:#64748b;font-size:12px;font-weight:900;margin-bottom:4px}
+.channel-script-picker b{display:block;color:#0c63bd;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.channel-script-picker small{display:block;color:#64748b;line-height:1.45;margin-top:3px}
+.channel-script-picker .btn{min-height:46px;border-radius:15px}

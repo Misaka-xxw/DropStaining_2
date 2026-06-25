@@ -3,6 +3,10 @@ function getSlideRoot(slideId){
 }
 async function saveSlide(slideId){
   const root = getSlideRoot(slideId);
+  if(!root){
+    toast('未找到玻片配置卡片', true);
+    return;
+  }
   const payload = {
     slide_id: slideId,
     protocol_code: root.querySelector('.protocol').value,
