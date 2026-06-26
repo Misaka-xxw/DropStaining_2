@@ -55,6 +55,64 @@ public sealed class WebHostIntegrationTests
     }
 
     [Fact]
+    public async Task Samples_page_uses_channel_batch_api_without_local_storage_business_state()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var html = await client.GetStringAsync("/samples");
+        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
+
+        Assert.Contains("选择通道实验脚本", html);
+        Assert.Contains("当前通道脚本", html);
+        Assert.Contains("确认创建任务", html);
+        Assert.DoesNotContain("统一选择脚本", html);
+        Assert.DoesNotContain("confirmMockTask", html);
+        Assert.DoesNotContain("localStorage", html);
+
+        Assert.DoesNotContain("localStorage", hostScript);
+        Assert.DoesNotContain("channelWorkflowSelections", hostScript);
+        Assert.DoesNotContain("/api/samples/scan", hostScript);
+        Assert.Contains("/api/channel-batches/active", hostScript);
+        Assert.Contains("/api/channel-batches/workflow-selection", hostScript);
+        Assert.Contains("/api/tasks/he", hostScript);
+        Assert.Contains("/api/tasks/ihc", hostScript);
+        Assert.Contains("channelBatch.changed", hostScript);
+        Assert.Contains("slideTask.created", hostScript);
+        Assert.Contains("继承通道脚本", hostScript);
+        Assert.Contains("未选脚本，禁止添加", hostScript);
+    }
+
+    [Fact]
+    public async Task Reagents_page_reads_formal_api_without_mock_or_local_storage_business_state()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var html = await client.GetStringAsync("/reagents");
+        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
+
+        Assert.Contains("扫码会话", html);
+        Assert.Contains("开始扫码", html);
+        Assert.Contains("完成扫码", html);
+        Assert.Contains("reagentDeck", html);
+        Assert.DoesNotContain("Mock:", html);
+        Assert.DoesNotContain("localStorage", html);
+
+        Assert.Contains("/api/reagents/rack", hostScript);
+        Assert.Contains("/api/reagents/scan-sessions/overview", hostScript);
+        Assert.Contains("/api/reagents/scan-sessions/start", hostScript);
+        Assert.Contains("completeReagentScanSession", hostScript);
+        Assert.Contains("单个 R 位正式扫码确认尚未接入。", hostScript);
+        Assert.Contains("scanState", hostScript);
+        Assert.Contains("reagent.bottleDepleted", hostScript);
+        Assert.DoesNotContain("localStorage", hostScript);
+        Assert.DoesNotContain("/api/reagents/scan'", hostScript);
+        Assert.DoesNotContain("/api/reagents/scan\"", hostScript);
+        Assert.DoesNotContain("CreateReagent(", hostScript);
+    }
+
+    [Fact]
     public async Task Mock_timeline_page_is_hidden_in_production()
     {
         await using var factory = CreateFactory("Production");
@@ -193,6 +251,110 @@ public sealed class WebHostIntegrationTests
     }
 
     [Fact]
+    public async Task State_api_projects_active_channel_batches_for_samples_page_refresh()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        string batchId;
+        string versionId;
+        string taskId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var drawer = await dbContext.Drawers.SingleAsync(x => x.Code == "A");
+            var slot = await dbContext.PhysicalSlots.SingleAsync(x => x.Code == "A-01");
+            var workflow = new WorkflowDefinition
+            {
+                Code = "SAMPLES-HE",
+                Name = "Samples HE Workflow",
+                WorkflowType = StainingTaskType.He,
+                Description = "Samples page state projection test"
+            };
+            var version = new WorkflowVersion
+            {
+                VersionNo = 910,
+                VersionLabel = "9.1",
+                Status = WorkflowVersionStatus.Published,
+                ChangeNote = "samples-page-state-test",
+                PublishedAtUtc = DateTimeOffset.UtcNow
+            };
+            workflow.Versions.Add(version);
+
+            var task = new StainingTask
+            {
+                TaskCode = "SAMPLES-TASK-001",
+                TaskType = StainingTaskType.He,
+                Status = StainingTaskStatus.Confirmed,
+                PhysicalSlot = slot,
+                WorkflowDefinition = workflow,
+                WorkflowVersion = version,
+                WorkflowSnapshotJson = "{\"workflow\":\"samples\"}",
+                InputMode = "ManualHE",
+                RawSampleCode = "SLIDE-001"
+            };
+            var batch = new ChannelBatch
+            {
+                DrawerId = drawer.Id,
+                DrawerCode = "A",
+                Status = RuntimeLedgerStatus.Pending,
+                ExperimentType = StainingTaskType.He,
+                SelectedWorkflowVersion = version,
+                WorkflowSnapshotJson = "{\"workflow\":\"samples\"}",
+                WorkflowSelectionStatus = WorkflowSelectionStatus.Selected,
+                WorkflowSelectedAtUtc = DateTimeOffset.UtcNow
+            };
+            var slide = new SlideTask
+            {
+                ChannelBatch = batch,
+                StainingTask = task,
+                PhysicalSlot = slot,
+                SlotCode = "A-01",
+                TaskType = StainingTaskType.He,
+                Status = RuntimeLedgerStatus.Pending
+            };
+            dbContext.WorkflowDefinitions.Add(workflow);
+            dbContext.StainingTasks.Add(task);
+            dbContext.ChannelBatches.Add(batch);
+            dbContext.SlideTasks.Add(slide);
+            await dbContext.SaveChangesAsync();
+
+            batchId = batch.Id;
+            versionId = version.Id;
+            taskId = task.Id;
+        }
+
+        var state = await client.GetFromJsonAsync<RuntimeStateResponse>("/api/state");
+
+        Assert.NotNull(state);
+        Assert.Equal(4, state!.Channels.Length);
+        var channelA = Assert.Single(state.Channels, x => x.DrawerCode == "A");
+        Assert.Equal(batchId, channelA.ChannelBatchId);
+        Assert.Equal(StainingTaskType.He, channelA.ExperimentType);
+        Assert.Equal(versionId, channelA.WorkflowVersionId);
+        Assert.Equal("Samples HE Workflow", channelA.WorkflowName);
+        Assert.Equal("9.1", channelA.WorkflowVersionLabel);
+        Assert.Equal(WorkflowSelectionStatus.Selected, channelA.WorkflowSelectionStatus);
+        Assert.False(channelA.WorkflowLocked);
+        Assert.False(channelA.CanSelectWorkflow);
+        Assert.False(channelA.CanChangeWorkflow);
+
+        var projectedSlide = Assert.Single(channelA.Slides);
+        Assert.Equal(1, projectedSlide.Slot);
+        Assert.Equal(taskId, projectedSlide.StainingTaskId);
+        Assert.Equal("SLIDE-001", projectedSlide.SampleIdentifier);
+        Assert.Equal("SAMPLES-HE", projectedSlide.ProtocolCode);
+        Assert.Equal("Samples HE Workflow", projectedSlide.WorkflowName);
+        Assert.Equal("9.1", projectedSlide.WorkflowVersionLabel);
+        Assert.Equal(versionId, projectedSlide.WorkflowVersionId);
+
+        var channelB = Assert.Single(state.Channels, x => x.DrawerCode == "B");
+        Assert.Null(channelB.ChannelBatchId);
+        Assert.True(channelB.CanSelectWorkflow);
+        Assert.Empty(channelB.Slides);
+    }
+
+    [Fact]
     public async Task Read_apis_return_values_inserted_into_sqlite_not_legacy_json()
     {
         await using var factory = CreateFactory();
@@ -325,6 +487,151 @@ public sealed class WebHostIntegrationTests
         Assert.Contains(roles!, x => x.Code == "admin");
     }
 
+    [Fact]
+    public async Task Reagent_rack_read_api_returns_sqlite_scan_states_and_reflects_database_updates()
+    {
+        await using var factory = CreateFactory();
+        using var firstClient = factory.CreateClient();
+        using var secondClient = factory.CreateClient();
+
+        string bottleId;
+        var scannedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var r1 = await dbContext.ReagentRackPositions.SingleAsync(x => x.Code == "R1");
+            var r2 = await dbContext.ReagentRackPositions.SingleAsync(x => x.Code == "R2");
+            var r3 = await dbContext.ReagentRackPositions.SingleAsync(x => x.Code == "R3");
+
+            var definition = new ReagentDefinition
+            {
+                ReagentCode = "RACK-DB",
+                Name = "Rack DB Reagent",
+                ReagentType = "Primary",
+                MinimumAlarmVolumeUl = 800
+            };
+            var bottle = new ReagentBottle
+            {
+                ReagentDefinition = definition,
+                FullBarcode = "RDB05020270101009",
+                ReagentCode = "RACK-DB",
+                ProductionBatchNo = "20270101",
+                SerialNo = "009",
+                InitialVolumeUl = 5000,
+                RemainingVolumeUl = 4200,
+                ExpirationDate = new DateOnly(2028, 1, 1),
+                Status = "Available",
+                FirstScannedAtUtc = scannedAt,
+                LastScannedAtUtc = scannedAt
+            };
+            var session = new ReagentScanSession
+            {
+                SessionCode = "SCAN-WEB-READ-001",
+                Status = "Completed",
+                StartedAtUtc = scannedAt,
+                CompletedAtUtc = scannedAt
+            };
+            session.Items.Add(new ReagentScanItem
+            {
+                ReagentRackPositionId = r1.Id,
+                ScannerChannelNo = r1.ScannerChannelNo,
+                ScannerChannelCode = r1.ScannerChannelCode,
+                LocatorCode = r1.Code,
+                ScanResult = ReagentScanResult.Valid,
+                RawBarcode = bottle.FullBarcode,
+                ParsedReagentCode = "RACK-DB",
+                ParsedQuantityUl = 5000,
+                ParsedBatchNo = "20270101",
+                ParsedSerialNo = "009",
+                IsValidationPassed = true,
+                ValidationMessage = "OK",
+                CreatedAtUtc = scannedAt
+            });
+            session.Items.Add(new ReagentScanItem
+            {
+                ReagentRackPositionId = r2.Id,
+                ScannerChannelNo = r2.ScannerChannelNo,
+                ScannerChannelCode = r2.ScannerChannelCode,
+                LocatorCode = r2.Code,
+                ScanResult = ReagentScanResult.Invalid,
+                RawBarcode = "BAD",
+                ParsedReagentCode = "BAD",
+                IsValidationPassed = false,
+                ValidationMessage = "Barcode text must be 17 characters.",
+                CreatedAtUtc = scannedAt
+            });
+            session.Items.Add(new ReagentScanItem
+            {
+                ReagentRackPositionId = r3.Id,
+                ScannerChannelNo = r3.ScannerChannelNo,
+                ScannerChannelCode = r3.ScannerChannelCode,
+                LocatorCode = r3.Code,
+                ScanResult = ReagentScanResult.Empty,
+                IsValidationPassed = false,
+                ValidationMessage = "Empty position.",
+                CreatedAtUtc = scannedAt
+            });
+
+            dbContext.ReagentScanSessions.Add(session);
+            dbContext.ReagentRackPlacements.Add(new ReagentRackPlacement
+            {
+                ReagentBottle = bottle,
+                ReagentRackPositionId = r1.Id,
+                ReagentScanSession = session,
+                PlacedAtUtc = scannedAt,
+                CreatedAtUtc = scannedAt
+            });
+            await dbContext.SaveChangesAsync();
+            bottleId = bottle.Id;
+        }
+
+        var rack = await firstClient.GetFromJsonAsync<List<ReagentRackPositionResponse>>("/api/reagents/rack");
+
+        Assert.NotNull(rack);
+        Assert.Equal(40, rack!.Count);
+        var valid = Assert.Single(rack, x => x.Position == "R1");
+        Assert.Equal(ReagentScanResult.Valid, valid.ScanState);
+        Assert.Equal("SCAN-WEB-READ-001", valid.LastScanSessionCode);
+        Assert.Equal("OK", valid.ValidationMessage);
+        Assert.True(valid.IsValidationPassed);
+        Assert.Equal("RACK-DB", valid.Bottle?.ReagentCode);
+        Assert.Equal(4200, valid.Bottle?.RemainingVolumeUl);
+        Assert.Equal(new DateOnly(2028, 1, 1), valid.Bottle?.ExpirationDate);
+        Assert.NotNull(valid.Bottle?.LastScannedAtUtc);
+
+        var invalid = Assert.Single(rack, x => x.Position == "R2");
+        Assert.Equal(ReagentScanResult.Invalid, invalid.ScanState);
+        Assert.Null(invalid.Bottle);
+        Assert.Equal("BAD", invalid.RawBarcode);
+        Assert.Contains("17 characters", invalid.ValidationMessage);
+        Assert.False(invalid.IsValidationPassed);
+
+        var empty = Assert.Single(rack, x => x.Position == "R3");
+        Assert.Equal(ReagentScanResult.Empty, empty.ScanState);
+        Assert.Null(empty.Bottle);
+        Assert.Equal("Empty position.", empty.ValidationMessage);
+
+        var unscanned = Assert.Single(rack, x => x.Position == "R4");
+        Assert.Equal("UNSCANNED", unscanned.ScanState);
+        Assert.Null(unscanned.Bottle);
+        Assert.Equal("No scan result recorded.", unscanned.ValidationMessage);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var bottle = await dbContext.ReagentBottles.SingleAsync(x => x.Id == bottleId);
+            bottle.RemainingVolumeUl = 3100;
+            bottle.LastScannedAtUtc = scannedAt.AddMinutes(3);
+            await dbContext.SaveChangesAsync();
+        }
+
+        var updatedRack = await firstClient.GetFromJsonAsync<List<ReagentRackPositionResponse>>("/api/reagents/rack");
+        var secondWindowRack = await secondClient.GetFromJsonAsync<List<ReagentRackPositionResponse>>("/api/reagents/rack");
+
+        Assert.Equal(3100, Assert.Single(updatedRack!, x => x.Position == "R1").Bottle?.RemainingVolumeUl);
+        Assert.Equal(3100, Assert.Single(secondWindowRack!, x => x.Position == "R1").Bottle?.RemainingVolumeUl);
+    }
+
     private static WebApplicationFactory<Program> CreateFactory(string environment = "Testing")
     {
         var databasePath = Path.Combine(Path.GetTempPath(), "stainer-web-host-tests", Guid.NewGuid().ToString("N"), "stainer.db");
@@ -347,7 +654,32 @@ public sealed class WebHostIntegrationTests
 
     private sealed record RuntimeStateResponse(bool Initialized, string Status, RuntimeChannel[] Channels);
 
-    private sealed record RuntimeChannel(RuntimeSlide[] Slides);
+    private sealed record RuntimeChannel(
+        int Id,
+        string? DrawerCode,
+        string? ChannelBatchId,
+        string Status,
+        string? ExperimentType,
+        string? WorkflowVersionId,
+        string? WorkflowName,
+        string? WorkflowVersionLabel,
+        string WorkflowSelectionStatus,
+        bool WorkflowLocked,
+        bool CanSelectWorkflow,
+        bool CanChangeWorkflow,
+        RuntimeSlide[] Slides);
 
-    private sealed record RuntimeSlide(string Id);
+    private sealed record RuntimeSlide(
+        string Id,
+        int Slot,
+        string? Barcode,
+        string? SampleIdentifier,
+        string? ProtocolCode,
+        string? WorkflowName,
+        string? WorkflowVersionLabel,
+        string? WorkflowVersionId,
+        string? StainingTaskId,
+        string Status,
+        string? CurrentStep,
+        int Progress);
 }

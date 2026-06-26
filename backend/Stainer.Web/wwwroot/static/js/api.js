@@ -7,7 +7,10 @@ async function api(url, options={}){
   if(!res.ok){
     const msg = data.detail || data.message || ('请求失败：' + res.status);
     toast(msg, true);
-    throw new Error(msg);
+    const error = new Error(msg);
+    error.status = res.status;
+    error.data = data;
+    throw error;
   }
   return data;
 }

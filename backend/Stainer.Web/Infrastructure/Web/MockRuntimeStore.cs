@@ -278,7 +278,14 @@ public sealed class MockRuntimeStore
     private static List<MockChannel> CreateDefaultChannels()
     {
         return Enumerable.Range(1, 4)
-            .Select(x => new MockChannel { Id = x, Name = $"Channel{x}", Status = "empty", CurrentStep = "Empty" })
+            .Select(x => new MockChannel
+            {
+                Id = x,
+                Name = $"Channel{x}",
+                DrawerCode = ((char)('A' + x - 1)).ToString(),
+                Status = "empty",
+                CurrentStep = "Empty"
+            })
             .ToList();
     }
 
@@ -340,9 +347,21 @@ public sealed class MockChannel
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
+    public string DrawerCode { get; set; } = string.Empty;
+    public string? ChannelBatchId { get; set; }
     public string Status { get; set; } = "empty";
     public int Progress { get; set; }
     public string CurrentStep { get; set; } = string.Empty;
+    public string? ExperimentType { get; set; }
+    public string? WorkflowVersionId { get; set; }
+    public string? WorkflowCode { get; set; }
+    public string? WorkflowName { get; set; }
+    public string? WorkflowVersionLabel { get; set; }
+    public string WorkflowSelectionStatus { get; set; } = "Unselected";
+    public DateTimeOffset? WorkflowLockedAtUtc { get; set; }
+    public bool WorkflowLocked { get; set; }
+    public bool CanSelectWorkflow { get; set; } = true;
+    public bool CanChangeWorkflow { get; set; }
     public List<MockSlide> Slides { get; set; } = [];
     public bool Selected { get; set; }
 }
@@ -353,7 +372,12 @@ public sealed class MockSlide
     public int Channel { get; set; }
     public int Slot { get; set; }
     public string Barcode { get; set; } = string.Empty;
+    public string SampleIdentifier { get; set; } = string.Empty;
     public string ProtocolCode { get; set; } = "IHC";
+    public string? WorkflowName { get; set; }
+    public string? WorkflowVersionLabel { get; set; }
+    public string? WorkflowVersionId { get; set; }
+    public string? StainingTaskId { get; set; }
     public string AntibodyCode { get; set; } = "AB-DEFAULT";
     public decimal PrimaryVolumeUl { get; set; } = 80;
     public decimal TemperatureC { get; set; } = 42;

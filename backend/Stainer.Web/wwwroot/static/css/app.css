@@ -144,3 +144,8 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 .channel-script-picker b{display:block;color:#0c63bd;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .channel-script-picker small{display:block;color:#64748b;line-height:1.45;margin-top:3px}
 .channel-script-picker .btn{min-height:46px;border-radius:15px}
+.v18-reagent-deck .vial.scan-invalid{background:#fff1f2;border-color:#fecdd3;box-shadow:inset 4px 0 0 #ef4444}
+.v18-reagent-deck .vial.scan-empty{background:#f1f5f9;border-color:#d7e3f0;box-shadow:none}
+.v18-reagent-deck .vial.scan-unscanned{background:#f8fafc;border-color:#dbe7f5;box-shadow:none}
+.column-status-grid div.invalid{background:#fff1f2;border-color:#fecdd3}
+.column-status-grid div.invalid span{color:#9f1239;font-weight:900}

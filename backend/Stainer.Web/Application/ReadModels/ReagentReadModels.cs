@@ -21,11 +21,22 @@ public sealed record ReagentRackPositionResponse(
     int ScannerChannelNo,
     string ScannerChannelCode,
     bool IsEnabled,
+    string ScanState,
+    string? LastScanSessionId,
+    string? LastScanSessionCode,
+    string? LastScanSessionStatus,
+    DateTimeOffset? LastScannedAtUtc,
+    string? RawBarcode,
+    string? BarcodeSummary,
+    string? ParsedReagentCode,
+    string? ValidationMessage,
+    bool IsValidationPassed,
     ReagentRackBottleResponse? Bottle);
 
 public sealed record ReagentRackBottleResponse(
     string Id,
     string FullBarcode,
+    string BarcodeSummary,
     string ReagentCode,
     string Name,
     string ReagentType,
@@ -33,4 +44,27 @@ public sealed record ReagentRackBottleResponse(
     DateOnly ExpirationDate,
     string Status,
     string? LotNo,
-    string SerialNo);
+    string SerialNo,
+    DateTimeOffset? FirstScannedAtUtc,
+    DateTimeOffset? LastScannedAtUtc);
+
+public sealed record ReagentScanSessionOverviewResponse(
+    ReagentScanSessionSummaryResponse? ActiveSession,
+    ReagentScanSessionSummaryResponse? LatestCompletedSession);
+
+public sealed record ReagentScanSessionSummaryResponse(
+    string? ScanSessionId,
+    string? SessionCode,
+    string Status,
+    DateTimeOffset? StartedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    string? CreatedByUserId,
+    string? CreatedByDisplayName,
+    int ScannedCount,
+    int ValidCount,
+    int InvalidCount,
+    int EmptyCount,
+    int UnscannedCount,
+    int TotalPositionCount,
+    bool HasWarning,
+    string Message);

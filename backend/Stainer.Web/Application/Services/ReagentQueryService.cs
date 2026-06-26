@@ -14,4 +14,9 @@ public sealed class ReagentQueryService(IReagentReadRepository repository)
     {
         return repository.ListRackAsync(cancellationToken);
     }
+
+    public Task<ReagentScanSessionOverviewResponse> GetScanSessionOverviewAsync(CancellationToken cancellationToken = default)
+    {
+        return repository.GetScanSessionOverviewAsync(cancellationToken);
+    }
 }

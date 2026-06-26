@@ -40,6 +40,10 @@ public sealed record SelectChannelWorkflowRequest(
     string ExperimentType,
     string WorkflowVersionId);
 
+public sealed record EnsureChannelBatchRequest(
+    string CommandId,
+    string DrawerCode);
+
 public sealed record CreateHeTaskRequest(
     string CommandId,
     string SlotCode,
@@ -69,6 +73,12 @@ public sealed record ReagentScanInputItem(
 public sealed record ConfirmReagentScanRequest(
     string CommandId,
     IReadOnlyList<ReagentScanInputItem> Items);
+
+public sealed record StartReagentScanSessionRequest(
+    string CommandId);
+
+public sealed record CompleteReagentScanSessionRequest(
+    string CommandId);
 
 public sealed record CalibrateCoordinatePointRequest(
     string CommandId,

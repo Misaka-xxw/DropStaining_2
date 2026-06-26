@@ -71,10 +71,18 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.SelectWorkflowAsync(request, actor, cancellationToken));
             }));
+        app.MapPost("/api/channel-batches/active", async (HttpContext context, EnsureChannelBatchRequest request, UserSessionService sessionService, ChannelBatchWorkflowService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.EnsureActiveBatchAsync(request, actor, cancellationToken));
+            }));
         app.MapGet("/api/reagents/catalog", async (ReagentQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListCatalogAsync(cancellationToken)));
         app.MapGet("/api/reagents/rack", async (ReagentQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListRackAsync(cancellationToken)));
+        app.MapGet("/api/reagents/scan-sessions/overview", async (ReagentQueryService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.GetScanSessionOverviewAsync(cancellationToken)));
         app.MapGet("/api/engineering/layout", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.GetLayoutAsync(cancellationToken)));
         app.MapGet("/api/engineering/coordinate-profiles", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
@@ -158,6 +166,18 @@ public static class WebHostEndpointExtensions
             {
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.ConfirmScanAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/reagents/scan-sessions/start", async (HttpContext context, StartReagentScanSessionRequest request, UserSessionService sessionService, ReagentScanWriteService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.StartSessionAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/reagents/scan-sessions/{scanSessionId}/complete", async (HttpContext context, string scanSessionId, CompleteReagentScanSessionRequest request, UserSessionService sessionService, ReagentScanWriteService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.CompleteSessionAsync(scanSessionId, request, actor, cancellationToken));
             }));
         app.MapPost("/api/engineering/coordinate-points/calibrate", async (HttpContext context, CalibrateCoordinatePointRequest request, UserSessionService sessionService, EngineeringWriteService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>

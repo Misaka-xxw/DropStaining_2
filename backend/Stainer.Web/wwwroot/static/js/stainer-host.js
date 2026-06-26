@@ -12,37 +12,11 @@ function setText(id, value){
 }
 
 window.machineStateSnapshot = null;
-const ChannelWorkflowSelectionStorageKey = 'stainer.channelWorkflowSelections.v1';
-window.channelWorkflowSelections = loadChannelWorkflowSelections();
 window.sampleWorkflowOptions = null;
+window.reagentScanSessionOverview = null;
 let activeChannelScriptLetter = null;
-
-function loadChannelWorkflowSelections(){
-  try{
-    return JSON.parse(localStorage.getItem(ChannelWorkflowSelectionStorageKey) || '{}') || {};
-  }catch(e){
-    return {};
-  }
-}
-
-function saveChannelWorkflowSelections(){
-  try{
-    localStorage.setItem(ChannelWorkflowSelectionStorageKey, JSON.stringify(window.channelWorkflowSelections || {}));
-  }catch(e){}
-}
-
-function channelScriptSelection(letter){
-  return (window.channelWorkflowSelections || {})[letter] || null;
-}
-
-function channelScriptLabel(selection){
-  return selection ? `${selection.code} v${selection.versionLabel}` : '未选择脚本';
-}
-
-function channelScriptDetail(selection){
-  if(!selection) return '点击后为本通道 1-4 号 Slot 统一选择已发布流程。';
-  return `${selection.workflowType} · ${selection.name}`;
-}
+let activeConfirmMode = null;
+let pendingPrimaryAntibodyCandidates = [];
 
 async function loadHostState(){
   try{
@@ -142,39 +116,73 @@ function renderSystemChecks(system){
   }).join('');
 }
 
-function renderSamples(state){
-  if(!document.getElementById('sampleCabinet')) return;
-  const count = slideCount(state);
-  setText('sampleBadge', `${count}/16 已装载`);
-  const root = document.getElementById('sampleCabinet');
-  root.innerHTML = (state.channels || []).map((channel, index) => {
-    const letter = ['A','B','C','D'][index] || channel.id;
-    const slides = channel.slides || [];
-    const selectedScript = channelScriptSelection(letter);
-    const scriptLabel = channelScriptLabel(selectedScript);
-    const scriptDetail = channelScriptDetail(selectedScript);
-    const slots = [4,3,2,1].map(slot => {
-      const slide = slides.find(x => x.slot === slot);
-      const protocolCode = selectedScript ? selectedScript.code : (slide ? slide.protocolCode : '--');
-      return `<div class="sample-slot ${slide ? 'occupied' : 'empty'}"><div class="slot-no">${letter}-${String(slot).padStart(2,'0')}</div><div><b>${escapeHtml(slide ? slide.barcode : '未装载')}</b><span>${escapeHtml(slide ? slide.currentStep : '可上样 / 等待确认')}</span></div><em>${escapeHtml(protocolCode)}</em></div>`;
-    }).join('');
-    return `<div class="sample-column status-${channel.status}"><div class="column-handle"><span>${letter} 通道</span><b>${slides.length}/4</b></div>${slots}<div class="channel-script-picker ${selectedScript ? 'selected' : 'unselected'}"><div><span>通道统一脚本</span><b>${escapeHtml(scriptLabel)}</b><small>${escapeHtml(scriptDetail)}</small></div><button class="btn btn-soft full" onclick="openChannelScriptModal('${letter}')">统一选择脚本</button></div><small class="slot-order-note">显示顺序：4 在上，1 在下</small></div>`;
-  }).join('');
+async function renderReagents(){
+  if(!document.getElementById('reagentDeck')) return;
+  await Promise.all([refreshReagentRack(), refreshReagentScanSession()]);
+}
 
-  const select = document.getElementById('confirmSlot');
-  if(select && select.options.length === 0){
-    select.innerHTML = ['A','B','C','D'].flatMap(letter => [1,2,3,4].map(slot => `<option>${letter}-${String(slot).padStart(2,'0')}</option>`)).join('');
+async function refreshReagentRack(){
+  const deck = document.getElementById('reagentDeck');
+  if(!deck) return;
+  try{
+    const rack = await api('/api/reagents/rack');
+    window.reagentRackSnapshot = rack || [];
+    renderReagentRackFromDatabase(window.reagentRackSnapshot);
+  }catch(e){
+    deck.innerHTML = `<div class="empty-state"><b>试剂架读取失败</b><span>${escapeHtml(e.message || '请检查后端只读接口')}</span></div>`;
+    setText('reagentBadge', '读取失败');
   }
 }
 
-function renderReagents(state){
-  if(!document.getElementById('reagentDeck')) return;
-  api('/api/reagents/rack').then(rack => renderReagentRackFromDatabase(rack)).catch(() => renderReagentRackFromDatabase([]));
+async function refreshReagentScanSession(){
+  const root = document.getElementById('reagentScanSessionSummary');
+  if(!root) return;
+  try{
+    const overview = await api('/api/reagents/scan-sessions/overview');
+    window.reagentScanSessionOverview = overview || {};
+    renderReagentScanSessionOverview(window.reagentScanSessionOverview);
+  }catch(e){
+    root.textContent = '扫码会话读取失败：' + (e.message || '请检查后端接口');
+    const startBtn = document.getElementById('startReagentScanSessionBtn');
+    const completeBtn = document.getElementById('completeReagentScanSessionBtn');
+    if(startBtn) startBtn.disabled = false;
+    if(completeBtn) completeBtn.disabled = true;
+  }
+}
+
+function renderReagentScanSessionOverview(overview){
+  const root = document.getElementById('reagentScanSessionSummary');
+  if(!root) return;
+  const active = overview?.activeSession || null;
+  const latest = overview?.latestCompletedSession || null;
+  const session = active || latest;
+  const startBtn = document.getElementById('startReagentScanSessionBtn');
+  const completeBtn = document.getElementById('completeReagentScanSessionBtn');
+  if(startBtn) startBtn.disabled = !!active;
+  if(completeBtn) completeBtn.disabled = !active;
+  if(!session){
+    root.innerHTML = '扫码会话：未开始 · 已扫描：0 / 40 · 有效：0 · 无效：0 · 空位：0 · 未扫描：40';
+    return;
+  }
+
+  const stateLabel = active ? '进行中' : '已完成';
+  const warning = session.hasWarning ? ` · Warning：${escapeHtml(session.message || '')}` : '';
+  root.innerHTML = [
+    `扫码会话：${stateLabel}`,
+    `会话编号：${escapeHtml(session.sessionCode || session.scanSessionId || '--')}`,
+    `开始时间：${escapeHtml(formatDateTime(session.startedAtUtc))}`,
+    `已扫描：${Number(session.scannedCount || 0)} / ${Number(session.totalPositionCount || 40)}`,
+    `有效：${Number(session.validCount || 0)}`,
+    `无效：${Number(session.invalidCount || 0)}`,
+    `空位：${Number(session.emptyCount || 0)}`,
+    `未扫描：${Number(session.unscannedCount || 0)}`
+  ].join(' · ') + warning;
 }
 
 function renderReagentRackFromDatabase(rack){
-  const occupied = rack.filter(x => x.bottle);
-  setText('reagentBadge', `${occupied.length}/40 有效瓶`);
+  const validCount = rack.filter(x => scanStateOf(x) === 'VALID').length;
+  const invalidCount = rack.filter(x => scanStateOf(x) === 'INVALID').length;
+  setText('reagentBadge', `${validCount}/40 VALID${invalidCount ? ` · ${invalidCount} INVALID` : ''}`);
   const byPosition = new Map(rack.map(x => [x.position, x]));
   const deck = document.getElementById('reagentDeck');
   if(!deck) return;
@@ -183,13 +191,13 @@ function renderReagentRackFromDatabase(rack){
       const pos = 'R' + (((col - 1) * 8) + row);
       const position = byPosition.get(pos);
       const bottle = position?.bottle;
-      const scanState = bottle ? 'VALID' : 'EMPTY';
-      const volumeMl = bottle ? Math.round((bottle.remainingVolumeUl / 1000) * 10) / 10 : '';
-      const title = bottle ? (bottle.name || bottle.reagentCode || scanState) : '空位';
-      const subtitle = bottle ? [bottle.reagentCode, bottle.lotNo].filter(Boolean).join(' / ') : '等待扫码';
-      const volume = bottle ? volumeMl + ' mL' : 'EMPTY';
-      const args = [pos, scanState, bottle?.fullBarcode || '', bottle?.name || '空位', bottle?.reagentCode || '', volumeMl, bottle?.lotNo || '', bottle?.expirationDate || ''].map(x => JSON.stringify(String(x))).join(',');
-      return `<button type="button" class="vial ${bottle ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(bottle?.reagentType || '')}" onclick="showReagentDetail(${args})" title="${escapeHtml(pos + ' ' + title)}"><b>${pos}</b><div class="vial-main"><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle)}</small></div><em>${escapeHtml(volume)}</em></button>`;
+      const scanState = scanStateOf(position);
+      const volume = bottle ? formatVolume(bottle.remainingVolumeUl) : scanStateLabel(scanState);
+      const title = bottle ? (bottle.name || bottle.reagentCode || scanState) : scanStateTitle(scanState);
+      const subtitle = bottle
+        ? [bottle.reagentCode, bottle.lotNo, bottle.barcodeSummary || position?.barcodeSummary].filter(Boolean).join(' / ')
+        : invalidOrScanMessage(position);
+      return `<button type="button" class="vial ${bottle ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(bottle?.reagentType || '')}" onclick="showReagentDetail('${escapeHtml(pos)}')" title="${escapeHtml(pos + ' ' + title + ' ' + invalidOrScanMessage(position))}"><b>${pos}</b><div class="vial-main"><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle)}</small></div><em>${escapeHtml(volume)}</em></button>`;
     }).join('');
     return `<div class="reagent-rack"><header><b>ch${col}</b><span>R${(col-1)*8+1}-R${col*8}</span></header>${rows}</div>`;
   }).join('');
@@ -197,10 +205,50 @@ function renderReagentRackFromDatabase(rack){
   const columnStatus = document.getElementById('columnStatus');
   if(columnStatus){
     columnStatus.innerHTML = [1,2,3,4,5].map(col => {
-      const count = rack.filter(x => x.columnNo === col && x.bottle).length;
-      return `<div class="${count ? 'has-data' : 'empty'}"><b>ch${col}</b><span>${count}/8 VALID</span><em>R${(col-1)*8+1}-R${col*8}</em></div>`;
+      const column = rack.filter(x => x.columnNo === col);
+      const valid = column.filter(x => scanStateOf(x) === 'VALID').length;
+      const invalid = column.filter(x => scanStateOf(x) === 'INVALID').length;
+      const empty = column.filter(x => scanStateOf(x) === 'EMPTY').length;
+      const stateClass = invalid ? 'invalid' : valid ? 'has-data' : 'empty';
+      const label = invalid ? `${invalid} INVALID` : `${valid}/8 VALID`;
+      return `<div class="${stateClass}"><b>ch${col}</b><span>${escapeHtml(label)}</span><em>${escapeHtml(empty ? `${empty} EMPTY` : `R${(col-1)*8+1}-R${col*8}`)}</em></div>`;
     }).join('');
   }
+}
+
+function scanStateOf(position){
+  return String(position?.scanState || (position?.bottle ? 'VALID' : 'UNSCANNED')).toUpperCase();
+}
+
+function scanStateLabel(scanState){
+  return ({VALID:'VALID', INVALID:'INVALID', EMPTY:'EMPTY', UNSCANNED:'未扫码'}[scanState] || scanState || '未扫码');
+}
+
+function scanStateTitle(scanState){
+  return ({VALID:'有效试剂', INVALID:'无效扫码', EMPTY:'空位', UNSCANNED:'未扫码'}[scanState] || '未扫码');
+}
+
+function invalidOrScanMessage(position){
+  const state = scanStateOf(position);
+  if(state === 'INVALID') return position?.validationMessage || '扫码校验未通过';
+  if(state === 'EMPTY') return position?.validationMessage || '空位';
+  if(state === 'UNSCANNED') return '未扫码';
+  return position?.validationMessage || 'OK';
+}
+
+function formatVolume(volumeUl){
+  if(volumeUl === null || volumeUl === undefined || volumeUl === '') return '--';
+  return `${Math.round((Number(volumeUl) / 1000) * 10) / 10} mL`;
+}
+
+function formatDate(value){
+  return value ? String(value).slice(0, 10) : '--';
+}
+
+function formatDateTime(value){
+  if(!value) return '--';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', {hour12:false});
 }
 
 function renderAlerts(state){
@@ -305,7 +353,15 @@ function applyMachineEvent(event){
   if(!state || !event) return;
   const payload = event.payload || {};
   appendMachineLog(state, event);
+  if(isReagentEvent(event)){
+    refreshReagentRack();
+    refreshReagentScanSession();
+  }
   switch(event.type){
+    case 'channelBatch.changed':
+    case 'slideTask.created':
+      loadHostState();
+      return;
     case 'machine.stateChanged':
       state.runId = payload.runId || event.runId || state.runId;
       state.status = String(payload.status || state.status || '').toLowerCase();
@@ -348,6 +404,11 @@ function applyMachineEvent(event){
   renderHistory(state);
   renderEngineer(state);
   renderRunPage(state);
+}
+
+function isReagentEvent(event){
+  const text = `${event.type || ''} ${event.entityType || ''}`.toLowerCase();
+  return text.includes('reagent') || text.includes('scansession') || event.type === 'qr.scanCompleted';
 }
 
 let machineSocket = null;
@@ -398,141 +459,54 @@ function scheduleMachineReconnect(){
   }, machineReconnectDelayMs);
 }
 
-async function scanSamples(){
-  const count = document.getElementById('sampleCount')?.value || 8;
-  await api('/api/samples/scan?count=' + count, {method:'POST'});
-  toast('样本扫描完成，待操作员确认任务');
-  await loadHostState();
-}
-
-async function loadSampleWorkflowOptions(forceRefresh){
-  if(!forceRefresh && window.sampleWorkflowOptions) return window.sampleWorkflowOptions;
-  const workflows = await api('/api/workflows');
-  window.sampleWorkflowOptions = (workflows || []).flatMap(workflow => {
-    return (workflow.versions || [])
-      .filter(version => String(version.status || '').toLowerCase() === 'published')
-      .map(version => ({
-        workflowId: workflow.id,
-        workflowVersionId: version.id,
-        code: workflow.code,
-        name: workflow.name,
-        workflowType: workflow.workflowType,
-        versionNo: version.versionNo,
-        versionLabel: version.versionLabel
-      }));
-  }).sort((a, b) => `${a.workflowType}-${a.code}-${a.versionNo}`.localeCompare(`${b.workflowType}-${b.code}-${b.versionNo}`));
-  return window.sampleWorkflowOptions;
-}
-
-async function openChannelScriptModal(letter){
-  activeChannelScriptLetter = letter;
-  const modal = document.getElementById('channelScriptModal');
-  const title = document.getElementById('channelScriptTitle');
-  const select = document.getElementById('channelScriptSelect');
-  if(!modal || !select) return;
-  if(title) title.textContent = `${letter} 通道统一选择脚本`;
-  select.disabled = true;
-  select.innerHTML = '<option value="">正在加载已发布流程...</option>';
-  setText('channelScriptHint', '正在读取流程配置。');
-  modal.classList.remove('hidden');
+async function startReagentScanSession(){
   try{
-    const options = await loadSampleWorkflowOptions(true);
-    if(options.length === 0){
-      select.innerHTML = '<option value="">暂无 Published 流程</option>';
-      setText('channelScriptHint', '请先在流程配置中准备并发布 HE/IHC 流程。');
-      return;
-    }
-    const selected = channelScriptSelection(letter);
-    select.disabled = false;
-    select.innerHTML = options.map(option => {
-      const label = `${option.workflowType} · ${option.code} v${option.versionLabel} · ${option.name}`;
-      const isSelected = selected?.workflowVersionId === option.workflowVersionId ? ' selected' : '';
-      return `<option value="${escapeHtml(option.workflowVersionId)}"${isSelected}>${escapeHtml(label)}</option>`;
-    }).join('');
-    setText('channelScriptHint', '该选择会应用于当前通道的 1-4 号 Slot。');
+    const result = await api('/api/reagents/scan-sessions/start', {
+      method:'POST',
+      body: JSON.stringify({commandId: commandId('reagent-scan-start')})
+    });
+    await Promise.all([refreshReagentScanSession(), refreshReagentRack()]);
+    toast(result.message || '扫码会话已开始');
   }catch(e){
-    select.innerHTML = '<option value="">流程加载失败</option>';
-    setText('channelScriptHint', '请检查服务和流程配置接口。');
-    toast('流程脚本加载失败', true);
+    toast(e.message || '开始扫码会话失败', true);
   }
 }
 
-function closeChannelScriptModal(){
-  document.getElementById('channelScriptModal')?.classList.add('hidden');
-}
-
-async function applyChannelScriptSelection(){
-  const select = document.getElementById('channelScriptSelect');
-  const workflowVersionId = select?.value;
-  if(!activeChannelScriptLetter || !workflowVersionId){
-    toast('请选择已发布流程脚本', true);
+async function completeReagentScanSession(){
+  const active = window.reagentScanSessionOverview?.activeSession;
+  if(!active?.scanSessionId){
+    toast('当前没有进行中的扫码会话。', true);
     return;
   }
-  const options = await loadSampleWorkflowOptions();
-  const selected = options.find(x => x.workflowVersionId === workflowVersionId);
-  if(!selected){
-    toast('选择的流程脚本不存在或未发布', true);
-    return;
+  const message = `完成当前扫码会话？\n已扫描：${Number(active.scannedCount || 0)} / ${Number(active.totalPositionCount || 40)}\n未扫描：${Number(active.unscannedCount || 0)}`;
+  if(!confirm(message)) return;
+  try{
+    const result = await api(`/api/reagents/scan-sessions/${encodeURIComponent(active.scanSessionId)}/complete`, {
+      method:'POST',
+      body: JSON.stringify({commandId: commandId('reagent-scan-complete')})
+    });
+    await Promise.all([refreshReagentScanSession(), refreshReagentRack()]);
+    toast(result.message || '扫码会话已完成');
+  }catch(e){
+    toast(e.message || '完成扫码会话失败', true);
   }
-  window.channelWorkflowSelections = {
-    ...(window.channelWorkflowSelections || {}),
-    [activeChannelScriptLetter]: selected
-  };
-  saveChannelWorkflowSelections();
-  closeChannelScriptModal();
-  if(window.machineStateSnapshot) renderSamples(window.machineStateSnapshot);
-  toast(`${activeChannelScriptLetter} 通道已统一选择 ${channelScriptLabel(selected)}`);
-}
-
-function clearChannelScriptSelection(){
-  if(!activeChannelScriptLetter) return;
-  const next = {...(window.channelWorkflowSelections || {})};
-  delete next[activeChannelScriptLetter];
-  window.channelWorkflowSelections = next;
-  saveChannelWorkflowSelections();
-  closeChannelScriptModal();
-  if(window.machineStateSnapshot) renderSamples(window.machineStateSnapshot);
-  toast(`${activeChannelScriptLetter} 通道脚本选择已清除`);
-}
-
-function openConfirmModal(mode){
-  const modal = document.getElementById('sampleConfirmModal');
-  const title = document.getElementById('confirmTitle');
-  if(title){
-    title.textContent = mode === 'he' ? 'HE 玻片手动确认' : (mode === 'ihc-hospital' ? '医院码 / LIS 查询确认' : '通灵 IHC 一抗码确认');
-  }
-  modal?.classList.remove('hidden');
-}
-
-function closeConfirmModal(){
-  document.getElementById('sampleConfirmModal')?.classList.add('hidden');
-}
-
-function confirmMockTask(){
-  const selectedChannels = Object.entries(window.channelWorkflowSelections || {})
-    .filter(([, script]) => script && script.code)
-    .map(([letter, script]) => `${letter}:${script.code} v${script.versionLabel}`);
-  toast(selectedChannels.length
-    ? `Mock: 任务已确认，通道脚本 ${selectedChannels.join(' / ')}`
-    : 'Mock: 任务已确认并生成流程快照');
-  closeConfirmModal();
 }
 
 async function scanReagents(){
-  await api('/api/reagents/scan', {method:'POST'});
-  toast('试剂扫描完成，已进入目录/有效期/余量校验');
-  await loadHostState();
+  toast('单个 R 位正式扫码确认尚未接入。', true);
 }
 
 function mockColumnScan(col){
-  toast('Mock: ch' + col + ' 列扫码完成，返回 8 个位置状态');
+  toast('单个 R 位正式扫码确认尚未接入。', true);
 }
 
-function showReagentDetail(pos,state,barcode,name,code,volume,lot,expire){
+function showReagentDetail(pos){
   const body = document.getElementById('reagentDetailBody');
   if(!body) return;
-  const validFormat = barcode && barcode.length === 17 ? '17位格式有效' : 'Mock条码/待替换为17位Code128';
-  body.innerHTML = `<div><span>位置</span><b>${escapeHtml(pos)}</b></div><div><span>SCAN_STATE</span><b>${escapeHtml(state)}</b></div><div><span>完整条码</span><b>${escapeHtml(barcode || '--')}</b><small>${validFormat}</small></div><div><span>试剂名称</span><b>${escapeHtml(name)}</b></div><div><span>试剂代码</span><b>${escapeHtml(code || '--')}</b></div><div><span>理论剩余量</span><b>${volume ? escapeHtml(volume) + ' mL' : '--'}</b></div><div><span>批号</span><b>${escapeHtml(lot || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(expire || '--')}</b></div>`;
+  const position = (window.reagentRackSnapshot || []).find(x => x.position === pos);
+  const bottle = position?.bottle;
+  const state = scanStateOf(position);
+  body.innerHTML = `<div><span>位置</span><b>${escapeHtml(pos)}</b></div><div><span>SCAN_STATE</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || '--')}</small></div><div><span>完整条码</span><b>${escapeHtml(bottle?.fullBarcode || position?.rawBarcode || '--')}</b><small>${escapeHtml(bottle?.barcodeSummary || position?.barcodeSummary || '--')}</small></div><div><span>试剂名称</span><b>${escapeHtml(bottle?.name || scanStateTitle(state))}</b></div><div><span>试剂代码</span><b>${escapeHtml(bottle?.reagentCode || position?.parsedReagentCode || '--')}</b></div><div><span>剩余量</span><b>${escapeHtml(bottle ? formatVolume(bottle.remainingVolumeUl) : '--')}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle?.lotNo, bottle?.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle?.expirationDate))}</b></div><div><span>最后扫码时间</span><b>${escapeHtml(formatDateTime(position?.lastScannedAtUtc || bottle?.lastScannedAtUtc))}</b></div><div><span>扫码会话</span><b>${escapeHtml(position?.lastScanSessionCode || '--')}</b><small>${escapeHtml(position?.lastScanSessionStatus || '--')}</small></div>`;
   document.getElementById('reagentDetail')?.classList.remove('hidden');
 }
 
@@ -673,6 +647,378 @@ async function adminDeleteUser(id){
   toast('用户已删除');
   await loadHostState();
 }
+
+function channelByLetter(letter){
+  const normalized = String(letter || '').trim().toUpperCase();
+  return (window.machineStateSnapshot?.channels || []).find((channel, index) => {
+    const channelLetter = String(channel.drawerCode || ['A','B','C','D'][index] || channel.id).trim().toUpperCase();
+    return channelLetter === normalized;
+  });
+}
+
+function slotCode(letter, slot){
+  return `${letter}-${String(slot).padStart(2, '0')}`;
+}
+
+function parseSlotCode(value){
+  const match = String(value || '').trim().toUpperCase().match(/^([A-D])-(\d{1,2})$/);
+  return match ? {letter: match[1], slot: Number(match[2])} : {letter: '', slot: 0};
+}
+
+function channelWorkflowInfo(channel){
+  if(!channel || !channel.workflowVersionId){
+    return {
+      selected: false,
+      label: '未选择',
+      detail: '请先选择通道实验脚本',
+      version: '--',
+      status: channel?.workflowSelectionStatus || 'Unselected'
+    };
+  }
+  const name = channel.workflowName || channel.workflowCode || channel.experimentType || '已选择流程';
+  const version = channel.workflowVersionLabel ? `v${channel.workflowVersionLabel}` : channel.workflowVersionId;
+  return {
+    selected: true,
+    label: name,
+    detail: `${channel.experimentType || '--'} / ${version}`,
+    version,
+    status: channel.workflowSelectionStatus || 'Selected'
+  };
+}
+
+function workflowStatusLabel(channel){
+  if(channel?.workflowLocked || channel?.workflowSelectionStatus === 'Locked') return '已锁定';
+  if(channel?.workflowSelectionStatus === 'NeedsManualResolution') return '需人工处理';
+  return channel?.workflowSelectionStatus === 'Selected' ? '未启动' : '未选择';
+}
+
+function renderSampleSlot(channel, letter, slot){
+  const slide = (channel.slides || []).find(x => Number(x.slot) === slot);
+  const code = slotCode(letter, slot);
+  if(!slide){
+    const disabled = !channel.workflowVersionId || channel.workflowLocked ? ' disabled' : '';
+    const hint = channel.workflowVersionId ? '空闲 / 可上样' : '未选脚本，禁止添加';
+    return `<div class="sample-slot empty"><div class="slot-no">${escapeHtml(code)}</div><div><b>空闲</b><span>${escapeHtml(hint)}</span><button class="btn btn-soft full"${disabled} onclick="openConfirmModalForSlot('${escapeHtml(letter)}', ${slot})">添加样本</button></div><em>--</em></div>`;
+  }
+  const inherited = [
+    slide.workflowName || channel.workflowName || slide.protocolCode || channel.workflowCode,
+    slide.workflowVersionLabel || channel.workflowVersionLabel
+  ].filter(Boolean).join(' / ');
+  return `<div class="sample-slot occupied"><div class="slot-no">${escapeHtml(code)}</div><div><b>${escapeHtml(slide.sampleIdentifier || slide.barcode || slide.id)}</b><span>${escapeHtml(statusText(slide.status || 'loaded'))} / ${escapeHtml(slide.currentStep || '')}</span><small>继承通道脚本：${escapeHtml(inherited || '--')}</small></div><em>${escapeHtml(slide.protocolCode || channel.workflowCode || channel.experimentType || '--')}</em></div>`;
+}
+
+function renderChannelWorkflowPicker(channel, letter, workflow){
+  const locked = channel.workflowLocked || channel.workflowSelectionStatus === 'Locked';
+  const canSelect = !workflow.selected && channel.canSelectWorkflow !== false && !locked;
+  const canChange = workflow.selected && channel.canChangeWorkflow && !locked;
+  const action = canSelect
+    ? `<button class="btn btn-soft full" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'select')">选择实验脚本</button>`
+    : canChange
+      ? `<button class="btn btn-soft full" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'change')">更换实验脚本</button>`
+      : locked
+        ? '<button class="btn btn-soft full" disabled>已锁定</button>'
+        : '';
+  const detail = workflow.selected
+    ? `实验类型：${channel.experimentType || '--'}；流程版本：${workflow.version}；脚本状态：${workflowStatusLabel(channel)}`
+    : '先选择通道脚本，再添加样本';
+  return `<div class="channel-script-picker ${workflow.selected ? 'selected' : 'unselected'}"><div><span>当前实验脚本</span><b>${escapeHtml(workflow.label)}</b><small>${escapeHtml(detail)}</small></div>${action}</div>`;
+}
+
+function refreshConfirmSlotOptions(){
+  const select = document.getElementById('confirmSlot');
+  if(!select) return;
+  const selected = select.value;
+  const channels = window.machineStateSnapshot?.channels || [];
+  select.innerHTML = (channels.length ? channels : ['A','B','C','D'].map((letter, index) => ({drawerCode: letter, id: index + 1, slides: []})))
+    .flatMap((channel, index) => {
+      const letter = channel.drawerCode || ['A','B','C','D'][index] || channel.id;
+      return [1,2,3,4].map(slot => {
+        const occupied = (channel.slides || []).some(x => Number(x.slot) === slot);
+        const code = slotCode(letter, slot);
+        return `<option value="${escapeHtml(code)}"${occupied ? ' disabled' : ''}>${escapeHtml(code)}${occupied ? ' 已占用' : ''}</option>`;
+      });
+    }).join('');
+  if(selected && Array.from(select.options).some(option => option.value === selected && !option.disabled)){
+    select.value = selected;
+  }
+}
+
+function renderSamples(state){
+  if(!document.getElementById('sampleCabinet')) return;
+  const count = slideCount(state);
+  setText('sampleBadge', `${count}/16 已占用`);
+  const root = document.getElementById('sampleCabinet');
+  root.innerHTML = (state.channels || []).map((channel, index) => {
+    const letter = channel.drawerCode || ['A','B','C','D'][index] || channel.id;
+    const slides = channel.slides || [];
+    const workflow = channelWorkflowInfo(channel);
+    const slots = [4,3,2,1].map(slot => renderSampleSlot(channel, letter, slot)).join('');
+    return `<div class="sample-column status-${escapeHtml(channel.status || 'empty')}"><div class="column-handle"><span>${escapeHtml(letter)} 通道</span><b>${slides.length}/4</b></div>${slots}${renderChannelWorkflowPicker(channel, letter, workflow)}<small class="slot-order-note">显示顺序：4 在上，1 在下</small></div>`;
+  }).join('');
+  refreshConfirmSlotOptions();
+}
+
+async function scanSamples(){
+  await loadHostState();
+  toast('样本状态已从后端刷新');
+}
+
+async function ensureActiveChannelBatch(letter){
+  const existing = channelByLetter(letter);
+  if(existing?.channelBatchId) return existing;
+  await api('/api/channel-batches/active', {
+    method: 'POST',
+    body: JSON.stringify({
+      commandId: commandId('channel-active'),
+      drawerCode: letter
+    })
+  });
+  await loadHostState();
+  const refreshed = channelByLetter(letter);
+  if(!refreshed?.channelBatchId){
+    throw new Error('后端未返回活动通道批次，请刷新后重试');
+  }
+  return refreshed;
+}
+
+async function loadSampleWorkflowOptions(forceRefresh){
+  if(!forceRefresh && window.sampleWorkflowOptions) return window.sampleWorkflowOptions;
+  const workflows = await api('/api/workflows');
+  window.sampleWorkflowOptions = (workflows || []).flatMap(workflow => {
+    return (workflow.versions || [])
+      .filter(version => String(version.status || '').toLowerCase() === 'published')
+      .map(version => ({
+        workflowId: workflow.id,
+        workflowVersionId: version.id,
+        code: workflow.code,
+        name: workflow.name,
+        workflowType: String(workflow.workflowType || '').toUpperCase(),
+        versionNo: version.versionNo,
+        versionLabel: version.versionLabel
+      }));
+  }).sort((a, b) => `${a.workflowType}-${a.code}-${a.versionNo}`.localeCompare(`${b.workflowType}-${b.code}-${b.versionNo}`));
+  return window.sampleWorkflowOptions;
+}
+
+function refreshChannelScriptOptions(){
+  const type = document.getElementById('channelScriptExperimentType')?.value || 'HE';
+  const select = document.getElementById('channelScriptSelect');
+  if(!select) return;
+  const options = (window.sampleWorkflowOptions || []).filter(option => option.workflowType === type);
+  select.disabled = options.length === 0;
+  select.innerHTML = options.length
+    ? options.map(option => {
+      const label = `${option.workflowType} / ${option.code} v${option.versionLabel} / ${option.name}`;
+      return `<option value="${escapeHtml(option.workflowVersionId)}">${escapeHtml(label)}</option>`;
+    }).join('')
+    : '<option value="">暂无 Published 流程</option>';
+}
+
+async function openChannelScriptModal(letter, mode='select'){
+  activeChannelScriptLetter = letter;
+  const modal = document.getElementById('channelScriptModal');
+  const title = document.getElementById('channelScriptTitle');
+  const select = document.getElementById('channelScriptSelect');
+  const typeSelect = document.getElementById('channelScriptExperimentType');
+  const reasonLabel = document.getElementById('channelScriptReasonLabel');
+  const reasonInput = document.getElementById('channelScriptReason');
+  if(!modal || !select || !typeSelect) return;
+  const isChange = mode === 'change';
+  if(title) title.textContent = `${letter} 通道${isChange ? '更换' : '选择'}实验脚本`;
+  if(reasonLabel) reasonLabel.classList.toggle('hidden', !isChange);
+  if(reasonInput) reasonInput.value = '';
+  select.disabled = true;
+  select.innerHTML = '<option value="">正在加载已发布流程...</option>';
+  setText('channelScriptHint', isChange ? '将影响该通道全部未运行玻片；请填写变更原因。' : '该选择会保存到后端 ChannelBatch，并应用于该通道 1-4 号 Slot。');
+  modal.classList.remove('hidden');
+  try{
+    const channel = await ensureActiveChannelBatch(letter);
+    await loadSampleWorkflowOptions(true);
+    typeSelect.value = channel.experimentType || 'HE';
+    refreshChannelScriptOptions();
+    if(channel.workflowVersionId && !isChange){
+      select.disabled = true;
+      setText('channelScriptHint', '该通道已经选择脚本；本界面不会覆盖已选脚本。');
+    }
+  }catch(e){
+    select.innerHTML = '<option value="">流程加载失败</option>';
+    setText('channelScriptHint', e.message || '请检查服务和流程配置接口。');
+    toast(e.message || '流程脚本加载失败', true);
+  }
+}
+
+function closeChannelScriptModal(){
+  document.getElementById('channelScriptModal')?.classList.add('hidden');
+}
+
+async function applyChannelScriptSelection(){
+  const type = document.getElementById('channelScriptExperimentType')?.value || 'HE';
+  const workflowVersionId = document.getElementById('channelScriptSelect')?.value;
+  const reason = document.getElementById('channelScriptReason')?.value?.trim();
+  const channel = activeChannelScriptLetter ? channelByLetter(activeChannelScriptLetter) : null;
+  if(!activeChannelScriptLetter || !workflowVersionId){
+    toast('请选择已发布流程脚本', true);
+    return;
+  }
+  if(channel?.workflowVersionId){
+    toast('后端当前未开放覆盖已选脚本接口，请按预启动变更规则处理', true);
+    return;
+  }
+  const reasonVisible = !document.getElementById('channelScriptReasonLabel')?.classList.contains('hidden');
+  if(reasonVisible && !reason){
+    toast('更换脚本必须填写原因', true);
+    return;
+  }
+  try{
+    const batch = await ensureActiveChannelBatch(activeChannelScriptLetter);
+    await api('/api/channel-batches/workflow-selection', {
+      method: 'POST',
+      body: JSON.stringify({
+        commandId: commandId('channel-workflow'),
+        channelBatchId: batch.channelBatchId,
+        drawerCode: activeChannelScriptLetter,
+        experimentType: type,
+        workflowVersionId
+      })
+    });
+    closeChannelScriptModal();
+    await loadHostState();
+    toast(`${activeChannelScriptLetter} 通道实验脚本已保存`);
+  }catch(e){
+    setText('channelScriptHint', e.message || '脚本选择失败');
+    toast(e.message || '脚本选择失败', true);
+  }
+}
+
+function clearChannelScriptSelection(){
+  closeChannelScriptModal();
+  toast('通道脚本以后端 ChannelBatch 为准，不能在浏览器本地清除', true);
+}
+
+function showSampleTaskError(message){
+  const error = document.getElementById('sampleTaskError');
+  if(error){
+    error.textContent = message || '';
+    error.classList.toggle('hidden', !message);
+  }
+}
+
+function updateConfirmModalFromSlot(){
+  const slot = document.getElementById('confirmSlot')?.value;
+  const path = document.getElementById('confirmPath')?.value || 'ihc-tl';
+  const parsed = parseSlotCode(slot);
+  const channel = channelByLetter(parsed.letter);
+  const workflow = channelWorkflowInfo(channel);
+  const rawCodeLabel = document.getElementById('rawCodeLabel');
+  const primaryLabel = document.getElementById('primaryAntibodyLabel');
+  const rawCode = document.getElementById('rawCode');
+  const button = document.getElementById('confirmTaskButton');
+  if(rawCodeLabel) rawCodeLabel.classList.toggle('hidden', path === 'he');
+  if(primaryLabel) primaryLabel.classList.toggle('hidden', pendingPrimaryAntibodyCandidates.length === 0);
+  if(rawCode && path === 'he') rawCode.value = '';
+  setText('confirmChannelScript', workflow.selected
+    ? `当前通道脚本：${channel.experimentType} / ${workflow.label} / ${workflow.version}`
+    : '当前通道脚本：未选择。请先在通道卡片中选择实验脚本。');
+  const expected = path === 'he' ? 'HE' : 'IHC';
+  const valid = workflow.selected && !channel?.workflowLocked && channel?.experimentType === expected;
+  if(button) button.disabled = !valid;
+  showSampleTaskError(valid ? '' : `该 Slot 所在通道需要先选择 ${expected} 脚本，且启动后不能追加样本。`);
+}
+
+function openConfirmModalForSlot(letter, slot){
+  openConfirmModal(null, slotCode(letter, slot));
+}
+
+function openConfirmModal(mode, preferredSlotCode){
+  activeConfirmMode = mode || null;
+  pendingPrimaryAntibodyCandidates = [];
+  refreshConfirmSlotOptions();
+  const modal = document.getElementById('sampleConfirmModal');
+  const title = document.getElementById('confirmTitle');
+  const path = document.getElementById('confirmPath');
+  const slot = document.getElementById('confirmSlot');
+  const rawCode = document.getElementById('rawCode');
+  const primary = document.getElementById('primaryAntibodySelect');
+  if(title) title.textContent = mode === 'he' ? 'HE 添加样本' : (mode === 'ihc-hospital' ? '医院码 / LIS 添加样本' : 'IHC 添加样本');
+  if(path && mode) path.value = mode;
+  if(slot && preferredSlotCode) slot.value = preferredSlotCode;
+  if(rawCode) rawCode.value = path?.value === 'he' ? '' : (path?.value === 'ihc-hospital' ? 'HOSP-001' : 'PA1');
+  if(primary) primary.innerHTML = '';
+  modal?.classList.remove('hidden');
+  updateConfirmModalFromSlot();
+}
+
+function closeConfirmModal(){
+  document.getElementById('sampleConfirmModal')?.classList.add('hidden');
+}
+
+function populatePrimaryAntibodyCandidates(candidates){
+  pendingPrimaryAntibodyCandidates = candidates || [];
+  const primary = document.getElementById('primaryAntibodySelect');
+  if(primary){
+    primary.innerHTML = pendingPrimaryAntibodyCandidates.map(code => `<option value="${escapeHtml(code)}">${escapeHtml(code)}</option>`).join('');
+  }
+  updateConfirmModalFromSlot();
+}
+
+async function confirmTask(){
+  const slot = document.getElementById('confirmSlot')?.value;
+  const path = document.getElementById('confirmPath')?.value || 'ihc-tl';
+  const rawCode = document.getElementById('rawCode')?.value?.trim();
+  const parsed = parseSlotCode(slot);
+  const channel = channelByLetter(parsed.letter);
+  if(!channel?.workflowVersionId){
+    showSampleTaskError('未选择通道实验脚本，不能创建任务。');
+    return;
+  }
+  try{
+    if(path === 'he'){
+      await api('/api/tasks/he', {
+        method: 'POST',
+        body: JSON.stringify({
+          commandId: commandId('task-he'),
+          slotCode: slot,
+          drawerCode: parsed.letter,
+          channelBatchId: channel.channelBatchId
+        })
+      });
+    }else{
+      const selectedPrimaryAntibodyCode = document.getElementById('primaryAntibodySelect')?.value || null;
+      await api('/api/tasks/ihc', {
+        method: 'POST',
+        body: JSON.stringify({
+          commandId: commandId('task-ihc'),
+          inputMode: path === 'ihc-hospital' ? 'HospitalBarcode' : 'PrimaryAntibody',
+          rawCode: rawCode || '',
+          slotCode: slot,
+          drawerCode: parsed.letter,
+          channelBatchId: channel.channelBatchId,
+          selectedPrimaryAntibodyCode
+        })
+      });
+    }
+    closeConfirmModal();
+    await loadHostState();
+    toast('任务已创建，Slot 状态来自后端刷新');
+  }catch(e){
+    if(e.data?.requiresSelection){
+      populatePrimaryAntibodyCandidates(e.data.candidatePrimaryAntibodyCodes || []);
+      showSampleTaskError(e.data.message || '请选择最终一抗后再次确认创建。');
+      return;
+    }
+    showSampleTaskError(e.message || '创建任务失败');
+    toast(e.message || '创建任务失败', true);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('confirmSlot')?.addEventListener('change', updateConfirmModalFromSlot);
+  document.getElementById('confirmPath')?.addEventListener('change', () => {
+    pendingPrimaryAntibodyCandidates = [];
+    updateConfirmModalFromSlot();
+  });
+  document.getElementById('primaryAntibodySelect')?.addEventListener('change', updateConfirmModalFromSlot);
+});
 
 document.addEventListener('DOMContentLoaded', () => {
   loadHostState().then(() => {

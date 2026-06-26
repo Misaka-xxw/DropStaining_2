@@ -64,6 +64,8 @@ public sealed class InMemoryRuntimeEventPublisher : IRuntimeEventPublisher
 public static class MachineEventTypes
 {
     public const string MachineStateChanged = "machine.stateChanged";
+    public const string ChannelBatchChanged = "channelBatch.changed";
+    public const string SlideTaskCreated = "slideTask.created";
     public const string SlideTaskStateChanged = "slideTask.stateChanged";
     public const string WorkflowStepStarted = "workflowStep.started";
     public const string WorkflowStepCompleted = "workflowStep.completed";
@@ -74,6 +76,7 @@ public static class MachineEventTypes
     public const string AlarmAcknowledged = "alarm.acknowledged";
     public const string DeviceConnectionChanged = "device.connectionChanged";
     public const string QrScanCompleted = "qr.scanCompleted";
+    public const string ScanSessionChanged = "scanSession.changed";
 }
 
 public sealed record MachineEventMessage(

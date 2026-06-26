@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Stainer.Web.Application.ReadModels;
+using Stainer.Web.Application.Services;
 using Stainer.Web.Domain.Entities;
 using Stainer.Web.Infrastructure.Data;
 
@@ -99,6 +100,46 @@ public sealed class BusinessWriteApiIntegrationTests
             roles = new[] { "operator" }
         });
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task Channel_batch_active_api_creates_empty_batch_for_samples_ui_and_is_idempotent()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "operator", "operator");
+
+        var created = await PostJsonAsync<ChannelBatchActivationResponse>(client, "/api/channel-batches/active", new
+        {
+            commandId = "cmd-samples-active-a-001",
+            drawerCode = "A"
+        });
+        Assert.True(created.Ok);
+        Assert.False(created.Replayed);
+        Assert.Equal("A", created.DrawerCode);
+        Assert.Equal(RuntimeLedgerStatus.Pending, created.Status);
+        Assert.Equal(WorkflowSelectionStatus.Unselected, created.WorkflowSelectionStatus);
+
+        var replayed = await PostJsonAsync<ChannelBatchActivationResponse>(client, "/api/channel-batches/active", new
+        {
+            commandId = "cmd-samples-active-a-001",
+            drawerCode = "A"
+        });
+        Assert.True(replayed.Replayed);
+        Assert.Equal(created.ChannelBatchId, replayed.ChannelBatchId);
+
+        var reused = await PostJsonAsync<ChannelBatchActivationResponse>(client, "/api/channel-batches/active", new
+        {
+            commandId = "cmd-samples-active-a-002",
+            drawerCode = "A"
+        });
+        Assert.False(reused.Replayed);
+        Assert.Equal(created.ChannelBatchId, reused.ChannelBatchId);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        Assert.Equal(1, await dbContext.ChannelBatches.CountAsync(x => x.DrawerCode == "A" && x.Status == RuntimeLedgerStatus.Pending));
+        Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "channel_batch.ensure_active" && x.EntityId == created.ChannelBatchId));
     }
 
     [Fact]
@@ -807,6 +848,127 @@ public sealed class BusinessWriteApiIntegrationTests
         var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
         Assert.Equal(1, await dbContext.ChannelBatches.CountAsync(x => x.DrawerCode == "A" && x.Status == RuntimeLedgerStatus.Pending));
         Assert.Equal(1, await dbContext.WorkflowAssignmentHistory.CountAsync(x => x.ActionType == WorkflowAssignmentAction.InitialSelection));
+    }
+
+    [Fact]
+    public async Task Reagent_scan_session_start_complete_are_idempotent_audited_authorized_and_published()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        using var anonymousClient = factory.CreateClient();
+        await LoginAsync(client, "operator", "operator");
+
+        var emptyOverview = await client.GetFromJsonAsync<ReagentScanSessionOverviewResponse>("/api/reagents/scan-sessions/overview");
+        Assert.NotNull(emptyOverview);
+        Assert.Null(emptyOverview!.ActiveSession);
+        Assert.Null(emptyOverview.LatestCompletedSession);
+
+        var forbiddenStart = await anonymousClient.PostAsJsonAsync("/api/reagents/scan-sessions/start", new
+        {
+            commandId = "cmd-reagent-session-forbidden-start"
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, forbiddenStart.StatusCode);
+
+        var started = await PostJsonAsync<ReagentScanSessionMutationResponse>(client, "/api/reagents/scan-sessions/start", new
+        {
+            commandId = "cmd-reagent-session-start-001"
+        });
+        Assert.True(started.Ok);
+        Assert.False(started.Replayed);
+        Assert.Equal("Active", started.Session.Status);
+        Assert.Equal(0, started.Session.ScannedCount);
+        Assert.Equal(40, started.Session.UnscannedCount);
+        Assert.False(started.Session.HasWarning);
+
+        var reused = await PostJsonAsync<ReagentScanSessionMutationResponse>(client, "/api/reagents/scan-sessions/start", new
+        {
+            commandId = "cmd-reagent-session-start-002"
+        });
+        Assert.False(reused.Replayed);
+        Assert.Equal(started.Session.ScanSessionId, reused.Session.ScanSessionId);
+
+        var replayedStart = await PostJsonAsync<ReagentScanSessionMutationResponse>(client, "/api/reagents/scan-sessions/start", new
+        {
+            commandId = "cmd-reagent-session-start-001"
+        });
+        Assert.True(replayedStart.Replayed);
+        Assert.Equal(started.Session.ScanSessionId, replayedStart.Session.ScanSessionId);
+
+        var activeOverview = await client.GetFromJsonAsync<ReagentScanSessionOverviewResponse>("/api/reagents/scan-sessions/overview");
+        Assert.Equal(started.Session.ScanSessionId, activeOverview!.ActiveSession?.ScanSessionId);
+        Assert.Null(activeOverview.LatestCompletedSession);
+
+        await using (var activeScope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = activeScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            Assert.Equal(1, await dbContext.ReagentScanSessions.CountAsync(x => x.Status == "Active" && x.CompletedAtUtc == null));
+            Assert.Equal(0, await dbContext.ReagentScanItems.CountAsync(x => x.ReagentScanSessionId == started.Session.ScanSessionId));
+        }
+
+        var completed = await PostJsonAsync<ReagentScanSessionMutationResponse>(
+            client,
+            $"/api/reagents/scan-sessions/{started.Session.ScanSessionId}/complete",
+            new
+            {
+                commandId = "cmd-reagent-session-complete-001"
+            });
+        Assert.True(completed.Ok);
+        Assert.False(completed.Replayed);
+        Assert.Equal("Completed", completed.Session.Status);
+        Assert.NotNull(completed.Session.CompletedAtUtc);
+        Assert.True(completed.Session.HasWarning);
+        Assert.Equal(40, completed.Session.UnscannedCount);
+        Assert.Equal(0, completed.Session.EmptyCount);
+
+        var replayedComplete = await PostJsonAsync<ReagentScanSessionMutationResponse>(
+            client,
+            $"/api/reagents/scan-sessions/{started.Session.ScanSessionId}/complete",
+            new
+            {
+                commandId = "cmd-reagent-session-complete-001"
+            });
+        Assert.True(replayedComplete.Replayed);
+        Assert.Equal(completed.Session.ScanSessionId, replayedComplete.Session.ScanSessionId);
+
+        var completedAgain = await client.PostAsJsonAsync(
+            $"/api/reagents/scan-sessions/{started.Session.ScanSessionId}/complete",
+            new
+            {
+                commandId = "cmd-reagent-session-complete-002"
+            });
+        Assert.Equal(HttpStatusCode.Conflict, completedAgain.StatusCode);
+        var completedAgainBody = await completedAgain.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("reagent_scan_session_not_active", completedAgainBody.GetProperty("code").GetString());
+
+        var forbiddenComplete = await anonymousClient.PostAsJsonAsync(
+            $"/api/reagents/scan-sessions/{started.Session.ScanSessionId}/complete",
+            new
+            {
+                commandId = "cmd-reagent-session-forbidden-complete"
+            });
+        Assert.Equal(HttpStatusCode.Unauthorized, forbiddenComplete.StatusCode);
+
+        var completedOverview = await client.GetFromJsonAsync<ReagentScanSessionOverviewResponse>("/api/reagents/scan-sessions/overview");
+        Assert.Null(completedOverview!.ActiveSession);
+        Assert.Equal(started.Session.ScanSessionId, completedOverview.LatestCompletedSession?.ScanSessionId);
+        Assert.True(completedOverview.LatestCompletedSession?.HasWarning);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var persisted = await verifyContext.ReagentScanSessions.SingleAsync(x => x.Id == started.Session.ScanSessionId);
+        Assert.Equal("Completed", persisted.Status);
+        Assert.NotNull(persisted.CompletedAtUtc);
+        Assert.Equal(0, await verifyContext.ReagentScanItems.CountAsync(x => x.ReagentScanSessionId == persisted.Id));
+        Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "reagent.scan_session.start" && x.EntityId == persisted.Id));
+        Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "reagent.scan_session.complete" && x.EntityId == persisted.Id));
+
+        var publisher = factory.Services.GetRequiredService<InMemoryRuntimeEventPublisher>();
+        var scanSessionEvents = publisher.Snapshot()
+            .Where(x => x.Type == MachineEventTypes.ScanSessionChanged && x.EntityId == persisted.Id)
+            .ToList();
+        Assert.Equal(2, scanSessionEvents.Count);
+        Assert.Contains(scanSessionEvents, x => string.Equals(x.Payload["status"]?.ToString(), "Active", StringComparison.Ordinal));
+        Assert.Contains(scanSessionEvents, x => string.Equals(x.Payload["status"]?.ToString(), "Completed", StringComparison.Ordinal));
     }
 
     [Fact]

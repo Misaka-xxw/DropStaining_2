@@ -10,7 +10,8 @@ namespace Stainer.Web.Application.Services;
 
 public sealed class ChannelBatchWorkflowService(
     StainerDbContext dbContext,
-    CommandIdempotencyService idempotencyService)
+    CommandIdempotencyService idempotencyService,
+    IRuntimeEventPublisher eventPublisher)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly string[] ActiveBatchStatuses =
@@ -57,6 +58,7 @@ public sealed class ChannelBatchWorkflowService(
                     commandId = request.CommandId,
                     correlationId = request.CommandId
                 });
+                PublishChannelBatchChanged(batch, "workflowSelected");
 
                 return new CommandExecutionResult<ChannelBatchWorkflowResponse>(
                     new ChannelBatchWorkflowResponse(
@@ -70,6 +72,68 @@ public sealed class ChannelBatchWorkflowService(
                         batch.WorkflowSelectionStatus,
                         batch.WorkflowSelectedAtUtc,
                         "Channel workflow selected."),
+                    "ChannelBatch",
+                    batch.Id);
+            },
+            cancellationToken);
+    }
+
+    public Task<ChannelBatchActivationResponse> EnsureActiveBatchAsync(
+        EnsureChannelBatchRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return idempotencyService.RunAsync(
+            request.CommandId,
+            "channel_batch.ensure_active",
+            request,
+            actor,
+            async () =>
+            {
+                var drawerCode = NormalizeDrawerCode(request.DrawerCode);
+                var drawer = await dbContext.Drawers.SingleOrDefaultAsync(x => x.Code == drawerCode, cancellationToken);
+                if (drawer is null)
+                {
+                    throw new BusinessRuleException("drawer_not_found", "Drawer was not found.", StatusCodes.Status404NotFound);
+                }
+
+                var activeBatches = await dbContext.ChannelBatches
+                    .Where(x => x.DrawerId == drawer.Id && ActiveBatchStatuses.Contains(x.Status))
+                    .ToListAsync(cancellationToken);
+                var existing = activeBatches
+                    .OrderByDescending(x => x.CreatedAtUtc)
+                    .FirstOrDefault();
+                var batch = existing ?? new ChannelBatch
+                {
+                    DrawerId = drawer.Id,
+                    DrawerCode = drawer.Code,
+                    Status = RuntimeLedgerStatus.Pending,
+                    WorkflowSnapshotJson = "{}",
+                    WorkflowSelectionStatus = WorkflowSelectionStatus.Unselected,
+                    CreatedAtUtc = DateTimeOffset.UtcNow
+                };
+
+                if (existing is null)
+                {
+                    dbContext.ChannelBatches.Add(batch);
+                    AddAudit(actor, "channel_batch.ensure_active", batch.Id, new
+                    {
+                        batch.DrawerCode,
+                        commandId = request.CommandId
+                    });
+                    PublishChannelBatchChanged(batch, "batchCreated");
+                }
+
+                return new CommandExecutionResult<ChannelBatchActivationResponse>(
+                    new ChannelBatchActivationResponse(
+                        true,
+                        request.CommandId,
+                        false,
+                        batch.Id,
+                        batch.DrawerCode,
+                        batch.Status,
+                        batch.WorkflowSelectionStatus,
+                        existing is null ? "Channel batch created." : "Active channel batch exists."),
                     "ChannelBatch",
                     batch.Id);
             },
@@ -243,6 +307,25 @@ public sealed class ChannelBatchWorkflowService(
             Message = JsonSerializer.Serialize(details, JsonOptions),
             CreatedAtUtc = DateTimeOffset.UtcNow
         });
+    }
+
+    private void PublishChannelBatchChanged(ChannelBatch batch, string reason)
+    {
+        eventPublisher.Publish(MachineEventMessage.Create(
+            MachineEventTypes.ChannelBatchChanged,
+            batch.MachineRunId,
+            "ChannelBatch",
+            batch.Id,
+            null,
+            new Dictionary<string, object?>
+            {
+                ["channelBatchId"] = batch.Id,
+                ["drawerCode"] = batch.DrawerCode,
+                ["workflowSelectionStatus"] = batch.WorkflowSelectionStatus,
+                ["experimentType"] = batch.ExperimentType,
+                ["workflowVersionId"] = batch.SelectedWorkflowVersionId,
+                ["reason"] = reason
+            }));
     }
 
     private static string NormalizeDrawerCode(string? drawerCode)

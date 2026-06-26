@@ -6,4 +6,5 @@ public interface IReagentReadRepository
 {
     Task<IReadOnlyList<ReagentCatalogItemResponse>> ListCatalogAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ReagentRackPositionResponse>> ListRackAsync(CancellationToken cancellationToken = default);
+    Task<ReagentScanSessionOverviewResponse> GetScanSessionOverviewAsync(CancellationToken cancellationToken = default);
 }

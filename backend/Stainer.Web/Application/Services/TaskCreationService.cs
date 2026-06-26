@@ -11,7 +11,8 @@ namespace Stainer.Web.Application.Services;
 public sealed class TaskCreationService(
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
-    ChannelBatchWorkflowService channelBatchWorkflowService)
+    ChannelBatchWorkflowService channelBatchWorkflowService,
+    IRuntimeEventPublisher eventPublisher)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private const string CompatibilityCompatible = "Compatible";
@@ -57,7 +58,7 @@ public sealed class TaskCreationService(
                     compatibilityValidationStatus: null,
                     compatibilityValidationMessage: null);
                 dbContext.StainingTasks.Add(task);
-                AddSlideTask(batch, task, slot, StainingTaskType.He);
+                var slideTask = AddSlideTask(batch, task, slot, StainingTaskType.He);
                 AddAudit(actor, "task.create_he", "StainingTask", task.Id, new
                 {
                     task.TaskCode,
@@ -68,6 +69,7 @@ public sealed class TaskCreationService(
                     legacyWorkflowVersionCompatibilityField = legacyWorkflowVersionId is not null,
                     legacyWorkflowVersionId
                 });
+                PublishSlideTaskCreated(batch, task, slot, slideTask);
                 return new CommandExecutionResult<TaskCreationResponse>(
                     CreatedResponse(request.CommandId, false, task, batch, "HE task created."),
                     "StainingTask",
@@ -163,7 +165,7 @@ public sealed class TaskCreationService(
                         compatibilityValidationStatus: CompatibilityCompatible,
                         compatibilityValidationMessage: compatibility.Message);
                     dbContext.StainingTasks.Add(task);
-                    AddSlideTask(batch, task, slot, StainingTaskType.Ihc);
+                    var slideTask = AddSlideTask(batch, task, slot, StainingTaskType.Ihc);
                     AddAudit(actor, "task.create_ihc", "StainingTask", task.Id, new
                     {
                         task.TaskCode,
@@ -181,6 +183,7 @@ public sealed class TaskCreationService(
                         legacyWorkflowVersionCompatibilityField = legacyWorkflowVersionId is not null,
                         legacyWorkflowVersionId
                     });
+                    PublishSlideTaskCreated(batch, task, slot, slideTask);
                     return new CommandExecutionResult<TaskCreationResponse>(
                         CreatedResponse(request.CommandId, false, task, batch, "IHC task created."),
                         "StainingTask",
@@ -427,9 +430,9 @@ public sealed class TaskCreationService(
         };
     }
 
-    private void AddSlideTask(ChannelBatch batch, StainingTask task, PhysicalSlot slot, string taskType)
+    private SlideTask AddSlideTask(ChannelBatch batch, StainingTask task, PhysicalSlot slot, string taskType)
     {
-        dbContext.SlideTasks.Add(new SlideTask
+        var slideTask = new SlideTask
         {
             ChannelBatch = batch,
             StainingTask = task,
@@ -438,7 +441,9 @@ public sealed class TaskCreationService(
             TaskType = taskType,
             Status = RuntimeLedgerStatus.Pending,
             CreatedAtUtc = DateTimeOffset.UtcNow
-        });
+        };
+        dbContext.SlideTasks.Add(slideTask);
+        return slideTask;
     }
 
     private static void EnsureCanAddSlideToBatch(ChannelBatch batch, string taskType, string? requestedWorkflowVersionId)
@@ -540,6 +545,26 @@ public sealed class TaskCreationService(
             Message = JsonSerializer.Serialize(details, JsonOptions),
             CreatedAtUtc = DateTimeOffset.UtcNow
         });
+    }
+
+    private void PublishSlideTaskCreated(ChannelBatch batch, StainingTask task, PhysicalSlot slot, SlideTask slideTask)
+    {
+        eventPublisher.Publish(MachineEventMessage.Create(
+            MachineEventTypes.SlideTaskCreated,
+            batch.MachineRunId,
+            "SlideTask",
+            slideTask.Id,
+            null,
+            new Dictionary<string, object?>
+            {
+                ["channelBatchId"] = batch.Id,
+                ["drawerCode"] = batch.DrawerCode,
+                ["slotCode"] = slot.Code,
+                ["slideTaskId"] = slideTask.Id,
+                ["stainingTaskId"] = task.Id,
+                ["taskType"] = task.TaskType,
+                ["workflowVersionId"] = batch.SelectedWorkflowVersionId
+            }));
     }
 
     private static TaskCreationResponse CreatedResponse(string commandId, bool replayed, StainingTask task, ChannelBatch batch, string message)

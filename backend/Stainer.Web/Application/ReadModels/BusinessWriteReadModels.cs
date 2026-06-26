@@ -42,6 +42,16 @@ public sealed record ChannelBatchWorkflowResponse(
     DateTimeOffset? WorkflowSelectedAtUtc,
     string Message);
 
+public sealed record ChannelBatchActivationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string ChannelBatchId,
+    string DrawerCode,
+    string Status,
+    string WorkflowSelectionStatus,
+    string Message);
+
 public sealed record TaskWorkflowCandidateResponse(
     string WorkflowVersionId,
     string WorkflowDefinitionId,
@@ -75,6 +85,13 @@ public sealed record ReagentScanConfirmationResponse(
     int EmptyCount,
     int ValidCount,
     int InvalidCount,
+    string Message);
+
+public sealed record ReagentScanSessionMutationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    ReagentScanSessionSummaryResponse Session,
     string Message);
 
 public sealed record EngineeringWriteResponse(

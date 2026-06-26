@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Requests;
@@ -14,6 +15,150 @@ public sealed class ReagentScanWriteService(
     IRuntimeEventPublisher eventPublisher)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    public Task<ReagentScanSessionMutationResponse> StartSessionAsync(
+        StartReagentScanSessionRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return idempotencyService.RunAsync(
+            request.CommandId,
+            "reagent.scan_session.start",
+            request,
+            actor,
+            async () =>
+            {
+                var activeSession = (await dbContext.ReagentScanSessions
+                        .Include(x => x.CreatedByUser)
+                        .Include(x => x.Items)
+                        .ToListAsync(cancellationToken))
+                    .Where(x => x.CompletedAtUtc is null && x.Status.Equals("Active", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x.StartedAtUtc)
+                    .FirstOrDefault();
+
+                if (activeSession is not null)
+                {
+                    var existingSummary = await BuildSessionSummaryAsync(activeSession, null, cancellationToken);
+                    return new CommandExecutionResult<ReagentScanSessionMutationResponse>(
+                        new ReagentScanSessionMutationResponse(
+                            true,
+                            request.CommandId,
+                            false,
+                            existingSummary,
+                            "Existing active reagent scan session returned."),
+                        "ReagentScanSession",
+                        activeSession.Id);
+                }
+
+                var now = DateTimeOffset.UtcNow;
+                var session = new ReagentScanSession
+                {
+                    SessionCode = $"RSCAN-{now:yyyyMMddHHmmss}-{Guid.NewGuid():N}",
+                    Status = "Active",
+                    StartedAtUtc = now,
+                    CreatedByUserId = actor.UserId
+                };
+                dbContext.ReagentScanSessions.Add(session);
+                var summary = await BuildSessionSummaryAsync(session, actor.DisplayName, cancellationToken);
+
+                dbContext.AuditLogs.Add(new AuditLog
+                {
+                    ActorUserId = actor.UserId,
+                    Action = "reagent.scan_session.start",
+                    EntityType = "ReagentScanSession",
+                    EntityId = session.Id,
+                    Message = JsonSerializer.Serialize(new
+                    {
+                        session.SessionCode,
+                        session.Status,
+                        summary.ScannedCount,
+                        summary.ValidCount,
+                        summary.InvalidCount,
+                        summary.EmptyCount,
+                        summary.UnscannedCount
+                    }, JsonOptions),
+                    CreatedAtUtc = now
+                });
+                PublishScanSessionChanged(session, summary, "Reagent scan session started.");
+
+                return new CommandExecutionResult<ReagentScanSessionMutationResponse>(
+                    new ReagentScanSessionMutationResponse(
+                        true,
+                        request.CommandId,
+                        false,
+                        summary,
+                        "Reagent scan session started."),
+                    "ReagentScanSession",
+                    session.Id);
+            },
+            cancellationToken);
+    }
+
+    public Task<ReagentScanSessionMutationResponse> CompleteSessionAsync(
+        string scanSessionId,
+        CompleteReagentScanSessionRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return idempotencyService.RunAsync(
+            request.CommandId,
+            "reagent.scan_session.complete",
+            new { scanSessionId, request.CommandId },
+            actor,
+            async () =>
+            {
+                var session = await dbContext.ReagentScanSessions
+                    .Include(x => x.CreatedByUser)
+                    .Include(x => x.Items)
+                    .SingleOrDefaultAsync(x => x.Id == scanSessionId, cancellationToken);
+                if (session is null)
+                {
+                    throw new BusinessRuleException("reagent_scan_session_not_found", "Reagent scan session was not found.", StatusCodes.Status404NotFound);
+                }
+
+                if (session.CompletedAtUtc is not null || !session.Status.Equals("Active", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new BusinessRuleException("reagent_scan_session_not_active", "Only Active reagent scan sessions can be completed.", StatusCodes.Status409Conflict);
+                }
+
+                var now = DateTimeOffset.UtcNow;
+                session.Status = "Completed";
+                session.CompletedAtUtc = now;
+                var summary = await BuildSessionSummaryAsync(session, null, cancellationToken);
+
+                dbContext.AuditLogs.Add(new AuditLog
+                {
+                    ActorUserId = actor.UserId,
+                    Action = "reagent.scan_session.complete",
+                    EntityType = "ReagentScanSession",
+                    EntityId = session.Id,
+                    Message = JsonSerializer.Serialize(new
+                    {
+                        session.SessionCode,
+                        session.Status,
+                        summary.ScannedCount,
+                        summary.ValidCount,
+                        summary.InvalidCount,
+                        summary.EmptyCount,
+                        summary.UnscannedCount,
+                        summary.HasWarning
+                    }, JsonOptions),
+                    CreatedAtUtc = now
+                });
+                PublishScanSessionChanged(session, summary, summary.Message);
+
+                return new CommandExecutionResult<ReagentScanSessionMutationResponse>(
+                    new ReagentScanSessionMutationResponse(
+                        true,
+                        request.CommandId,
+                        false,
+                        summary,
+                        summary.Message),
+                    "ReagentScanSession",
+                    session.Id);
+            },
+            cancellationToken);
+    }
 
     public Task<ReagentScanConfirmationResponse> ConfirmScanAsync(
         ConfirmReagentScanRequest request,
@@ -213,5 +358,71 @@ public sealed class ReagentScanWriteService(
                     session.Id);
             },
             cancellationToken);
+    }
+
+    private async Task<ReagentScanSessionSummaryResponse> BuildSessionSummaryAsync(
+        ReagentScanSession session,
+        string? createdByDisplayName,
+        CancellationToken cancellationToken)
+    {
+        var totalPositionCount = await dbContext.ReagentRackPositions.CountAsync(cancellationToken);
+        var items = session.Items.ToList();
+        var validCount = items.Count(x => x.ScanResult.Equals(ReagentScanResult.Valid, StringComparison.OrdinalIgnoreCase));
+        var invalidCount = items.Count(x => x.ScanResult.Equals(ReagentScanResult.Invalid, StringComparison.OrdinalIgnoreCase));
+        var emptyCount = items.Count(x => x.ScanResult.Equals(ReagentScanResult.Empty, StringComparison.OrdinalIgnoreCase));
+        var scannedPositionCount = items
+            .Select(x => x.ReagentRackPositionId)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+        var unscannedCount = Math.Max(0, totalPositionCount - scannedPositionCount);
+        var completed = session.CompletedAtUtc is not null || session.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase);
+        var hasWarning = completed && unscannedCount > 0;
+        var message = hasWarning
+            ? $"Reagent scan session completed with {unscannedCount} unscanned position(s)."
+            : completed
+                ? "Reagent scan session completed."
+                : "Reagent scan session is active.";
+
+        return new ReagentScanSessionSummaryResponse(
+            session.Id,
+            session.SessionCode,
+            session.Status,
+            session.StartedAtUtc,
+            session.CompletedAtUtc,
+            session.CreatedByUserId,
+            session.CreatedByUser?.DisplayName ?? createdByDisplayName,
+            items.Count,
+            validCount,
+            invalidCount,
+            emptyCount,
+            unscannedCount,
+            totalPositionCount,
+            hasWarning,
+            message);
+    }
+
+    private void PublishScanSessionChanged(ReagentScanSession session, ReagentScanSessionSummaryResponse summary, string message)
+    {
+        eventPublisher.Publish(MachineEventMessage.Create(
+            MachineEventTypes.ScanSessionChanged,
+            null,
+            "ReagentScanSession",
+            session.Id,
+            null,
+            new Dictionary<string, object?>
+            {
+                ["scanSessionId"] = session.Id,
+                ["sessionCode"] = session.SessionCode,
+                ["status"] = session.Status,
+                ["startedAtUtc"] = session.StartedAtUtc,
+                ["completedAtUtc"] = session.CompletedAtUtc,
+                ["scannedCount"] = summary.ScannedCount,
+                ["validCount"] = summary.ValidCount,
+                ["invalidCount"] = summary.InvalidCount,
+                ["emptyCount"] = summary.EmptyCount,
+                ["unscannedCount"] = summary.UnscannedCount,
+                ["hasWarning"] = summary.HasWarning,
+                ["message"] = message
+            }));
     }
 }

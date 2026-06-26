@@ -14,10 +14,19 @@ public sealed class RuntimePageBridgeService(
     MachineRunQueryService machineRunQueryService,
     RunControlService runControlService)
 {
+    private static readonly string[] ActiveBatchStatuses =
+    [
+        RuntimeLedgerStatus.Pending,
+        RuntimeLedgerStatus.Running,
+        RuntimeLedgerStatus.Paused,
+        RuntimeLedgerStatus.Faulted
+    ];
+
     public async Task<MockRuntimeState> GetStateAsync(CancellationToken cancellationToken = default)
     {
         var run = await machineRunQueryService.GetCurrentAsync(cancellationToken);
-        return run is null ? store.GetState() : ToPageState(store.GetState(), run);
+        var state = run is null ? store.GetState() : ToPageState(store.GetState(), run);
+        return await OverlayDatabaseChannelsAsync(state, cancellationToken);
     }
 
     public async Task<MockRuntimeState> RunActionAsync(string action, AuthenticatedUser actor, CancellationToken cancellationToken = default)
@@ -52,7 +61,8 @@ public sealed class RuntimePageBridgeService(
                 actor,
                 cancellationToken);
             var createdRun = await machineRunQueryService.GetAsync(created.RunId, cancellationToken);
-            return createdRun is null ? store.RunAction("start") : ToPageState(store.GetState(), createdRun);
+            var state = createdRun is null ? store.RunAction("start") : ToPageState(store.GetState(), createdRun);
+            return await OverlayDatabaseChannelsAsync(state, cancellationToken);
         }
 
         _ = normalizedAction switch
@@ -65,7 +75,131 @@ public sealed class RuntimePageBridgeService(
         };
 
         var updated = await machineRunQueryService.GetAsync(run.Id, cancellationToken);
-        return updated is null ? store.GetState() : ToPageState(store.GetState(), updated);
+        var updatedState = updated is null ? store.GetState() : ToPageState(store.GetState(), updated);
+        return await OverlayDatabaseChannelsAsync(updatedState, cancellationToken);
+    }
+
+    private async Task<MockRuntimeState> OverlayDatabaseChannelsAsync(MockRuntimeState state, CancellationToken cancellationToken)
+    {
+        var drawers = await dbContext.Drawers
+            .AsNoTracking()
+            .Include(x => x.PhysicalSlots)
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync(cancellationToken);
+        if (drawers.Count == 0)
+        {
+            return state;
+        }
+
+        var drawerIds = drawers.Select(x => x.Id).ToList();
+        var batches = await dbContext.ChannelBatches
+            .AsNoTracking()
+            .AsSplitQuery()
+            .Include(x => x.SelectedWorkflowVersion)
+            .ThenInclude(x => x!.WorkflowDefinition)
+            .Include(x => x.SlideTasks)
+            .ThenInclude(x => x.StainingTask)
+            .Include(x => x.SlideTasks)
+            .ThenInclude(x => x.PhysicalSlot)
+            .Where(x => drawerIds.Contains(x.DrawerId) && ActiveBatchStatuses.Contains(x.Status))
+            .ToListAsync(cancellationToken);
+        if (batches.Count == 0)
+        {
+            return state;
+        }
+
+        var batchByDrawer = batches
+            .GroupBy(x => x.DrawerId)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(b => b.CreatedAtUtc).First());
+        state.Channels = drawers.Select((drawer, index) =>
+        {
+            batchByDrawer.TryGetValue(drawer.Id, out var batch);
+            return ToPageChannelFromDatabase(drawer, batch, index);
+        }).ToList();
+        return state;
+    }
+
+    private static MockChannel ToPageChannelFromDatabase(Drawer drawer, ChannelBatch? batch, int index)
+    {
+        if (batch is null)
+        {
+            return new MockChannel
+            {
+                Id = index + 1,
+                Name = $"Channel{index + 1}",
+                DrawerCode = drawer.Code,
+                Status = "empty",
+                CurrentStep = "No active batch",
+                WorkflowSelectionStatus = WorkflowSelectionStatus.Unselected,
+                CanSelectWorkflow = true,
+                CanChangeWorkflow = false
+            };
+        }
+
+        var slides = batch.SlideTasks
+            .OrderBy(x => x.PhysicalSlot?.SlotNo ?? ParseSlotNo(x.SlotCode))
+            .Select(slide => ToPageSlideFromDatabase(batch, slide))
+            .ToList();
+        var locked = batch.WorkflowLockedAtUtc is not null
+            || batch.StartedAtUtc is not null
+            || !string.IsNullOrWhiteSpace(batch.MachineRunId)
+            || batch.WorkflowSelectionStatus == WorkflowSelectionStatus.Locked;
+        var status = slides.Count == 0 && batch.WorkflowSelectionStatus == WorkflowSelectionStatus.Unselected
+            ? "empty"
+            : MapPageStatus(batch.Status);
+        return new MockChannel
+        {
+            Id = index + 1,
+            Name = $"Channel{index + 1}",
+            DrawerCode = drawer.Code,
+            ChannelBatchId = batch.Id,
+            Status = status,
+            Progress = slides.Count == 0 ? 0 : (int)Math.Round(slides.Average(x => x.Progress)),
+            CurrentStep = locked ? "Locked" : slides.Count == 0 ? "Waiting for slides" : "Waiting",
+            ExperimentType = batch.ExperimentType,
+            WorkflowVersionId = batch.SelectedWorkflowVersionId,
+            WorkflowCode = batch.SelectedWorkflowVersion?.WorkflowDefinition?.Code,
+            WorkflowName = batch.SelectedWorkflowVersion?.WorkflowDefinition?.Name,
+            WorkflowVersionLabel = batch.SelectedWorkflowVersion?.VersionLabel,
+            WorkflowSelectionStatus = batch.WorkflowSelectionStatus,
+            WorkflowLockedAtUtc = batch.WorkflowLockedAtUtc,
+            WorkflowLocked = locked,
+            CanSelectWorkflow = !locked
+                && batch.WorkflowSelectionStatus == WorkflowSelectionStatus.Unselected
+                && string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
+                && slides.Count == 0,
+            CanChangeWorkflow = false,
+            Slides = slides
+        };
+    }
+
+    private static MockSlide ToPageSlideFromDatabase(ChannelBatch batch, SlideTask slide)
+    {
+        var task = slide.StainingTask;
+        var workflow = batch.SelectedWorkflowVersion;
+        var workflowDefinition = workflow?.WorkflowDefinition;
+        var sampleIdentifier = task?.RawSampleCode
+            ?? task?.NormalizedSampleCode
+            ?? task?.RawCode
+            ?? task?.TaskCode
+            ?? slide.Id[^Math.Min(8, slide.Id.Length)..];
+        return new MockSlide
+        {
+            Id = slide.Id,
+            StainingTaskId = task?.Id,
+            Channel = Math.Clamp((batch.DrawerCode.FirstOrDefault() - 'A') + 1, 1, 4),
+            Slot = ParseSlotNo(slide.SlotCode),
+            Barcode = sampleIdentifier,
+            SampleIdentifier = sampleIdentifier,
+            ProtocolCode = workflowDefinition?.Code ?? batch.ExperimentType ?? slide.TaskType,
+            WorkflowName = workflowDefinition?.Name,
+            WorkflowVersionLabel = workflow?.VersionLabel,
+            WorkflowVersionId = batch.SelectedWorkflowVersionId,
+            AntibodyCode = task?.ConfirmedPrimaryAntibodyCode ?? task?.PrimaryAntibodyCode ?? string.Empty,
+            Status = MapPageStatus(slide.Status),
+            CurrentStep = MapSlideStep(slide.Status),
+            Progress = slide.Status == RuntimeLedgerStatus.Completed ? 100 : 0
+        };
     }
 
     private static MockRuntimeState ToPageState(MockRuntimeState fallback, MachineRunDetailResponse run)
@@ -74,10 +208,11 @@ public sealed class RuntimePageBridgeService(
         var channels = Enumerable.Range(0, 4)
             .Select(index => new MockChannel
             {
-                Id = index + 1,
-                Name = $"Channel{index + 1}",
-                Status = "empty",
-                CurrentStep = "Empty"
+            Id = index + 1,
+            Name = $"Channel{index + 1}",
+            DrawerCode = ((char)('A' + index)).ToString(),
+            Status = "empty",
+            CurrentStep = "Empty"
             })
             .ToList();
 
@@ -119,6 +254,7 @@ public sealed class RuntimePageBridgeService(
             Channel = Math.Clamp(drawerCode[0] - 'A' + 1, 1, 4),
             Slot = ParseSlotNo(slide.SlotCode),
             Barcode = slide.Id[^Math.Min(8, slide.Id.Length)..],
+            SampleIdentifier = slide.Id[^Math.Min(8, slide.Id.Length)..],
             ProtocolCode = slide.TaskType,
             Status = MapPageStatus(slide.Status),
             CurrentStep = step?.StepName ?? step?.MajorStepCode ?? "Waiting",
@@ -201,6 +337,20 @@ public sealed class RuntimePageBridgeService(
             RuntimeLedgerStatus.WaitingUnload => "waiting",
             RuntimeLedgerStatus.Failed or RuntimeLedgerStatus.Faulted or RuntimeLedgerStatus.Unknown => "error",
             _ => status.ToLowerInvariant()
+        };
+    }
+
+    private static string MapSlideStep(string status)
+    {
+        return status switch
+        {
+            RuntimeLedgerStatus.Pending => "Waiting",
+            RuntimeLedgerStatus.Running => "Running",
+            RuntimeLedgerStatus.Paused => "Paused",
+            RuntimeLedgerStatus.Completed => "Completed",
+            RuntimeLedgerStatus.WaitingUnload => "Waiting unload",
+            RuntimeLedgerStatus.Faulted or RuntimeLedgerStatus.Failed => "Fault",
+            _ => status
         };
     }
 
