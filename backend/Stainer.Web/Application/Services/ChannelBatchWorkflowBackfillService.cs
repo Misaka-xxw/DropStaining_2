@@ -33,6 +33,12 @@ public sealed class ChannelBatchWorkflowBackfillService(
                 continue;
             }
 
+            if (analysis.IsEmptyBatch)
+            {
+                ApplyEmptyBatchNormalization(batch, analysis);
+                continue;
+            }
+
             manual++;
             foreach (var reason in analysis.Reasons)
             {
@@ -61,9 +67,9 @@ public sealed class ChannelBatchWorkflowBackfillService(
     private static bool ApplySafeBackfill(ChannelBatch batch, BatchWorkflowAnalysis analysis)
     {
         var changed = false;
-        var desiredStatus = string.IsNullOrWhiteSpace(batch.MachineRunId) && batch.WorkflowLockedAtUtc is null
-            ? WorkflowSelectionStatus.Selected
-            : WorkflowSelectionStatus.Locked;
+        var desiredStatus = IsLocked(batch)
+            ? WorkflowSelectionStatus.Locked
+            : WorkflowSelectionStatus.Selected;
 
         if (batch.ExperimentType != analysis.ExperimentType)
         {
@@ -104,6 +110,55 @@ public sealed class ChannelBatchWorkflowBackfillService(
         return changed;
     }
 
+    private static bool ApplyEmptyBatchNormalization(ChannelBatch batch, BatchWorkflowAnalysis analysis)
+    {
+        var changed = false;
+        var desiredStatus = analysis.HasCompleteWorkflowSelection
+            ? IsLocked(batch) ? WorkflowSelectionStatus.Locked : WorkflowSelectionStatus.Selected
+            : WorkflowSelectionStatus.Unselected;
+
+        if (batch.WorkflowSelectionStatus != desiredStatus)
+        {
+            batch.WorkflowSelectionStatus = desiredStatus;
+            changed = true;
+        }
+
+        if (batch.NeedsManualResolution)
+        {
+            batch.NeedsManualResolution = false;
+            changed = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(batch.ManualResolutionReason))
+        {
+            batch.ManualResolutionReason = string.Empty;
+            changed = true;
+        }
+
+        if (!analysis.HasCompleteWorkflowSelection)
+        {
+            if (!string.IsNullOrWhiteSpace(batch.ExperimentType))
+            {
+                batch.ExperimentType = null;
+                changed = true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId))
+            {
+                batch.SelectedWorkflowVersionId = null;
+                changed = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(batch.WorkflowSnapshotJson))
+            {
+                batch.WorkflowSnapshotJson = "{}";
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
     private static void ApplyManualResolution(ChannelBatch batch, IReadOnlyList<string> reasons)
     {
         var reasonText = string.Join("; ", reasons);
@@ -116,7 +171,7 @@ public sealed class ChannelBatchWorkflowBackfillService(
     {
         if (batch.SlideTasks.Count == 0)
         {
-            return BatchWorkflowAnalysis.Manual(["NoSlideTasks", "CannotDetermineExperimentType"]);
+            return AnalyzeEmptyBatch(batch);
         }
 
         var tasks = batch.SlideTasks.Select(x => x.StainingTask).ToList();
@@ -180,6 +235,31 @@ public sealed class ChannelBatchWorkflowBackfillService(
         return BatchWorkflowAnalysis.Safe(experimentTypes.Single(), workflowVersionIds.Single(), snapshots.Single());
     }
 
+    private static BatchWorkflowAnalysis AnalyzeEmptyBatch(ChannelBatch batch)
+    {
+        var hasExperimentType = !string.IsNullOrWhiteSpace(batch.ExperimentType);
+        var hasWorkflowVersion = !string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId);
+        var hasWorkflowSnapshot = NormalizeSnapshot(batch.WorkflowSnapshotJson) is not null;
+        var hasAnyWorkflowSelection = hasExperimentType || hasWorkflowVersion || hasWorkflowSnapshot;
+
+        if (!hasAnyWorkflowSelection)
+        {
+            return BatchWorkflowAnalysis.Empty(false);
+        }
+
+        if (hasExperimentType && hasWorkflowVersion && hasWorkflowSnapshot)
+        {
+            return BatchWorkflowAnalysis.Empty(true);
+        }
+
+        return BatchWorkflowAnalysis.Manual(["IncompleteChannelWorkflowSelection"]);
+    }
+
+    private static bool IsLocked(ChannelBatch batch)
+    {
+        return !string.IsNullOrWhiteSpace(batch.MachineRunId) || batch.WorkflowLockedAtUtc is not null;
+    }
+
     private static string? NormalizeSnapshot(string? snapshot)
     {
         var normalized = Normalize(snapshot);
@@ -193,6 +273,8 @@ public sealed class ChannelBatchWorkflowBackfillService(
 
     private sealed record BatchWorkflowAnalysis(
         bool IsSafe,
+        bool IsEmptyBatch,
+        bool HasCompleteWorkflowSelection,
         string? ExperimentType,
         string? WorkflowVersionId,
         string? WorkflowSnapshotJson,
@@ -200,12 +282,17 @@ public sealed class ChannelBatchWorkflowBackfillService(
     {
         public static BatchWorkflowAnalysis Safe(string experimentType, string workflowVersionId, string workflowSnapshotJson)
         {
-            return new BatchWorkflowAnalysis(true, experimentType, workflowVersionId, workflowSnapshotJson, []);
+            return new BatchWorkflowAnalysis(true, false, true, experimentType, workflowVersionId, workflowSnapshotJson, []);
+        }
+
+        public static BatchWorkflowAnalysis Empty(bool hasCompleteWorkflowSelection)
+        {
+            return new BatchWorkflowAnalysis(false, true, hasCompleteWorkflowSelection, null, null, null, []);
         }
 
         public static BatchWorkflowAnalysis Manual(IReadOnlyList<string> reasons)
         {
-            return new BatchWorkflowAnalysis(false, null, null, null, reasons);
+            return new BatchWorkflowAnalysis(false, false, false, null, null, null, reasons);
         }
     }
 }

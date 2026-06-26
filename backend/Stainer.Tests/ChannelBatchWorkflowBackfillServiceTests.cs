@@ -89,6 +89,59 @@ public sealed class ChannelBatchWorkflowBackfillServiceTests
     }
 
     [Fact]
+    public async Task Empty_unselected_channel_is_not_marked_needs_manual_resolution()
+    {
+        await using var dbContext = await CreateMigratedContextAsync();
+        var batch = await CreateBatchAsync(dbContext, "A", []);
+        batch.NeedsManualResolution = true;
+        batch.ManualResolutionReason = "NoSlideTasks; CannotDetermineExperimentType";
+        batch.WorkflowSelectionStatus = WorkflowSelectionStatus.NeedsManualResolution;
+        await dbContext.SaveChangesAsync();
+
+        var report = await CreateService(dbContext).BackfillAsync();
+
+        Assert.Equal(1, report.ScannedChannelBatchCount);
+        Assert.Equal(0, report.BackfilledCount);
+        Assert.Equal(0, report.NeedsManualResolutionCount);
+        await dbContext.Entry(batch).ReloadAsync();
+        Assert.False(batch.NeedsManualResolution);
+        Assert.Equal(string.Empty, batch.ManualResolutionReason);
+        Assert.Equal(WorkflowSelectionStatus.Unselected, batch.WorkflowSelectionStatus);
+        Assert.Null(batch.ExperimentType);
+        Assert.Null(batch.SelectedWorkflowVersionId);
+        Assert.Equal("{}", batch.WorkflowSnapshotJson);
+    }
+
+    [Fact]
+    public async Task Empty_selected_channel_keeps_channel_workflow_selection()
+    {
+        await using var dbContext = await CreateMigratedContextAsync();
+        var heVersion = await CreateWorkflowAsync(dbContext, "HE-EMPTY-SELECTED-BACKFILL", StainingTaskType.He);
+        var snapshot = Snapshot(heVersion.Id);
+        var batch = await CreateBatchAsync(dbContext, "B", []);
+        batch.ExperimentType = StainingTaskType.He;
+        batch.SelectedWorkflowVersionId = heVersion.Id;
+        batch.WorkflowSnapshotJson = snapshot;
+        batch.WorkflowSelectionStatus = WorkflowSelectionStatus.NeedsManualResolution;
+        batch.NeedsManualResolution = true;
+        batch.ManualResolutionReason = "NoSlideTasks";
+        await dbContext.SaveChangesAsync();
+
+        var report = await CreateService(dbContext).BackfillAsync();
+
+        Assert.Equal(1, report.ScannedChannelBatchCount);
+        Assert.Equal(0, report.BackfilledCount);
+        Assert.Equal(0, report.NeedsManualResolutionCount);
+        await dbContext.Entry(batch).ReloadAsync();
+        Assert.False(batch.NeedsManualResolution);
+        Assert.Equal(string.Empty, batch.ManualResolutionReason);
+        Assert.Equal(WorkflowSelectionStatus.Selected, batch.WorkflowSelectionStatus);
+        Assert.Equal(StainingTaskType.He, batch.ExperimentType);
+        Assert.Equal(heVersion.Id, batch.SelectedWorkflowVersionId);
+        Assert.Equal(snapshot, batch.WorkflowSnapshotJson);
+    }
+
+    [Fact]
     public async Task Backfill_is_idempotent_for_correctly_backfilled_batches()
     {
         await using var dbContext = await CreateMigratedContextAsync();

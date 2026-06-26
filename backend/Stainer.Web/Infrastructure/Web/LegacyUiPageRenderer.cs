@@ -154,7 +154,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
           <title>登录 - 全自动冰冻切片染色机</title>
-          <link rel="stylesheet" href="/static/css/app.css?v=20260625-r4">
+          <link rel="stylesheet" href="/static/css/app.css?v=20260626-r3">
         </head>
         <body class="login-screen">
           <div class="login-grid">
@@ -194,7 +194,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
             </section>
           </div>
           <div id="toast" class="toast hidden"></div>
-          <script src="/static/js/api.js?v=20260625-r4"></script>
+          <script src="/static/js/api.js?v=20260626-r3"></script>
           <script>
             function selectedRole(){ return document.querySelector('input[name="role"]:checked').value; }
             function fillAccount(role){ username.value=role; password.value='123456'; document.querySelector(`input[value="${role}"]`).checked=true; syncRoles(); }
