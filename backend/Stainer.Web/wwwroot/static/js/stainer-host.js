@@ -310,24 +310,68 @@ function renderEngineer(state){
 
 async function renderConfigure(){
   if(!document.getElementById('protocolTable')) return;
-  const workflows = await api('/api/workflows');
-  const catalog = await api('/api/reagents/catalog');
-  const liquidClasses = await api('/api/engineering/liquid-classes');
-  const dab = await api('/api/dab');
-  document.getElementById('protocolTable').innerHTML = workflows.map(w => {
-    const versions = (w.versions || []).slice().sort((a, b) => (a.versionNo || 0) - (b.versionNo || 0));
-    const version = versions[versions.length - 1];
-    const status = workflowStatusText(version?.status);
-    return `<div class="protocol-version-row"><b>${escapeHtml(w.code)}</b><span>${escapeHtml(w.name)}</span><em>${version ? 'v' + escapeHtml(version.versionLabel) + ' · ' + status : '无版本'}</em><small>${escapeHtml(w.description)}</small><div><button class="btn btn-soft" onclick="api('/api/workflows/${w.id}').then(()=>toast('已从数据库读取流程详情'))">查看步骤</button><button class="btn btn-soft" onclick="copyWorkflowDraft('${w.id}')">复制</button><button class="btn btn-soft">停用</button></div></div>`;
-  }).join('') || '<div class="empty-state"><b>暂无数据库流程</b><span>请先导入或创建流程版本。</span></div>';
-  document.getElementById('dabPreview').innerHTML = `<div><span>IHC 张数</span><b>${dab.slideCount}</b></div><div><span>总量</span><b>${dab.totalMl}</b><em>mL</em></div><div><span>A/B/水</span><b>${dab.dabAMl}/${dab.dabBMl}/${dab.pureWaterMl}</b></div>`;
-  document.getElementById('catalogTable').innerHTML = '<div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>报警余量</span><span>液体类型</span></div>'
-    + (catalog.map(item => `<div class="table-row"><span>${escapeHtml(item.reagentCode)}</span><span>${escapeHtml(item.name)}</span><span>${escapeHtml(item.reagentType || '--')}</span><span>${item.minimumAlarmVolumeUl ?? '--'} μL</span><span>${escapeHtml(item.liquidClassCode || '--')}</span></div>`).join('')
-    || '<div class="empty-state"><b>暂无数据库试剂目录</b><span>请先导入或维护试剂目录。</span></div>');
+  const [workflows, catalog, dab, mappings] = await Promise.all([
+    api('/api/workflows'),
+    api('/api/reagents/catalog'),
+    api('/api/dab'),
+    api('/api/primary-antibody-mappings')
+  ]);
+  window.configureWorkflows = workflows || [];
+  window.configureReagentCatalog = catalog || [];
+  window.configurePrimaryAntibodyMappings = mappings || [];
+  renderWorkflowVersionTable(window.configureWorkflows);
+  renderPrimaryAntibodyMappings(window.configurePrimaryAntibodyMappings);
+  const dabPreview = document.getElementById('dabPreview');
+  if(dabPreview) dabPreview.innerHTML = `<div><span>IHC 张数</span><b>${dab.slideCount}</b></div><div><span>总量</span><b>${dab.totalMl}</b><em>mL</em></div><div><span>A/B/水</span><b>${dab.dabAMl}/${dab.dabBMl}/${dab.pureWaterMl}</b></div>`;
+  const catalogTable = document.getElementById('catalogTable');
+  if(catalogTable){
+    catalogTable.innerHTML = '<div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>报警余量</span><span>液体类型</span></div>'
+      + ((catalog || []).map(item => `<div class="table-row"><span>${escapeHtml(item.reagentCode)}</span><span>${escapeHtml(item.name)}</span><span>${escapeHtml(item.reagentType || '--')}</span><span>${item.minimumAlarmVolumeUl ?? '--'} uL</span><span>${escapeHtml(item.liquidClassCode || '--')}</span></div>`).join('')
+      || '<div class="empty-state"><b>暂无数据库试剂目录</b><span>请先维护试剂目录。</span></div>');
+  }
 }
 
 function workflowStatusText(status){
   return ({Draft:'草稿', Published:'已发布', Retired:'已停用'}[status] || status || '--');
+}
+
+function renderWorkflowVersionTable(workflows){
+  const root = document.getElementById('protocolTable');
+  if(!root) return;
+  const rows = (workflows || []).flatMap(workflow => {
+    const versions = (workflow.versions || []).slice().sort((a, b) => (b.versionNo || 0) - (a.versionNo || 0));
+    return versions.map(version => ({workflow, version}));
+  });
+  root.innerHTML = rows.map(({workflow, version}) => {
+    const status = workflowStatusText(version.status);
+    return `<div class="protocol-version-row workflow-version-${escapeHtml(String(version.status || '').toLowerCase())}"><b>${escapeHtml(workflow.code)}</b><span>${escapeHtml(workflow.name)}<small>${escapeHtml(workflow.workflowType)} · 步骤 ${Number(version.stepCount || 0)} · 试剂 ${Number(version.reagentRequirementCount || 0)}</small></span><em>v${escapeHtml(version.versionLabel)} · ${escapeHtml(status)}</em><small>${escapeHtml(workflow.description || '--')}</small><div class="button-row"><button class="btn btn-soft" onclick="openWorkflowVersionDetail('${escapeHtml(version.id)}')">详情</button><button class="btn btn-soft" onclick="copyWorkflowVersionDraft('${escapeHtml(version.id)}')">复制 Draft</button>${version.status === 'Published' ? `<button class="btn btn-soft" onclick="retireWorkflowVersion('${escapeHtml(version.id)}')">停用</button>` : ''}</div></div>`;
+  }).join('') || '<div class="empty-state"><b>暂无流程版本</b><span>请先新建流程 Draft。</span></div>';
+}
+
+async function openWorkflowVersionDetail(workflowVersionId){
+  const detail = await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}`);
+  window.activeWorkflowVersionDetail = detail;
+  renderWorkflowVersionDetail(detail);
+}
+
+function renderWorkflowVersionDetail(detail){
+  const root = document.getElementById('workflowVersionDetail');
+  if(!root) return;
+  const editable = detail.status === 'Draft';
+  const readonlyHint = editable ? '' : '<div class="notice-box">该版本不可以直接修改，请复制为 Draft 后编辑。</div>';
+  root.innerHTML = `<div class="section-title"><div><h2>${escapeHtml(detail.code)} v${escapeHtml(detail.versionLabel)}</h2><p>${escapeHtml(detail.name)} · ${escapeHtml(detail.workflowType)} · ${escapeHtml(workflowStatusText(detail.status))}</p></div><div class="button-row">${editable ? '<button class="btn btn-soft" onclick="updateWorkflowVersionMeta()">保存基本信息</button><button class="btn btn-primary" onclick="publishWorkflowVersion()">发布 Draft</button>' : ''}<button class="btn btn-soft" onclick="copyWorkflowVersionDraft(activeWorkflowVersionDetail.workflowVersionId)">复制 Draft</button></div></div>${readonlyHint}<div class="version-grid"><div><span>流程代码</span><b>${escapeHtml(detail.code)}</b></div><div><span>实验类型</span><b>${escapeHtml(detail.workflowType)}</b></div><div><span>版本状态</span><b>${escapeHtml(workflowStatusText(detail.status))}</b></div><div><span>发布时间</span><b>${escapeHtml(formatDateTime(detail.publishedAtUtc))}</b></div></div>${editable ? workflowMetaEditor(detail) : ''}<div class="section-title compact-title"><h2>步骤编辑</h2>${editable ? '<button class="btn btn-primary" onclick="addWorkflowStep()">新增步骤</button>' : ''}</div><div class="data-table workflow-step-table">${workflowStepRows(detail.steps || [], editable)}</div><div class="section-title compact-title"><h2>试剂需求</h2>${editable ? '<div class="button-row"><button class="btn btn-primary" onclick="addWorkflowRequirement()">新增需求</button><button class="btn btn-soft" onclick="recalculateWorkflowRequirements()">从步骤重算</button></div>' : ''}</div><div class="data-table workflow-requirement-table">${workflowRequirementRows(detail.reagentRequirements || [], editable)}</div><div class="section-title compact-title"><h2>发布前校验</h2><button class="btn btn-soft" onclick="validateWorkflowPublish()">运行校验</button></div><div class="validation-result" id="workflowPublishValidation"></div>`;
+}
+
+function workflowMetaEditor(detail){
+  return `<div class="inline-form touch-form"><label>流程名称<input class="input" id="workflowMetaName" value="${escapeHtml(detail.name)}"></label><label>版本号<input class="input" id="workflowMetaVersionLabel" value="${escapeHtml(detail.versionLabel)}"></label><label>变更说明<input class="input" id="workflowMetaChangeNote" value="${escapeHtml(detail.changeNote || '')}"></label><label>流程说明<input class="input" id="workflowMetaDescription" value="${escapeHtml(detail.description || '')}"></label></div>`;
+}
+
+function workflowStepRows(steps, editable){
+  return '<div class="table-row head"><span>顺序</span><span>名称</span><span>动作</span><span>试剂/体积/时长</span><span>操作</span></div>' + (steps.map(step => `<div class="table-row"><span>${step.stepNo}</span><span>${escapeHtml(step.stepName)}<small>${escapeHtml(step.majorStepCode || '--')}</small></span><span>${escapeHtml(step.actionType)}</span><span>${escapeHtml(step.reagentCode || '--')} / ${step.volumeUl ?? '--'} uL / ${step.durationSeconds ?? '--'} s</span><span class="button-row">${editable ? `<button class="btn btn-soft" onclick="editWorkflowStep('${escapeHtml(step.id)}')">编辑</button><button class="btn btn-soft" onclick="moveWorkflowStep('${escapeHtml(step.id)}','up')">上移</button><button class="btn btn-soft" onclick="moveWorkflowStep('${escapeHtml(step.id)}','down')">下移</button><button class="btn btn-soft" onclick="deleteWorkflowStep('${escapeHtml(step.id)}')">删除</button>` : '只读'}</span></div>`).join('') || '<div class="empty-state"><b>暂无步骤</b><span>Draft 至少需要一个步骤才能发布。</span></div>');
+}
+
+function workflowRequirementRows(requirements, editable){
+  return '<div class="table-row head"><span>试剂代码</span><span>名称</span><span>需求量</span><span>必需</span><span>操作</span></div>' + (requirements.map(item => `<div class="table-row"><span>${escapeHtml(item.reagentCode)}</span><span>${escapeHtml(item.reagentName || '--')}</span><span>${item.requiredVolumeUl ?? '--'} uL</span><span>${item.isRequired ? '是' : '否'}</span><span class="button-row">${editable ? `<button class="btn btn-soft" onclick="editWorkflowRequirement('${escapeHtml(item.id)}')">编辑</button><button class="btn btn-soft" onclick="deleteWorkflowRequirement('${escapeHtml(item.id)}')">删除</button>` : '只读'}</span></div>`).join('') || '<div class="empty-state"><b>暂无试剂需求</b><span>可从步骤引用自动重算。</span></div>');
 }
 
 function renderTimeline(id, items, limit){
@@ -379,6 +423,9 @@ function applyMachineEvent(event){
   if(isReagentEvent(event)){
     refreshReagentRack();
     refreshReagentScanSession();
+  }
+  if(['workflow.changed','workflowVersion.changed','workflowStep.changed','workflowReagentRequirement.changed','primaryAntibodyMapping.changed'].includes(event.type)){
+    renderConfigure();
   }
   switch(event.type){
     case 'channelBatch.changed':
@@ -680,69 +727,6 @@ function advanceReagentScanGuide(pos){
 
 function commandId(prefix){
   return prefix + '-' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(16).slice(2));
-}
-
-async function createWorkflowDraft(){
-  const code = prompt('流程代码', 'CUSTOM-' + new Date().toISOString().slice(0, 10).replaceAll('-', ''));
-  if(!code) return;
-  const name = prompt('流程名称', code + ' 草稿') || code;
-  const workflowType = (prompt('流程类型：HE 或 IHC', 'IHC') || 'IHC').trim().toUpperCase();
-  if(!['HE', 'IHC'].includes(workflowType)){
-    toast('流程类型必须是 HE 或 IHC', true);
-    return;
-  }
-  const versionLabel = prompt('草稿版本标签', '0.1') || '0.1';
-  const description = prompt('流程说明', '管理员新建流程草稿。') || '管理员新建流程草稿。';
-  const changeNote = prompt('变更说明', '创建空白草稿。') || '创建空白草稿。';
-  const result = await api('/api/workflows/drafts', {
-    method:'POST',
-    body: JSON.stringify({
-      commandId: commandId('workflow-draft'),
-      code,
-      name,
-      workflowType,
-      description,
-      versionLabel,
-      changeNote
-    })
-  });
-  toast(`已创建草稿：${result.code} v${result.versionLabel}`);
-  await renderConfigure();
-}
-
-async function copyWorkflowDraft(sourceWorkflowId){
-  let workflowId = sourceWorkflowId;
-  let workflow = null;
-  const workflows = await api('/api/workflows');
-  if(workflowId){
-    workflow = workflows.find(x => x.id === workflowId);
-  }else{
-    const code = prompt('输入要复制的流程代码');
-    if(!code) return;
-    workflow = workflows.find(x => String(x.code).toUpperCase() === code.trim().toUpperCase());
-    workflowId = workflow?.id;
-  }
-  if(!workflowId || !workflow){
-    toast('未找到要复制的流程', true);
-    return;
-  }
-  const versions = (workflow.versions || []).slice().sort((a, b) => (a.versionNo || 0) - (b.versionNo || 0));
-  const latest = versions[versions.length - 1];
-  const defaultLabel = latest ? String(Number.parseInt(String(latest.versionLabel).split('.')[0], 10) + 1 || (latest.versionNo + 1)) + '.0' : '0.1';
-  const versionLabel = prompt('新草稿版本标签', defaultLabel);
-  if(versionLabel === null) return;
-  const changeNote = prompt('变更说明', `复制 ${workflow.code} ${latest ? 'v' + latest.versionLabel : ''} 为新草稿。`) || '复制现有流程为新草稿。';
-  const result = await api('/api/workflows/drafts', {
-    method:'POST',
-    body: JSON.stringify({
-      commandId: commandId('workflow-copy'),
-      sourceWorkflowId: workflowId,
-      versionLabel,
-      changeNote
-    })
-  });
-  toast(`已复制为草稿：${result.code} v${result.versionLabel}`);
-  await renderConfigure();
 }
 
 async function renderAdmin(state){
@@ -1177,6 +1161,384 @@ async function confirmTask(){
     showSampleTaskError(e.message || '创建任务失败');
     toast(e.message || '创建任务失败', true);
   }
+}
+
+function currentWorkflowVersionId(){
+  return window.activeWorkflowVersionDetail?.workflowVersionId || null;
+}
+
+function workflowDetailStep(stepId){
+  return (window.activeWorkflowVersionDetail?.steps || []).find(x => x.id === stepId) || null;
+}
+
+function workflowDetailRequirement(id){
+  return (window.activeWorkflowVersionDetail?.reagentRequirements || []).find(x => x.id === id) || null;
+}
+
+function parseOptionalInteger(value, fieldName){
+  const normalized = String(value ?? '').trim();
+  if(!normalized) return null;
+  const parsed = Number.parseInt(normalized, 10);
+  if(Number.isNaN(parsed)){
+    toast(`${fieldName} 必须是整数`, true);
+    return undefined;
+  }
+  return parsed;
+}
+
+function workflowCatalogCodes(){
+  return (window.configureReagentCatalog || []).map(x => x.reagentCode).filter(Boolean).join(', ');
+}
+
+async function createWorkflowDraft(){
+  const code = prompt('流程代码', 'CUSTOM-' + new Date().toISOString().slice(0, 10).replaceAll('-', ''));
+  if(!code) return;
+  const name = prompt('流程名称', code + ' Draft') || code;
+  const workflowType = (prompt('实验类型：HE 或 IHC', 'IHC') || 'IHC').trim().toUpperCase();
+  if(!['HE', 'IHC'].includes(workflowType)){
+    toast('实验类型必须是 HE 或 IHC', true);
+    return;
+  }
+  const versionLabel = prompt('Draft 版本号', '0.1') || '0.1';
+  const description = prompt('流程说明', '配置页面创建的流程 Draft。') || '';
+  const changeNote = prompt('变更说明', '创建空白 Draft。') || '创建空白 Draft。';
+  const result = await api('/api/workflows', {
+    method:'POST',
+    body: JSON.stringify({
+      commandId: commandId('workflow-create'),
+      code,
+      name,
+      workflowType,
+      description,
+      versionLabel,
+      changeNote
+    })
+  });
+  toast(`已创建 Draft：${result.code} v${result.versionLabel}`);
+  await renderConfigure();
+  await openWorkflowVersionDetail(result.workflowVersionId);
+}
+
+async function copyWorkflowDraft(sourceWorkflowId){
+  const workflows = window.configureWorkflows?.length ? window.configureWorkflows : await api('/api/workflows');
+  let workflow = sourceWorkflowId ? workflows.find(x => x.id === sourceWorkflowId) : null;
+  if(!workflow){
+    const code = prompt('输入要复制的流程代码');
+    if(!code) return;
+    workflow = workflows.find(x => String(x.code).toUpperCase() === code.trim().toUpperCase());
+  }
+  const latest = (workflow?.versions || []).slice().sort((a, b) => (b.versionNo || 0) - (a.versionNo || 0))[0];
+  if(!latest){
+    toast('未找到可复制的流程版本', true);
+    return;
+  }
+  await copyWorkflowVersionDraft(latest.id);
+}
+
+async function copyWorkflowVersionDraft(sourceWorkflowVersionId){
+  const versionLabel = prompt('新 Draft 版本号', '0.1');
+  if(versionLabel === null) return;
+  const changeNote = prompt('变更说明', '复制现有版本为 Draft。') || '复制现有版本为 Draft。';
+  const result = await api(`/api/workflow-versions/${encodeURIComponent(sourceWorkflowVersionId)}/copy-draft`, {
+    method:'POST',
+    body: JSON.stringify({
+      commandId: commandId('workflow-copy'),
+      versionLabel: versionLabel || null,
+      changeNote
+    })
+  });
+  toast(`已复制为 Draft：${result.code} v${result.versionLabel}`);
+  await renderConfigure();
+  await openWorkflowVersionDetail(result.workflowVersionId);
+}
+
+async function updateWorkflowVersionMeta(){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}`, {
+    method:'PUT',
+    body: JSON.stringify({
+      commandId: commandId('workflow-meta'),
+      name: document.getElementById('workflowMetaName')?.value || null,
+      versionLabel: document.getElementById('workflowMetaVersionLabel')?.value || null,
+      changeNote: document.getElementById('workflowMetaChangeNote')?.value || null,
+      description: document.getElementById('workflowMetaDescription')?.value || null,
+      isEnabled: true
+    })
+  });
+  toast('流程基本信息已保存');
+  await renderConfigure();
+  await openWorkflowVersionDetail(workflowVersionId);
+}
+
+function collectWorkflowStepInput(existing){
+  const defaultStepNo = existing?.stepNo || ((window.activeWorkflowVersionDetail?.steps || []).length + 1);
+  const stepNoRaw = prompt('步骤顺序', String(defaultStepNo));
+  if(stepNoRaw === null) return null;
+  const stepNo = parseOptionalInteger(stepNoRaw, '步骤顺序');
+  if(stepNo === undefined) return null;
+  const stepName = prompt('步骤名称', existing?.stepName || 'New Step');
+  if(!stepName) return null;
+  const actionType = prompt('动作类型，例如 Dispense / Incubate / Wash / Dab', existing?.actionType || 'Dispense');
+  if(!actionType) return null;
+  const majorStepCode = prompt('大步骤代码，例如 PRIMARY / WASH / DAB / HEMATOXYLIN', existing?.majorStepCode || actionType.toUpperCase());
+  const reagentHint = workflowCatalogCodes();
+  const reagentCode = prompt(`试剂代码，可留空。当前目录：${reagentHint || '暂无'}`, existing?.reagentCode || '');
+  const volume = parseOptionalInteger(prompt('体积 uL，可留空', existing?.volumeUl ?? ''), '体积');
+  if(volume === undefined) return null;
+  const duration = parseOptionalInteger(prompt('Mock 时长秒，可留空', existing?.durationSeconds ?? '3'), '时长');
+  if(duration === undefined) return null;
+  const temp = parseOptionalInteger(prompt('目标温度 deciC，例如 250 表示 25.0C，可留空', existing?.targetTemperatureDeciC ?? ''), '目标温度');
+  if(temp === undefined) return null;
+  return {
+    commandId: commandId(existing ? 'workflow-step-update' : 'workflow-step-add'),
+    stepNo,
+    majorStepCode,
+    stepName,
+    actionType,
+    reagentCode: reagentCode || null,
+    volumeUl: volume,
+    durationSeconds: duration,
+    targetTemperatureDeciC: temp,
+    mixParametersJson: '{}',
+    washParametersJson: '{}',
+    legacyParametersJson: '{}',
+    failureStrategy: 'Stop'
+  };
+}
+
+async function addWorkflowStep(){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId) return;
+  const payload = collectWorkflowStepInput(null);
+  if(!payload) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/steps`, {
+    method:'POST',
+    body: JSON.stringify(payload)
+  });
+  toast('步骤已新增');
+  await openWorkflowVersionDetail(workflowVersionId);
+  await renderConfigure();
+}
+
+async function editWorkflowStep(stepId){
+  const workflowVersionId = currentWorkflowVersionId();
+  const existing = workflowDetailStep(stepId);
+  if(!workflowVersionId || !existing) return;
+  const payload = collectWorkflowStepInput(existing);
+  if(!payload) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/steps/${encodeURIComponent(stepId)}`, {
+    method:'PUT',
+    body: JSON.stringify(payload)
+  });
+  toast('步骤已保存');
+  await openWorkflowVersionDetail(workflowVersionId);
+  await renderConfigure();
+}
+
+async function deleteWorkflowStep(stepId){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId || !confirm('确认删除该步骤？')) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/steps/${encodeURIComponent(stepId)}?commandId=${encodeURIComponent(commandId('workflow-step-delete'))}`, {
+    method:'DELETE'
+  });
+  toast('步骤已删除');
+  await openWorkflowVersionDetail(workflowVersionId);
+  await renderConfigure();
+}
+
+async function moveWorkflowStep(stepId, direction){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/steps/${encodeURIComponent(stepId)}/${direction === 'up' ? 'move-up' : 'move-down'}`, {
+    method:'POST',
+    body: JSON.stringify({commandId: commandId('workflow-step-move')})
+  });
+  await openWorkflowVersionDetail(workflowVersionId);
+  await renderConfigure();
+}
+
+function collectWorkflowRequirementInput(existing){
+  const reagentHint = workflowCatalogCodes();
+  const reagentCode = prompt(`试剂代码。当前目录：${reagentHint || '暂无'}`, existing?.reagentCode || '');
+  if(!reagentCode) return null;
+  const requiredVolumeUl = parseOptionalInteger(prompt('需求量 uL', existing?.requiredVolumeUl ?? '0'), '需求量');
+  if(requiredVolumeUl === undefined) return null;
+  const isRequired = confirm('是否为必需试剂？点击“确定”=必需，“取消”=可选。');
+  return {
+    commandId: commandId(existing ? 'workflow-req-update' : 'workflow-req-add'),
+    reagentCode,
+    requiredVolumeUl,
+    isRequired
+  };
+}
+
+async function addWorkflowRequirement(){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId) return;
+  const payload = collectWorkflowRequirementInput(null);
+  if(!payload) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/reagent-requirements`, {
+    method:'POST',
+    body: JSON.stringify(payload)
+  });
+  toast('试剂需求已新增');
+  await openWorkflowVersionDetail(workflowVersionId);
+  await renderConfigure();
+}
+
+async function editWorkflowRequirement(id){
+  const workflowVersionId = currentWorkflowVersionId();
+  const existing = workflowDetailRequirement(id);
+  if(!workflowVersionId || !existing) return;
+  const payload = collectWorkflowRequirementInput(existing);
+  if(!payload) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/reagent-requirements/${encodeURIComponent(id)}`, {
+    method:'PUT',
+    body: JSON.stringify(payload)
+  });
+  toast('试剂需求已保存');
+  await openWorkflowVersionDetail(workflowVersionId);
+  await renderConfigure();
+}
+
+async function deleteWorkflowRequirement(id){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId || !confirm('确认删除该试剂需求？')) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/reagent-requirements/${encodeURIComponent(id)}?commandId=${encodeURIComponent(commandId('workflow-req-delete'))}`, {
+    method:'DELETE'
+  });
+  toast('试剂需求已删除');
+  await openWorkflowVersionDetail(workflowVersionId);
+  await renderConfigure();
+}
+
+async function recalculateWorkflowRequirements(){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/reagent-requirements/recalculate`, {
+    method:'POST',
+    body: JSON.stringify({commandId: commandId('workflow-req-recalc')})
+  });
+  toast('已从步骤重算试剂需求');
+  await openWorkflowVersionDetail(workflowVersionId);
+  await renderConfigure();
+}
+
+function renderPublishValidation(validation){
+  const root = document.getElementById('workflowPublishValidation');
+  if(!root) return;
+  if(!validation){
+    root.innerHTML = '';
+    return;
+  }
+  const issues = validation.issues || [];
+  if(!issues.length){
+    root.innerHTML = '<div class="validation-ok"><b>校验通过</b><span>该 Draft 可发布。</span></div>';
+    return;
+  }
+  root.innerHTML = `<div class="validation-ok"><b>${escapeHtml(validation.result)}</b><span>Fail ${validation.failCount} / Warning ${validation.warningCount}</span></div>` + issues.map(issue => `<div class="validation-issue"><b>${escapeHtml(issue.severity)}</b><em>${escapeHtml(issue.area)} · ${escapeHtml(issue.code)}</em><span>${escapeHtml(issue.message)}</span></div>`).join('');
+}
+
+async function validateWorkflowPublish(){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId) return null;
+  const validation = await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/publish-validation`);
+  renderPublishValidation(validation);
+  return validation;
+}
+
+async function publishWorkflowVersion(){
+  const workflowVersionId = currentWorkflowVersionId();
+  if(!workflowVersionId) return;
+  const validation = await validateWorkflowPublish();
+  if(!validation || validation.result === 'Fail'){
+    toast('发布校验未通过，不能发布。', true);
+    return;
+  }
+  if(validation.result === 'Warning' && !confirm('存在 Warning，仍然发布？')) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/publish`, {
+    method:'POST',
+    body: JSON.stringify({commandId: commandId('workflow-publish')})
+  });
+  toast('流程版本已发布，后续不可直接编辑');
+  await renderConfigure();
+  await openWorkflowVersionDetail(workflowVersionId);
+}
+
+async function retireWorkflowVersion(workflowVersionId){
+  const reason = prompt('停用原因');
+  if(!reason) return;
+  if(!confirm('停用后该版本不能再被新通道选择，确认停用？')) return;
+  await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/retire`, {
+    method:'POST',
+    body: JSON.stringify({commandId: commandId('workflow-retire'), reason})
+  });
+  toast('流程版本已停用');
+  await renderConfigure();
+  if(currentWorkflowVersionId() === workflowVersionId) await openWorkflowVersionDetail(workflowVersionId);
+}
+
+function renderPrimaryAntibodyMappings(mappings){
+  const root = document.getElementById('primaryAntibodyMappingTable');
+  if(!root) return;
+  root.innerHTML = '<div class="table-row head"><span>一抗代码</span><span>流程</span><span>版本</span><span>流程状态</span><span>映射状态</span><span>操作</span></div>'
+    + ((mappings || []).map(item => `<div class="table-row"><span>${escapeHtml(item.primaryAntibodyCode)}</span><span>${escapeHtml(item.workflowCode)}<small>${escapeHtml(item.workflowName)}</small></span><span>v${escapeHtml(item.versionLabel)}</span><span>${escapeHtml(workflowStatusText(item.workflowStatus))}</span><span>${item.isEnabled ? 'Enabled' : 'Disabled'}</span><span class="button-row">${item.isEnabled ? `<button class="btn btn-soft" onclick="disablePrimaryAntibodyMapping('${escapeHtml(item.id)}')">停用</button>` : `<button class="btn btn-soft" onclick="enablePrimaryAntibodyMapping('${escapeHtml(item.id)}')">启用</button>`}</span></div>`).join('')
+    || '<div class="empty-state"><b>暂无一抗映射</b><span>新增映射后 IHC 兼容性校验会实时读取。</span></div>');
+}
+
+function pickPublishedIhcWorkflowVersion(){
+  const candidates = (window.configureWorkflows || []).flatMap(workflow => (workflow.versions || [])
+    .filter(version => workflow.workflowType === 'IHC' && version.status === 'Published')
+    .map(version => ({workflow, version})));
+  if(!candidates.length){
+    toast('当前没有 Published IHC 流程版本', true);
+    return null;
+  }
+  const menu = candidates.map((item, index) => `${index + 1}. ${item.workflow.code} v${item.version.versionLabel} - ${item.workflow.name}`).join('\n');
+  const selected = Number.parseInt(prompt(`选择 Published IHC 流程：\n${menu}`, '1') || '', 10) - 1;
+  if(Number.isNaN(selected) || !candidates[selected]){
+    toast('未选择有效流程版本', true);
+    return null;
+  }
+  return candidates[selected].version.id;
+}
+
+async function createPrimaryAntibodyMapping(){
+  const primaryAntibodyCode = prompt('一抗代码，例如 001');
+  if(!primaryAntibodyCode) return;
+  const workflowVersionId = pickPublishedIhcWorkflowVersion();
+  if(!workflowVersionId) return;
+  await api('/api/primary-antibody-mappings', {
+    method:'POST',
+    body: JSON.stringify({
+      commandId: commandId('primary-map-create'),
+      primaryAntibodyCode,
+      workflowVersionId
+    })
+  });
+  toast('一抗映射已保存');
+  await renderConfigure();
+}
+
+async function enablePrimaryAntibodyMapping(id){
+  await api(`/api/primary-antibody-mappings/${encodeURIComponent(id)}/enable`, {
+    method:'POST',
+    body: JSON.stringify({commandId: commandId('primary-map-enable'), reason: '启用映射'})
+  });
+  toast('一抗映射已启用');
+  await renderConfigure();
+}
+
+async function disablePrimaryAntibodyMapping(id){
+  const reason = prompt('停用映射原因');
+  if(!reason) return;
+  await api(`/api/primary-antibody-mappings/${encodeURIComponent(id)}/disable`, {
+    method:'POST',
+    body: JSON.stringify({commandId: commandId('primary-map-disable'), reason})
+  });
+  toast('一抗映射已停用');
+  await renderConfigure();
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -12,6 +12,9 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
         var workflows = await dbContext.WorkflowDefinitions
             .AsNoTracking()
             .Include(x => x.Versions)
+            .ThenInclude(x => x.Steps)
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.ReagentRequirements)
             .OrderBy(x => x.Code)
             .ToListAsync(cancellationToken);
 
@@ -25,7 +28,17 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
                 x.IsEnabled,
                 x.Versions
                     .OrderBy(v => v.VersionNo)
-                    .Select(v => new WorkflowVersionSummaryResponse(v.Id, v.VersionNo, v.VersionLabel, v.Status, v.PublishedAtUtc))
+                    .Select(v => new WorkflowVersionSummaryResponse(
+                        v.Id,
+                        v.VersionNo,
+                        v.VersionLabel,
+                        v.Status,
+                        v.PublishedAtUtc,
+                        v.RetiredAtUtc,
+                        v.CreatedAtUtc,
+                        v.UpdatedAtUtc,
+                        v.Steps.Count,
+                        v.ReagentRequirements.Count))
                     .ToList()))
             .ToList();
     }
@@ -36,6 +49,8 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
             .AsNoTracking()
             .Include(x => x.Versions)
             .ThenInclude(x => x.Steps)
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.ReagentRequirements)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
 
         if (workflow is null)
@@ -59,6 +74,9 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
                     x.Status,
                     x.ChangeNote,
                     x.PublishedAtUtc,
+                    x.RetiredAtUtc,
+                    x.CreatedAtUtc,
+                    x.UpdatedAtUtc,
                     x.Steps
                         .OrderBy(step => step.StepNo)
                         .Select(step => new WorkflowStepResponse(
@@ -72,6 +90,15 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
                             step.DurationSeconds,
                             step.TargetTemperatureDeciC,
                             step.FailureStrategy))
+                        .ToList(),
+                    x.ReagentRequirements
+                        .OrderBy(requirement => requirement.ReagentCode)
+                        .Select(requirement => new WorkflowReagentRequirementResponse(
+                            requirement.Id,
+                            requirement.ReagentCode,
+                            null,
+                            requirement.RequiredVolumeUl,
+                            requirement.IsRequired))
                         .ToList()))
                 .ToList());
     }

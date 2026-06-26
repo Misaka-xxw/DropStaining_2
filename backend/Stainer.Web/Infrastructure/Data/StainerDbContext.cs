@@ -173,11 +173,34 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
             }
 
             var originalStatus = entry.Property(x => x.Status).OriginalValue;
-            if (originalStatus == WorkflowVersionStatus.Published)
+            if (originalStatus == WorkflowVersionStatus.Published && !IsAllowedPublishedRetireChange(entry))
             {
                 throw new InvalidOperationException("Published workflow versions cannot be modified in place. Create a new version for changes.");
             }
         }
+    }
+
+    private static bool IsAllowedPublishedRetireChange(EntityEntry<WorkflowVersion> entry)
+    {
+        if (entry.State == EntityState.Deleted)
+        {
+            return false;
+        }
+
+        var allowedProperties = new HashSet<string>(StringComparer.Ordinal)
+        {
+            nameof(WorkflowVersion.Status),
+            nameof(WorkflowVersion.RetiredAtUtc),
+            nameof(WorkflowVersion.UpdatedAtUtc)
+        };
+        var modifiedProperties = entry.Properties
+            .Where(x => x.IsModified)
+            .Select(x => x.Metadata.Name)
+            .ToList();
+        return modifiedProperties.Count > 0
+            && modifiedProperties.All(allowedProperties.Contains)
+            && entry.Property(x => x.Status).CurrentValue == WorkflowVersionStatus.Retired
+            && entry.Property(x => x.RetiredAtUtc).CurrentValue is not null;
     }
 
     private string[] GetChangedWorkflowChildVersionIds()

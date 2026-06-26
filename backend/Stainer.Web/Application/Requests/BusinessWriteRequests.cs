@@ -33,6 +33,67 @@ public sealed record CreateWorkflowDraftRequest(
     string? VersionLabel,
     string? ChangeNote);
 
+public sealed record CreateWorkflowRequest(
+    string CommandId,
+    string Code,
+    string Name,
+    string WorkflowType,
+    string? Description,
+    string? VersionLabel,
+    string? ChangeNote);
+
+public sealed record CreateWorkflowVersionRequest(
+    string CommandId,
+    string? VersionLabel,
+    string? ChangeNote);
+
+public sealed record CopyWorkflowVersionDraftRequest(
+    string CommandId,
+    string? VersionLabel,
+    string? ChangeNote);
+
+public sealed record UpdateWorkflowVersionRequest(
+    string CommandId,
+    string? Name,
+    string? Description,
+    bool? IsEnabled,
+    string? VersionLabel,
+    string? ChangeNote);
+
+public sealed record SaveWorkflowStepRequest(
+    string CommandId,
+    int? StepNo,
+    string? MajorStepCode,
+    string StepName,
+    string ActionType,
+    string? ReagentCode,
+    int? VolumeUl,
+    int? DurationSeconds,
+    int? TargetTemperatureDeciC,
+    string? MixParametersJson,
+    string? WashParametersJson,
+    string? LegacyParametersJson,
+    string? FailureStrategy);
+
+public sealed record SaveWorkflowReagentRequirementRequest(
+    string CommandId,
+    string ReagentCode,
+    int? RequiredVolumeUl,
+    bool IsRequired);
+
+public sealed record PublishWorkflowVersionRequest(string CommandId);
+
+public sealed record RetireWorkflowVersionRequest(string CommandId, string Reason);
+
+public sealed record CreatePrimaryAntibodyMappingRequest(
+    string CommandId,
+    string PrimaryAntibodyCode,
+    string WorkflowVersionId);
+
+public sealed record ChangePrimaryAntibodyMappingStateRequest(
+    string CommandId,
+    string? Reason);
+
 public sealed record SelectChannelWorkflowRequest(
     string CommandId,
     string? ChannelBatchId,

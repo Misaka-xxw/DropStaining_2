@@ -213,6 +213,209 @@ public sealed class BusinessWriteApiIntegrationTests
     }
 
     [Fact]
+    public async Task Workflow_configuration_closed_loop_publishes_retires_and_manages_primary_antibody_mappings()
+    {
+        await using var factory = CreateFactory();
+        using var adminClient = factory.CreateClient();
+        await LoginAsync(adminClient, "admin", "admin");
+
+        var created = await PostJsonAsync<WorkflowDraftMutationResponse>(adminClient, "/api/workflows", new
+        {
+            commandId = "cmd-workflow-config-create-he",
+            code = "CFG-HE-CLOSED",
+            name = "Configuration HE Closed Loop",
+            workflowType = StainingTaskType.He,
+            description = "Created by configuration API test.",
+            versionLabel = "0.1",
+            changeNote = "Create Draft."
+        });
+        Assert.Equal(WorkflowVersionStatus.Draft, created.Status);
+
+        var emptyValidation = await adminClient.GetFromJsonAsync<PublishValidationResponse>(
+            $"/api/workflow-versions/{created.WorkflowVersionId}/publish-validation");
+        Assert.NotNull(emptyValidation);
+        Assert.Equal("Fail", emptyValidation!.Result);
+        Assert.Contains(emptyValidation.Issues, x => x.Code == "workflow_steps_required");
+
+        _ = await PostJsonAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{created.WorkflowVersionId}/steps", new
+        {
+            commandId = "cmd-workflow-config-step-hem",
+            stepNo = 1,
+            majorStepCode = "HEMATOXYLIN",
+            stepName = "Hematoxylin",
+            actionType = "Dispense",
+            reagentCode = "HEM",
+            volumeUl = 100,
+            durationSeconds = 3,
+            targetTemperatureDeciC = 250,
+            mixParametersJson = "{}",
+            washParametersJson = "{}",
+            legacyParametersJson = "{}",
+            failureStrategy = "Stop"
+        });
+        _ = await PostJsonAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{created.WorkflowVersionId}/steps", new
+        {
+            commandId = "cmd-workflow-config-step-wash",
+            stepNo = 2,
+            majorStepCode = "FINAL_WASH",
+            stepName = "Terminal wash",
+            actionType = "Wash",
+            reagentCode = "WAS",
+            volumeUl = 100,
+            durationSeconds = 3,
+            targetTemperatureDeciC = 250,
+            mixParametersJson = "{}",
+            washParametersJson = "{}",
+            legacyParametersJson = "{}",
+            failureStrategy = "Stop"
+        });
+        _ = await PostJsonAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{created.WorkflowVersionId}/reagent-requirements/recalculate", new
+        {
+            commandId = "cmd-workflow-config-req-recalc"
+        });
+
+        var detail = await adminClient.GetFromJsonAsync<WorkflowVersionMaintenanceResponse>($"/api/workflow-versions/{created.WorkflowVersionId}");
+        Assert.NotNull(detail);
+        Assert.Equal(2, detail!.Steps.Count);
+        Assert.Equal(2, detail.ReagentRequirements.Count);
+
+        var valid = await adminClient.GetFromJsonAsync<PublishValidationResponse>(
+            $"/api/workflow-versions/{created.WorkflowVersionId}/publish-validation");
+        Assert.NotNull(valid);
+        Assert.Equal("Pass", valid!.Result);
+
+        var published = await PostJsonAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{created.WorkflowVersionId}/publish", new
+        {
+            commandId = "cmd-workflow-config-publish"
+        });
+        Assert.True(published.Ok);
+
+        var replayedPublish = await PostJsonAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{created.WorkflowVersionId}/publish", new
+        {
+            commandId = "cmd-workflow-config-publish"
+        });
+        Assert.True(replayedPublish.Replayed);
+
+        var publishedEdit = await adminClient.PostAsJsonAsync($"/api/workflow-versions/{created.WorkflowVersionId}/steps", new
+        {
+            commandId = "cmd-workflow-config-step-after-publish",
+            stepNo = 3,
+            majorStepCode = "WASH",
+            stepName = "Late wash",
+            actionType = "Wash",
+            reagentCode = "WAS"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, publishedEdit.StatusCode);
+        Assert.Equal("workflow_version_not_draft", (await publishedEdit.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var retired = await PostJsonAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{created.WorkflowVersionId}/retire", new
+        {
+            commandId = "cmd-workflow-config-retire",
+            reason = "Closed loop test retire."
+        });
+        Assert.True(retired.Ok);
+
+        using var operatorClient = factory.CreateClient();
+        await LoginAsync(operatorClient, "operator", "operator");
+        _ = await PostJsonAsync<ChannelBatchActivationResponse>(operatorClient, "/api/channel-batches/active", new
+        {
+            commandId = "cmd-workflow-config-active-a",
+            drawerCode = "A"
+        });
+        var retiredSelection = await operatorClient.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-workflow-config-select-retired",
+            drawerCode = "A",
+            experimentType = StainingTaskType.He,
+            workflowVersionId = created.WorkflowVersionId
+        });
+        Assert.Equal(HttpStatusCode.Conflict, retiredSelection.StatusCode);
+        Assert.Equal("workflow_version_not_published", (await retiredSelection.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var forbiddenCreate = await operatorClient.PostAsJsonAsync("/api/workflows", new
+        {
+            commandId = "cmd-workflow-config-forbidden",
+            code = "NO-OP",
+            name = "Forbidden",
+            workflowType = StainingTaskType.Ihc
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenCreate.StatusCode);
+
+        var workflows = await adminClient.GetFromJsonAsync<List<WorkflowSummaryResponse>>("/api/workflows");
+        Assert.NotNull(workflows);
+        var seededHeVersion = workflows!.Single(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode)
+            .Versions.Single(x => x.Status == WorkflowVersionStatus.Published);
+        var seededIhcVersion = workflows.Single(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode)
+            .Versions.Single(x => x.Status == WorkflowVersionStatus.Published);
+
+        var invalidMapping = await adminClient.PostAsJsonAsync("/api/primary-antibody-mappings", new
+        {
+            commandId = "cmd-primary-map-he-invalid",
+            primaryAntibodyCode = "CFG999",
+            workflowVersionId = seededHeVersion.Id
+        });
+        Assert.Equal(HttpStatusCode.Conflict, invalidMapping.StatusCode);
+        Assert.Equal("primary_antibody_mapping_target_invalid", (await invalidMapping.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var mapping = await PostJsonAsync<CommandResponse>(adminClient, "/api/primary-antibody-mappings", new
+        {
+            commandId = "cmd-primary-map-create-cfg999",
+            primaryAntibodyCode = "CFG999",
+            workflowVersionId = seededIhcVersion.Id
+        });
+        Assert.True(mapping.Ok);
+
+        var mappingReplay = await PostJsonAsync<CommandResponse>(adminClient, "/api/primary-antibody-mappings", new
+        {
+            commandId = "cmd-primary-map-create-cfg999",
+            primaryAntibodyCode = "CFG999",
+            workflowVersionId = seededIhcVersion.Id
+        });
+        Assert.True(mappingReplay.Replayed);
+
+        var mappingList = await adminClient.GetFromJsonAsync<List<PrimaryAntibodyMappingResponse>>("/api/primary-antibody-mappings");
+        Assert.NotNull(mappingList);
+        var persistedMapping = mappingList!.Single(x => x.PrimaryAntibodyCode == "CFG999" && x.WorkflowVersionId == seededIhcVersion.Id);
+        Assert.True(persistedMapping.IsEnabled);
+
+        var missingReason = await adminClient.PostAsJsonAsync($"/api/primary-antibody-mappings/{persistedMapping.Id}/disable", new
+        {
+            commandId = "cmd-primary-map-disable-missing-reason"
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, missingReason.StatusCode);
+        Assert.Equal("reason_required", (await missingReason.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        _ = await PostJsonAsync<CommandResponse>(adminClient, $"/api/primary-antibody-mappings/{persistedMapping.Id}/disable", new
+        {
+            commandId = "cmd-primary-map-disable-cfg999",
+            reason = "Closed loop test disable."
+        });
+        _ = await PostJsonAsync<CommandResponse>(adminClient, $"/api/primary-antibody-mappings/{persistedMapping.Id}/enable", new
+        {
+            commandId = "cmd-primary-map-enable-cfg999",
+            reason = "Closed loop test enable."
+        });
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var finalVersion = await dbContext.WorkflowVersions.SingleAsync(x => x.Id == created.WorkflowVersionId);
+        Assert.Equal(WorkflowVersionStatus.Retired, finalVersion.Status);
+        Assert.NotNull(finalVersion.PublishedAtUtc);
+        Assert.NotNull(finalVersion.RetiredAtUtc);
+        Assert.Equal(1, await dbContext.PrimaryAntibodyWorkflowMappings.CountAsync(x => x.PrimaryAntibodyCode == "CFG999" && x.WorkflowVersionId == seededIhcVersion.Id));
+        Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "workflow.create" && x.EntityId == created.WorkflowVersionId));
+        Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "workflow.version.publish" && x.EntityId == created.WorkflowVersionId));
+        Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "workflow.version.retire" && x.EntityId == created.WorkflowVersionId));
+        Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "primary_antibody_mapping.create"));
+        Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "primary_antibody_mapping.disable"));
+
+        var publisher = factory.Services.GetRequiredService<InMemoryRuntimeEventPublisher>();
+        var events = publisher.Snapshot();
+        Assert.Contains(events, x => x.Type == MachineEventTypes.WorkflowVersionChanged && x.EntityId == created.WorkflowVersionId);
+        Assert.Contains(events, x => x.Type == MachineEventTypes.PrimaryAntibodyMappingChanged && x.EntityId == persistedMapping.Id);
+    }
+
+    [Fact]
     public async Task Seeded_manual_acceptance_workflows_are_queryable_and_001_is_compatible()
     {
         await using var factory = CreateFactory();

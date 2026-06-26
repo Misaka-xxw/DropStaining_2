@@ -149,3 +149,11 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 .v18-reagent-deck .vial.scan-unscanned{background:#f8fafc;border-color:#dbe7f5;box-shadow:none}
 .column-status-grid div.invalid{background:#fff1f2;border-color:#fecdd3}
 .column-status-grid div.invalid span{color:#9f1239;font-weight:900}
+.workflow-step-table .table-row{grid-template-columns:.45fr 1.2fr .8fr 1.1fr auto}
+.workflow-requirement-table .table-row{grid-template-columns:.8fr 1.3fr .8fr .55fr auto}
+.mapping-table .table-row{grid-template-columns:.65fr 1.2fr .45fr .7fr .65fr auto}
+.compact-title{margin-top:18px}
+.workflow-version-draft{border-color:#bfdbfe;background:#eff6ff}
+.workflow-version-published{border-color:#bbf7d0;background:#f0fdf4}
+.workflow-version-retired{border-color:#e2e8f0;background:#f8fafc;opacity:.82}
+@media(max-width:1000px){.workflow-step-table .table-row,.workflow-requirement-table .table-row,.mapping-table .table-row{grid-template-columns:1fr}}

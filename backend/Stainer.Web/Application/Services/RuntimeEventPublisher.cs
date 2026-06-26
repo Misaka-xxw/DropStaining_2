@@ -69,6 +69,11 @@ public static class MachineEventTypes
     public const string SlideTaskStateChanged = "slideTask.stateChanged";
     public const string WorkflowStepStarted = "workflowStep.started";
     public const string WorkflowStepCompleted = "workflowStep.completed";
+    public const string WorkflowChanged = "workflow.changed";
+    public const string WorkflowVersionChanged = "workflowVersion.changed";
+    public const string WorkflowStepChanged = "workflowStep.changed";
+    public const string WorkflowReagentRequirementChanged = "workflowReagentRequirement.changed";
+    public const string PrimaryAntibodyMappingChanged = "primaryAntibodyMapping.changed";
     public const string TemperatureChanged = "temperature.changed";
     public const string ReagentChanged = "reagent.changed";
     public const string ReagentBottleChanged = "reagentBottle.changed";
