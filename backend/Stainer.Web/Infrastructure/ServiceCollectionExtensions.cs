@@ -16,6 +16,8 @@ public static class ServiceCollectionExtensions
         DatabaseInitializer.EnsureDatabaseDirectory(connectionString);
 
         services.AddSingleton(new DatabaseHealthChecker(connectionString));
+        services.AddSingleton<SafetyLogWriter>();
+        services.AddSingleton<MachineExecutorLeaseService>();
         services.AddDbContext<StainerDbContext>(options =>
             options.UseSqlite(connectionString)
                 .AddInterceptors(new SqlitePragmaConnectionInterceptor()));
@@ -46,6 +48,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MachineRunService>();
         services.AddScoped<MachineRunQueryService>();
         services.AddScoped<TraceabilityQueryService>();
+        services.AddScoped<DeviceModeService>();
+        services.AddScoped<StartupRecoveryService>();
+        services.AddScoped<DatabaseMaintenanceService>();
+        services.AddScoped<PreHardwareReadinessService>();
         services.AddScoped<RunControlService>();
         services.AddScoped<RuntimePageBridgeService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();

@@ -6,4 +6,5 @@ public sealed record DatabaseHealthReport(
     bool ForeignKeysEnabled,
     string JournalMode,
     int BusyTimeoutMilliseconds,
-    bool CanReadWrite);
+    bool CanReadWrite,
+    bool IntegrityOk = false);

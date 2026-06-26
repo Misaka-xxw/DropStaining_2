@@ -12,7 +12,8 @@ public sealed class RuntimePageBridgeService(
     StainerDbContext dbContext,
     MachineRunService machineRunService,
     MachineRunQueryService machineRunQueryService,
-    RunControlService runControlService)
+    RunControlService runControlService,
+    DeviceModeService deviceModeService)
 {
     private static readonly string[] ActiveBatchStatuses =
     [
@@ -26,6 +27,7 @@ public sealed class RuntimePageBridgeService(
     {
         var run = await machineRunQueryService.GetCurrentAsync(cancellationToken);
         var state = run is null ? store.GetState() : ToPageState(store.GetState(), run);
+        state.DeviceMode = deviceModeService.CurrentMode;
         return await OverlayDatabaseChannelsAsync(state, cancellationToken);
     }
 
@@ -62,6 +64,7 @@ public sealed class RuntimePageBridgeService(
                 cancellationToken);
             var createdRun = await machineRunQueryService.GetAsync(created.RunId, cancellationToken);
             var state = createdRun is null ? store.RunAction("start") : ToPageState(store.GetState(), createdRun);
+            state.DeviceMode = deviceModeService.CurrentMode;
             return await OverlayDatabaseChannelsAsync(state, cancellationToken);
         }
 
@@ -76,6 +79,7 @@ public sealed class RuntimePageBridgeService(
 
         var updated = await machineRunQueryService.GetAsync(run.Id, cancellationToken);
         var updatedState = updated is null ? store.GetState() : ToPageState(store.GetState(), updated);
+        updatedState.DeviceMode = deviceModeService.CurrentMode;
         return await OverlayDatabaseChannelsAsync(updatedState, cancellationToken);
     }
 

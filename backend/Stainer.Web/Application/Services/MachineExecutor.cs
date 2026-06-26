@@ -898,11 +898,39 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
     }
 }
 
-public sealed class MachineExecutorHostedService(MachineExecutor executor, IServiceScopeFactory scopeFactory) : BackgroundService
+public sealed class MachineExecutorHostedService(
+    MachineExecutor executor,
+    IServiceScopeFactory scopeFactory,
+    MachineExecutorLeaseService leaseService,
+    SafetyLogWriter safetyLogWriter) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!leaseService.TryAcquire())
+        {
+            await safetyLogWriter.WriteAsync(
+                "runtime",
+                "Error",
+                "MachineExecutor lease is unavailable. This instance is read-only for execution.",
+                new SafetyLogContext(Source: "MachineExecutorHostedService"),
+                cancellationToken: stoppingToken);
+            return;
+        }
+
         executor.Attach(scopeFactory);
-        await executor.RunAsync(stoppingToken);
+        try
+        {
+            await safetyLogWriter.WriteAsync(
+                "runtime",
+                "Information",
+                "MachineExecutor lease acquired.",
+                new SafetyLogContext(Source: "MachineExecutorHostedService"),
+                cancellationToken: stoppingToken);
+            await executor.RunAsync(stoppingToken);
+        }
+        finally
+        {
+            leaseService.Release();
+        }
     }
 }

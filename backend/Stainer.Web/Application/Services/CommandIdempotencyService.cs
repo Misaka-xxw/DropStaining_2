@@ -51,7 +51,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             Operation = operation,
             RequestHash = requestHash,
             Status = "Started",
-            ActorUserId = actor.UserId,
+            ActorUserId = string.IsNullOrWhiteSpace(actor.UserId) ? null : actor.UserId,
             CreatedAtUtc = DateTimeOffset.UtcNow
         };
         dbContext.CommandReceipts.Add(receipt);
@@ -124,6 +124,9 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             ReagentScanConfirmationResponse x => x with { Replayed = true } as T ?? response,
             ReagentScanSessionMutationResponse x => x with { Replayed = true } as T ?? response,
             AlarmMutationResponse x => x with { Replayed = true } as T ?? response,
+            DeviceModeChangeResponse x => x with { Replayed = true } as T ?? response,
+            DatabaseBackupResponse x => x with { Replayed = true } as T ?? response,
+            DatabaseRestoreResponse x => x with { Replayed = true } as T ?? response,
             EngineeringWriteResponse x => x with { Replayed = true } as T ?? response,
             MachineRunResponse x => x with { Replayed = true } as T ?? response,
             RunCommandResponse x => x with { Replayed = true } as T ?? response,

@@ -3,6 +3,7 @@ namespace Stainer.Web.Infrastructure.Web;
 using Microsoft.Extensions.Hosting;
 using Stainer.Web.Application.Services;
 using Stainer.Web.Application.Requests;
+using Stainer.Web.Infrastructure.Health;
 
 public static class WebHostEndpointExtensions
 {
@@ -37,7 +38,55 @@ public static class WebHostEndpointExtensions
             app.MapGet(capturedRoute, (LegacyUiPageRenderer renderer) => renderer.Render(capturedRoute));
         }
 
-        app.MapGet("/api/system/info", (MockRuntimeStore store) => Results.Ok(store.SystemInfo()));
+        app.MapGet("/api/system/info", async (DeviceModeService deviceModeService, CancellationToken cancellationToken) =>
+            Results.Ok(new
+            {
+                app = "Stainer ASP.NET Core Web Host",
+                uiHost = "ASP.NET Core",
+                pythonRuntimeRequired = false,
+                deviceMode = await deviceModeService.GetStatusAsync(cancellationToken),
+                dataSource = "SQLite formal data source; runtime DeviceMode is configuration controlled.",
+                timeUtc = DateTimeOffset.UtcNow
+            }));
+        app.MapGet("/api/device-mode", async (DeviceModeService service, CancellationToken cancellationToken) =>
+            Results.Ok(await service.GetStatusAsync(cancellationToken)));
+        app.MapPost("/api/device-mode/change", async (HttpContext context, DeviceModeChangeRequest request, UserSessionService sessionService, DeviceModeService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.RequestModeChangeAsync(request, actor, cancellationToken));
+            }));
+        app.MapGet("/api/executor/lease", (MachineExecutorLeaseService service) => Results.Ok(service.GetStatus()));
+        app.MapPost("/api/startup/recovery", async (HttpContext context, UserSessionService sessionService, StartupRecoveryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.RecoverAsync(cancellationToken));
+            }));
+        app.MapGet("/api/prehardware-readiness", async (HttpContext context, UserSessionService sessionService, PreHardwareReadinessService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.VerifyAsync(createBackup: false, cancellationToken));
+            }));
+        app.MapGet("/api/database/maintenance", async (HttpContext context, UserSessionService sessionService, DatabaseMaintenanceService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.CheckAsync(cancellationToken));
+            }));
+        app.MapPost("/api/database/backup", async (HttpContext context, DatabaseBackupRequest request, UserSessionService sessionService, DatabaseMaintenanceService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.BackupAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/database/restore-request", async (HttpContext context, DatabaseRestoreRequest request, UserSessionService sessionService, DatabaseMaintenanceService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.RequestRestoreAsync(request, actor, cancellationToken));
+            }));
         app.MapGet("/api/state", async (RuntimePageBridgeService bridge, CancellationToken cancellationToken) =>
             Results.Ok(await bridge.GetStateAsync(cancellationToken)));
         app.MapGet("/api/current-user", async (HttpContext context, UserSessionService sessionService, CancellationToken cancellationToken) =>

@@ -44,6 +44,7 @@ function renderShellState(state){
   setText('metricSlides', count);
   setText('metricReagents', (state.reagents || []).length);
   setText('metricAlarms', (state.alarms || []).length);
+  setText('metricDeviceMode', state.deviceMode || 'Mock');
 
   const chip = document.getElementById('statusChip');
   if(chip){

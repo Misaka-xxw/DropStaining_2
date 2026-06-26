@@ -322,6 +322,7 @@ public sealed class MockRuntimeState
 {
     public string RunId { get; set; } = string.Empty;
     public string Status { get; set; } = "idle";
+    public string DeviceMode { get; set; } = "Mock";
     public bool Initialized { get; set; }
     public MockSystemCheck System { get; set; } = new();
     public List<MockChannel> Channels { get; set; } = [];

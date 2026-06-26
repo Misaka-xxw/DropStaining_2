@@ -16,6 +16,7 @@ public sealed class DatabaseHealthChecker(string connectionString)
         var foreignKeys = await ExecuteScalarAsync<long>(connection, "PRAGMA foreign_keys;", cancellationToken);
         var journalMode = await ExecuteScalarAsync<string>(connection, "PRAGMA journal_mode;", cancellationToken);
         var busyTimeout = await ExecuteScalarAsync<long>(connection, "PRAGMA busy_timeout;", cancellationToken);
+        var integrity = await ExecuteScalarAsync<string>(connection, "PRAGMA integrity_check;", cancellationToken);
         var canReadWrite = await CanReadWriteAsync(connection, cancellationToken);
 
         return new DatabaseHealthReport(
@@ -24,7 +25,8 @@ public sealed class DatabaseHealthChecker(string connectionString)
             foreignKeys == 1,
             journalMode,
             checked((int)busyTimeout),
-            canReadWrite);
+            canReadWrite,
+            string.Equals(integrity, "ok", StringComparison.OrdinalIgnoreCase));
     }
 
     private static async Task<bool> CanReadWriteAsync(SqliteConnection connection, CancellationToken cancellationToken)

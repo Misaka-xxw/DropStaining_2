@@ -40,10 +40,9 @@ if (args.Contains("--seed-reference-data", StringComparer.OrdinalIgnoreCase))
 app.UseStaticFiles();
 
 app.MapGet("/health", () => Results.Ok(new { ok = true, app = "Stainer ASP.NET Core backend" }));
-app.MapGet("/health/database", async (DatabaseHealthChecker checker, CancellationToken cancellationToken) =>
+app.MapGet("/health/database", async (DatabaseMaintenanceService checker, CancellationToken cancellationToken) =>
 {
-    var report = await checker.CheckAsync(cancellationToken);
-    return Results.Ok(report);
+    return Results.Ok(await checker.CheckAsync(cancellationToken));
 });
 app.MapStainerWebHostEndpoints();
 
@@ -56,6 +55,8 @@ using (var scope = app.Services.CreateScope())
     await backfill.BackfillAsync();
     var seeder = scope.ServiceProvider.GetRequiredService<ReferenceDataSeeder>();
     await seeder.SeedAsync();
+    var recovery = scope.ServiceProvider.GetRequiredService<StartupRecoveryService>();
+    await recovery.RecoverAsync();
 }
 
 app.Run();

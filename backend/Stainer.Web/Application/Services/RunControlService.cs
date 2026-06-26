@@ -11,7 +11,10 @@ public sealed class RunControlService(
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
     MachineExecutor executor,
-    PreflightValidationService preflightValidationService)
+    PreflightValidationService preflightValidationService,
+    DeviceModeService deviceModeService,
+    MachineExecutorLeaseService leaseService,
+    SafetyLogWriter safetyLogWriter)
 {
     public Task<RunCommandResponse> StartAsync(string runId, RunCommandRequest request, AuthenticatedUser actor, CancellationToken cancellationToken = default)
     {
@@ -23,6 +26,8 @@ public sealed class RunControlService(
             actor,
             async () =>
             {
+                deviceModeService.EnsureRunStartAllowed();
+                leaseService.EnsureOwner();
                 var preflight = string.IsNullOrWhiteSpace(request.PreflightStateHash)
                     ? null
                     : await preflightValidationService.ValidateAsync(cancellationToken);
@@ -32,6 +37,18 @@ public sealed class RunControlService(
                 }
 
                 await LockChannelBatchesForStartAsync(runId, request.CommandId, actor, cancellationToken);
+                await safetyLogWriter.WriteAsync(
+                    "device",
+                    "Information",
+                    "Run start command queued.",
+                    new SafetyLogContext(
+                        CorrelationId: request.CommandId,
+                        CommandId: request.CommandId,
+                        MachineRunId: runId,
+                        DeviceMode: deviceModeService.CurrentMode,
+                        Actor: actor.Username,
+                        Source: "RunControlService"),
+                    cancellationToken: cancellationToken);
                 await executor.EnqueueStartAsync(runId, cancellationToken);
             },
             "Start command queued.",
@@ -86,6 +103,7 @@ public sealed class RunControlService(
                     throw new BusinessRuleException("run_not_found", "Run was not found.", StatusCodes.Status404NotFound);
                 }
 
+                leaseService.EnsureOwner();
                 await enqueue();
                 return new CommandExecutionResult<RunCommandResponse>(
                     new RunCommandResponse(true, commandId, false, runId, run.Status, message),

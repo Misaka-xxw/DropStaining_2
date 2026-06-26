@@ -124,6 +124,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                   <div class="mini-metric"><span>玻片</span><b id="metricSlides">0</b></div>
                   <div class="mini-metric"><span>试剂</span><b id="metricReagents">0</b></div>
                   <div class="mini-metric"><span>告警</span><b id="metricAlarms">0</b></div>
+                  <div class="mini-metric"><span>模式</span><b id="metricDeviceMode">Mock</b></div>
                   <div class="clock-card"><span id="clockTime">--:--</span><small id="clockDate">----</small></div>
                   <button class="icon-btn" onclick="location.href='/dashboard'" title="主控台">⌂</button>
                   <button class="icon-btn danger" onclick="logout()" title="退出">×</button>
