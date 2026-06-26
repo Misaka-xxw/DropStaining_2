@@ -15,10 +15,12 @@ public static class WebHostEndpointExtensions
         "/reagents",
         "/run",
         "/alerts",
+        "/alarms",
         "/history",
         "/configure",
         "/engineer",
-        "/admin"
+        "/admin",
+        "/management"
     ];
 
     public static void MapStainerWebHostEndpoints(this WebApplication app)
@@ -227,6 +229,67 @@ public static class WebHostEndpointExtensions
             var state = store.GetState();
             return Results.Ok(new { state.Logs, state.Alarms });
         });
+        app.MapGet("/api/history/runs", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListRunsAsync(context.Request.Query, cancellationToken));
+            }));
+        app.MapGet("/api/history/runs/{machineRunId}", async (HttpContext context, string machineRunId, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var detail = await service.GetRunDetailAsync(machineRunId, cancellationToken);
+                return detail is null ? Results.NotFound() : Results.Ok(detail);
+            }));
+        app.MapGet("/api/history/reagent-consumptions", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListReagentConsumptionsAsync(context.Request.Query, cancellationToken));
+            }));
+        app.MapGet("/api/alarms", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListAlarmsAsync(context.Request.Query, cancellationToken));
+            }));
+        app.MapPost("/api/alarms/{alarmId}/acknowledge", async (HttpContext context, string alarmId, AcknowledgeAlarmRequest request, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.AcknowledgeAlarmAsync(alarmId, request, actor, cancellationToken));
+            }));
+        app.MapGet("/api/audit/logs", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListAuditLogsAsync(context.Request.Query, cancellationToken));
+            }));
+        app.MapGet("/api/history/export/runs", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return ToCsvFile(await service.ExportRunsAsync(context.Request.Query, actor, cancellationToken));
+            }));
+        app.MapGet("/api/history/export/reagent-consumptions", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return ToCsvFile(await service.ExportReagentConsumptionsAsync(context.Request.Query, actor, cancellationToken));
+            }));
+        app.MapGet("/api/alarms/export", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return ToCsvFile(await service.ExportAlarmsAsync(context.Request.Query, actor, cancellationToken));
+            }));
+        app.MapGet("/api/audit/export", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return ToCsvFile(await service.ExportAuditLogsAsync(context.Request.Query, actor, cancellationToken));
+            }));
 
         app.MapPost("/api/login", async (HttpContext context, UserSessionService sessionService, MockRuntimeStore store, LoginRequest request, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
@@ -456,5 +519,10 @@ public static class WebHostEndpointExtensions
         {
             return Results.Json(new { code = ex.Code, detail = ex.Message }, statusCode: ex.StatusCode);
         }
+    }
+
+    private static IResult ToCsvFile(CsvExportResult export)
+    {
+        return Results.File(export.Content, export.ContentType, export.FileName);
     }
 }

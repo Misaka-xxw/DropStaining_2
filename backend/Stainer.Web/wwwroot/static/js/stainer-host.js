@@ -1541,6 +1541,209 @@ async function disablePrimaryAntibodyMapping(id){
   await renderConfigure();
 }
 
+async function renderAlerts(){
+  if(!document.getElementById('alarmList')) return;
+  await loadTraceAlarms();
+}
+
+async function renderHistory(){
+  if(!document.getElementById('historySlides')) return;
+  await loadTraceHistory();
+  await loadTraceAudit({silentForbidden:true});
+}
+
+async function renderAdmin(state){
+  if(!document.getElementById('userTable')) return;
+  const users = await api('/api/users');
+  setText('adminUserCount', users.length);
+  setText('adminReagentCount', (state?.reagents || []).length);
+  setText('adminAlarmCount', (state?.alarms || []).length);
+  wireAdminToolbar(users);
+  document.getElementById('userTable').innerHTML = '<div class="table-row head"><span>用户</span><span>显示名</span><span>角色</span><span>启用</span><span>操作</span></div>' + users.map(u => `<div class="table-row"><span>${escapeHtml(u.username)}</span><span>${escapeHtml(u.displayName)}</span><span class="badge-soft">${escapeHtml((u.roles || [u.role]).join(','))}</span><span>${u.enabled ? '是' : '否'}</span><span class="button-row"><button class="btn btn-soft" onclick="adminRenameUser('${u.id}', '${escapeHtml(u.displayName)}')">改名</button><button class="btn btn-soft" onclick="adminToggleUser('${u.id}', ${!u.enabled})">${u.enabled ? '禁用' : '启用'}</button><button class="btn btn-soft" onclick="adminResetPassword('${u.id}')">重置</button><button class="btn btn-soft" onclick="adminSetRoles('${u.id}', '${escapeHtml((u.roles || []).join(','))}')">角色</button><button class="btn btn-soft" onclick="adminDeleteUser('${u.id}')">删除</button></span></div>`).join('');
+  await loadTraceAudit({silentForbidden:true});
+}
+
+function traceInputValue(id){
+  return (document.getElementById(id)?.value || '').trim();
+}
+
+function traceUtcQueryValue(id){
+  const value = traceInputValue(id);
+  if(!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+function appendTraceQuery(params, key, value){
+  if(value !== null && value !== undefined && String(value).trim() !== '') params.set(key, String(value).trim());
+}
+
+function historyQueryString(){
+  const params = new URLSearchParams();
+  appendTraceQuery(params, 'fromUtc', traceUtcQueryValue('historyFromFilter'));
+  appendTraceQuery(params, 'toUtc', traceUtcQueryValue('historyToFilter'));
+  appendTraceQuery(params, 'status', traceInputValue('historyStatusFilter'));
+  appendTraceQuery(params, 'channel', traceInputValue('historyChannelFilter'));
+  appendTraceQuery(params, 'slot', traceInputValue('historySlotFilter'));
+  appendTraceQuery(params, 'experimentType', traceInputValue('historyExperimentFilter'));
+  appendTraceQuery(params, 'workflow', traceInputValue('historyWorkflowFilter'));
+  appendTraceQuery(params, 'sampleCode', traceInputValue('historySampleFilter'));
+  appendTraceQuery(params, 'primaryAntibodyCode', traceInputValue('historyPrimaryFilter'));
+  appendTraceQuery(params, 'reagentCode', traceInputValue('historyReagentFilter'));
+  appendTraceQuery(params, 'reagentBatchNo', traceInputValue('historyBatchFilter'));
+  appendTraceQuery(params, 'operator', traceInputValue('historyOperatorFilter'));
+  params.set('pageSize', '80');
+  return params.toString();
+}
+
+function alarmQueryString(){
+  const params = new URLSearchParams();
+  appendTraceQuery(params, 'alarmStatus', traceInputValue('alarmStatusFilter'));
+  appendTraceQuery(params, 'severity', traceInputValue('alarmSeverityFilter'));
+  appendTraceQuery(params, 'channel', traceInputValue('alarmChannelFilter'));
+  appendTraceQuery(params, 'alarmCode', traceInputValue('alarmCodeFilter'));
+  params.set('pageSize', '80');
+  return params.toString();
+}
+
+function auditQueryString(){
+  const params = new URLSearchParams();
+  appendTraceQuery(params, 'fromUtc', traceUtcQueryValue('historyFromFilter'));
+  appendTraceQuery(params, 'toUtc', traceUtcQueryValue('historyToFilter'));
+  appendTraceQuery(params, 'user', traceInputValue('auditUserFilter'));
+  appendTraceQuery(params, 'action', traceInputValue('auditActionFilter'));
+  appendTraceQuery(params, 'entityType', traceInputValue('auditEntityFilter'));
+  appendTraceQuery(params, 'channel', traceInputValue('auditChannelFilter'));
+  appendTraceQuery(params, 'slot', traceInputValue('auditSlotFilter'));
+  appendTraceQuery(params, 'machineRunId', traceInputValue('auditRunFilter'));
+  appendTraceQuery(params, 'taskId', traceInputValue('auditTaskFilter'));
+  appendTraceQuery(params, 'commandId', traceInputValue('auditCommandFilter'));
+  appendTraceQuery(params, 'correlationId', traceInputValue('auditCorrelationFilter'));
+  params.set('pageSize', '80');
+  return params.toString();
+}
+
+async function loadTraceHistory(){
+  const slidesRoot = document.getElementById('historySlides');
+  const reagentsRoot = document.getElementById('historyReagents');
+  if(!slidesRoot && !reagentsRoot) return;
+  try{
+    const query = historyQueryString();
+    const suffix = query ? '?' + query : '';
+    const [runs, consumptions] = await Promise.all([
+      api('/api/history/runs' + suffix),
+      api('/api/history/reagent-consumptions' + suffix)
+    ]);
+    if(slidesRoot) renderTraceHistoryRuns(slidesRoot, runs.items || []);
+    if(reagentsRoot) renderTraceReagentConsumptions(reagentsRoot, consumptions.items || []);
+  }catch(e){
+    if(slidesRoot) slidesRoot.innerHTML = `<div class="empty-state"><b>历史查询失败</b><span>${escapeHtml(e.message || '请检查后端服务。')}</span></div>`;
+    if(reagentsRoot) reagentsRoot.innerHTML = `<div class="empty-state"><b>试剂消耗查询失败</b><span>${escapeHtml(e.message || '请检查后端服务。')}</span></div>`;
+  }
+}
+
+function renderTraceHistoryRuns(root, runs){
+  root.innerHTML = '<div class="table-row head"><span>运行</span><span>通道/玻片</span><span>流程</span><span>状态</span><span>时间</span></div>' + ((runs || []).map(run =>
+    `<div class="table-row"><span><b>${escapeHtml(run.runCode || run.machineRunId)}</b><small>${escapeHtml(run.machineRunId)}</small></span><span>${escapeHtml(run.channels || '--')} / ${Number(run.slideTaskCount || 0)} 张</span><span>${escapeHtml(run.workflowNames || '--')}</span><span>${escapeHtml(run.status || '--')}<small>告警 ${Number(run.alarmCount || 0)}</small></span><span>${escapeHtml(formatDateTime(run.createdAtUtc))}<small>${escapeHtml(run.requestedBy || '--')}</small></span></div>`
+  ).join('') || '<div class="empty-state"><b>暂无正式历史运行</b><span>当前筛选条件下没有 MachineRun / ChannelBatch 记录。</span></div>');
+}
+
+function renderTraceReagentConsumptions(root, rows){
+  root.innerHTML = '<div class="table-row head"><span>试剂</span><span>批号/序列</span><span>用量</span><span>运行</span><span>时间</span></div>' + ((rows || []).map(item =>
+    `<div class="table-row"><span><b>${escapeHtml(item.reagentCode || '--')}</b><small>${escapeHtml(item.reagentName || '--')}</small></span><span>${escapeHtml(item.productionBatchNo || '--')}<small>${escapeHtml(item.serialNo || '--')}</small></span><span>${Number(item.volumeUl || 0)} uL</span><span>${escapeHtml(item.machineRunId || '--')}<small>${escapeHtml(item.workflowStepExecutionId || '--')}</small></span><span>${escapeHtml(formatDateTime(item.createdAtUtc))}</span></div>`
+  ).join('') || '<div class="empty-state"><b>暂无试剂消耗</b><span>当前筛选条件下没有 ReagentConsumption 记录。</span></div>');
+}
+
+async function loadTraceAlarms(){
+  const root = document.getElementById('alarmList');
+  if(!root) return;
+  try{
+    const query = alarmQueryString();
+    const result = await api('/api/alarms' + (query ? '?' + query : ''));
+    const alarms = result.items || [];
+    root.innerHTML = alarms.length ? alarms.map(alarm => {
+      const level = String(alarm.severity || '').toLowerCase();
+      const canAck = alarm.status === 'Active';
+      const ackButton = canAck ? `<button class="btn btn-soft" onclick="acknowledgeTraceAlarm('${escapeHtml(alarm.alarmId)}','${escapeHtml(alarm.severity)}')">确认</button>` : '';
+      return `<div class="alarm-row level-${escapeHtml(level || 'warning')}"><b>${escapeHtml(alarm.severity || '--')}</b><span>${escapeHtml(alarm.code || '--')} · ${escapeHtml(alarm.message || '')}</span><em>${escapeHtml(alarm.status || '--')} · 通道 ${escapeHtml(alarm.sourceChannels || '--')} · ${escapeHtml(formatDateTime(alarm.createdAtUtc))}</em><small>${alarm.ackBy ? `确认：${escapeHtml(alarm.ackBy)} / ${escapeHtml(formatDateTime(alarm.ackAtUtc))} / ${escapeHtml(alarm.ackReason || '--')}` : '未确认'} ${ackButton}</small></div>`;
+    }).join('') : '<div class="empty-state"><b>暂无告警</b><span>当前筛选条件下没有告警记录。</span></div>';
+    renderTraceAlarmActions(alarms);
+  }catch(e){
+    root.innerHTML = `<div class="empty-state"><b>告警查询失败</b><span>${escapeHtml(e.message || '请检查后端服务。')}</span></div>`;
+  }
+}
+
+function renderTraceAlarmActions(alarms){
+  const root = document.getElementById('alertLogs');
+  if(!root) return;
+  const actions = (alarms || []).flatMap(alarm => (alarm.actions || []).map(action => ({alarm, action})))
+    .sort((a, b) => String(b.action.createdAtUtc || '').localeCompare(String(a.action.createdAtUtc || '')));
+  root.innerHTML = actions.length ? actions.map(x =>
+    `<div><i></i><span>${escapeHtml(formatDateTime(x.action.createdAtUtc))} · ${escapeHtml(x.alarm.code)} · ${escapeHtml(x.action.action)} · ${escapeHtml(x.action.actor || '--')} · ${escapeHtml(x.action.message || '--')}</span></div>`
+  ).join('') : '<div><i></i><span>暂无告警处理记录</span></div>';
+}
+
+async function acknowledgeTraceAlarm(alarmId, severity){
+  let reason = '';
+  if(['Error','Critical'].includes(severity)){
+    reason = prompt('确认 Error/Critical 告警必须填写处理原因：') || '';
+    if(!reason.trim()){
+      toast('请填写处理原因。', true);
+      return;
+    }
+  }else{
+    reason = prompt('处理原因（可选）：') || '';
+  }
+  try{
+    await api(`/api/alarms/${encodeURIComponent(alarmId)}/acknowledge`, {
+      method:'POST',
+      body: JSON.stringify({commandId: commandId('alarm-ack'), reason})
+    });
+    toast('告警已确认。');
+    await loadTraceAlarms();
+    await loadTraceAudit({silentForbidden:true});
+  }catch(e){
+    toast(e.message || '告警确认失败。', true);
+  }
+}
+
+async function loadTraceAudit(options={}){
+  const roots = [document.getElementById('historyLogs'), document.getElementById('adminLogs')].filter(Boolean);
+  if(!roots.length) return;
+  try{
+    const query = auditQueryString();
+    const result = await api('/api/audit/logs' + (query ? '?' + query : ''));
+    const rows = result.items || [];
+    const html = rows.length ? rows.map(item =>
+      `<div><i></i><span>${escapeHtml(formatDateTime(item.createdAtUtc))} · ${escapeHtml(item.actor || '--')} · ${escapeHtml(item.action || '--')} · ${escapeHtml(item.entityType || '--')} ${escapeHtml(item.entityId || '')}<small>${escapeHtml(item.summary || item.message || '--')}</small></span></div>`
+    ).join('') : '<div><i></i><span>暂无审计记录</span></div>';
+    roots.forEach(root => { root.innerHTML = html; });
+    setText('adminLogCount', rows.length);
+  }catch(e){
+    if(options.silentForbidden && (e.status === 401 || e.status === 403)){
+      roots.forEach(root => { root.innerHTML = '<div><i></i><span>当前账号无权查看审计日志。</span></div>'; });
+      return;
+    }
+    roots.forEach(root => { root.innerHTML = `<div><i></i><span>审计查询失败：${escapeHtml(e.message || '请检查后端服务。')}</span></div>`; });
+  }
+}
+
+function exportTraceCsv(type){
+  const map = {
+    'history-runs': ['/api/history/export/runs', historyQueryString],
+    reagents: ['/api/history/export/reagent-consumptions', historyQueryString],
+    alarms: ['/api/alarms/export', alarmQueryString],
+    audit: ['/api/audit/export', auditQueryString]
+  };
+  const entry = map[type];
+  if(!entry){
+    toast('未知导出类型。', true);
+    return;
+  }
+  const query = entry[1]();
+  location.href = entry[0] + (query ? '?' + query : '');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('confirmSlot')?.addEventListener('change', updateConfirmModalFromSlot);
   document.getElementById('confirmPath')?.addEventListener('change', () => {

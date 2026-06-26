@@ -94,6 +94,10 @@ public sealed record ChangePrimaryAntibodyMappingStateRequest(
     string CommandId,
     string? Reason);
 
+public sealed record AcknowledgeAlarmRequest(
+    string CommandId,
+    string? Reason);
+
 public sealed record SelectChannelWorkflowRequest(
     string CommandId,
     string? ChannelBatchId,

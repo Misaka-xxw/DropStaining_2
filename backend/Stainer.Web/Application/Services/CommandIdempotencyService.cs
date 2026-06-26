@@ -123,6 +123,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             TaskCreationResponse x => x with { Replayed = true } as T ?? response,
             ReagentScanConfirmationResponse x => x with { Replayed = true } as T ?? response,
             ReagentScanSessionMutationResponse x => x with { Replayed = true } as T ?? response,
+            AlarmMutationResponse x => x with { Replayed = true } as T ?? response,
             EngineeringWriteResponse x => x with { Replayed = true } as T ?? response,
             MachineRunResponse x => x with { Replayed = true } as T ?? response,
             RunCommandResponse x => x with { Replayed = true } as T ?? response,

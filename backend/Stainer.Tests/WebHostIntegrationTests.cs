@@ -27,7 +27,7 @@ public sealed class WebHostIntegrationTests
         Assert.False(info!.PythonRuntimeRequired);
         Assert.Equal("ASP.NET Core", info.UiHost);
 
-        foreach (var route in new[] { "/", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/history", "/configure", "/engineer", "/admin", "/mock-timeline" })
+        foreach (var route in new[] { "/", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/alarms", "/history", "/configure", "/engineer", "/admin", "/management", "/mock-timeline" })
         {
             var html = await client.GetStringAsync(route);
             Assert.Contains("app.css", html);
@@ -111,6 +111,32 @@ public sealed class WebHostIntegrationTests
         Assert.DoesNotContain("/api/reagents/scan'", hostScript);
         Assert.DoesNotContain("/api/reagents/scan\"", hostScript);
         Assert.DoesNotContain("CreateReagent(", hostScript);
+    }
+
+    [Fact]
+    public async Task Traceability_pages_use_formal_history_alarm_audit_apis_and_csv_exports()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var history = await client.GetStringAsync("/history");
+        var alarms = await client.GetStringAsync("/alarms");
+        var management = await client.GetStringAsync("/management");
+        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
+
+        Assert.Contains("historySlides", history);
+        Assert.Contains("alarmList", alarms);
+        Assert.Contains("auditCorrelationFilter", management);
+        Assert.Contains("/api/history/runs", hostScript);
+        Assert.Contains("/api/history/reagent-consumptions", hostScript);
+        Assert.Contains("/api/alarms", hostScript);
+        Assert.Contains("/api/audit/logs", hostScript);
+        Assert.Contains("/api/history/export/runs", hostScript);
+        Assert.Contains("/api/history/export/reagent-consumptions", hostScript);
+        Assert.Contains("/api/alarms/export", hostScript);
+        Assert.Contains("/api/audit/export", hostScript);
+        Assert.Contains("acknowledgeTraceAlarm", hostScript);
+        Assert.DoesNotContain("localStorage", hostScript);
     }
 
     [Fact]

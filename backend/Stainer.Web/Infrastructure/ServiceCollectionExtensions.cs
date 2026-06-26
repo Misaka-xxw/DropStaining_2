@@ -45,6 +45,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<PreflightValidationService>();
         services.AddScoped<MachineRunService>();
         services.AddScoped<MachineRunQueryService>();
+        services.AddScoped<TraceabilityQueryService>();
         services.AddScoped<RunControlService>();
         services.AddScoped<RuntimePageBridgeService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
