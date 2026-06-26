@@ -57,10 +57,11 @@ public sealed class LegacyJsonImporterTests
         Assert.NotEqual("123456", importedUser.PasswordHash);
         Assert.True(LegacyPasswordHasher.Verify("123456", importedUser.PasswordHash!));
 
-        Assert.Equal(2, await dbContext.WorkflowDefinitions.CountAsync());
-        Assert.Equal(2, await dbContext.WorkflowVersions.CountAsync());
-        Assert.Equal(3, await dbContext.WorkflowSteps.CountAsync());
-        Assert.Equal(2, await dbContext.ReagentDefinitions.CountAsync());
+        var importedWorkflowCodes = new[] { "HE", "IHC" };
+        Assert.Equal(2, await dbContext.WorkflowDefinitions.CountAsync(x => importedWorkflowCodes.Contains(x.Code)));
+        Assert.Equal(2, await dbContext.WorkflowVersions.CountAsync(x => importedWorkflowCodes.Contains(x.WorkflowDefinition!.Code)));
+        Assert.Equal(3, await dbContext.WorkflowSteps.CountAsync(x => importedWorkflowCodes.Contains(x.WorkflowVersion!.WorkflowDefinition!.Code)));
+        Assert.Equal(2, await dbContext.ReagentDefinitions.CountAsync(x => x.ReagentCode == "ABC" || x.ReagentCode == "XYZ"));
         Assert.Equal(2, await dbContext.ReagentBottles.CountAsync());
         Assert.Equal(2, await dbContext.ReagentRackPlacements.CountAsync());
         Assert.Single(await dbContext.LiquidClassProfiles.ToListAsync());

@@ -28,6 +28,11 @@ if (args.Contains("--seed-reference-data", StringComparer.OrdinalIgnoreCase))
     await backfill.BackfillAsync();
     var seeder = seedScope.ServiceProvider.GetRequiredService<ReferenceDataSeeder>();
     await seeder.SeedAsync();
+    var summary = await seeder.GetManualAcceptanceSeedSummaryAsync();
+    Console.WriteLine($"HE Published: {summary.HeWorkflowName} ({summary.HeWorkflowCode}) WorkflowVersionId={summary.HeWorkflowVersionId}");
+    Console.WriteLine($"IHC Published: {summary.IhcWorkflowName} ({summary.IhcWorkflowCode}) WorkflowVersionId={summary.IhcWorkflowVersionId}");
+    Console.WriteLine($"Primary antibody {summary.PrimaryAntibodyCode}: Enabled={summary.PrimaryAntibodyMappingEnabled}, WorkflowVersionId={summary.PrimaryAntibodyWorkflowVersionId}");
+    Console.WriteLine($"Required reagent codes: {string.Join(", ", summary.RequiredReagentCodes)}");
     Console.WriteLine("Reference data seeded.");
     return;
 }

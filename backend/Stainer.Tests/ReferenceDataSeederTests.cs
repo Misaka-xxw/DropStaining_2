@@ -118,6 +118,100 @@ public sealed class ReferenceDataSeederTests
     }
 
     [Fact]
+    public async Task Seeder_creates_manual_acceptance_published_he_ihc_workflows_and_001_mapping()
+    {
+        await using var dbContext = await CreateMigratedContextAsync();
+
+        await new ReferenceDataSeeder(dbContext).SeedAsync();
+
+        var he = await dbContext.WorkflowDefinitions
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.Steps)
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.ReagentRequirements)
+            .SingleAsync(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode);
+        var heVersion = he.Versions.Single(x => x.VersionNo == 1);
+        Assert.Equal("测试 HE 流程", he.Name);
+        Assert.Equal(StainingTaskType.He, he.WorkflowType);
+        Assert.Equal(WorkflowVersionStatus.Published, heVersion.Status);
+        Assert.Equal("1", heVersion.VersionLabel);
+        Assert.NotNull(heVersion.PublishedAtUtc);
+        Assert.True(heVersion.Steps.Count >= 2);
+        Assert.Contains(heVersion.Steps, x => x.MajorStepCode == "HEMATOXYLIN" && x.ReagentCode == "HEM");
+        Assert.Contains(heVersion.Steps, x => x.MajorStepCode == "TERMINAL_WASH");
+
+        var ihc = await dbContext.WorkflowDefinitions
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.Steps)
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.ReagentRequirements)
+            .SingleAsync(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode);
+        var ihcVersion = ihc.Versions.Single(x => x.VersionNo == 1);
+        Assert.Equal("测试 IHC 001-A", ihc.Name);
+        Assert.Equal(StainingTaskType.Ihc, ihc.WorkflowType);
+        Assert.Equal(WorkflowVersionStatus.Published, ihcVersion.Status);
+        Assert.Equal("1", ihcVersion.VersionLabel);
+        Assert.Equal(9, ihcVersion.Steps.Count);
+        Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "BLOCKING");
+        Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "PRIMARY_ANTIBODY" && x.ReagentCode == "P01");
+        Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "SECONDARY_ANTIBODY" && x.ReagentCode == "SEC");
+        Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "DAB" && x.ActionType == "Dab");
+        Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "FINAL_WASH");
+        Assert.All(heVersion.Steps.Concat(ihcVersion.Steps), x => Assert.InRange(x.DurationSeconds ?? 0, 3, 5));
+
+        var requiredCodes = heVersion.ReagentRequirements
+            .Concat(ihcVersion.ReagentRequirements)
+            .Select(x => x.ReagentCode)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToArray();
+        Assert.Equal(["BLK", "DAB", "HEM", "P01", "SEC", "WAS"], requiredCodes);
+        foreach (var reagentCode in requiredCodes)
+        {
+            Assert.True(await dbContext.ReagentDefinitions.AnyAsync(x => x.ReagentCode == reagentCode && x.IsEnabled));
+        }
+
+        var mapping = await dbContext.PrimaryAntibodyWorkflowMappings
+            .Include(x => x.WorkflowVersion)
+            .ThenInclude(x => x!.WorkflowDefinition)
+            .SingleAsync(x => x.PrimaryAntibodyCode == ReferenceDataSeeder.ManualPrimaryAntibodyCode && x.WorkflowVersionId == ihcVersion.Id);
+        Assert.True(mapping.IsEnabled);
+        Assert.Equal(WorkflowVersionStatus.Published, mapping.WorkflowVersion!.Status);
+        Assert.Equal(StainingTaskType.Ihc, mapping.WorkflowVersion.WorkflowDefinition!.WorkflowType);
+    }
+
+    [Fact]
+    public async Task Manual_acceptance_seed_is_idempotent()
+    {
+        await using var dbContext = await CreateMigratedContextAsync();
+        var seeder = new ReferenceDataSeeder(dbContext);
+
+        await seeder.SeedAsync();
+        var firstSummary = await seeder.GetManualAcceptanceSeedSummaryAsync();
+        await seeder.SeedAsync();
+        var secondSummary = await seeder.GetManualAcceptanceSeedSummaryAsync();
+
+        Assert.Equal(firstSummary.HeWorkflowVersionId, secondSummary.HeWorkflowVersionId);
+        Assert.Equal(firstSummary.IhcWorkflowVersionId, secondSummary.IhcWorkflowVersionId);
+        Assert.Equal(firstSummary.PrimaryAntibodyWorkflowVersionId, secondSummary.PrimaryAntibodyWorkflowVersionId);
+        Assert.Equal(firstSummary.RequiredReagentCodes, secondSummary.RequiredReagentCodes);
+        Assert.Equal(1, await dbContext.WorkflowDefinitions.CountAsync(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode));
+        Assert.Equal(1, await dbContext.WorkflowDefinitions.CountAsync(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode));
+        Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.ManualHeWorkflowCode && x.VersionNo == 1));
+        Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.ManualIhcWorkflowCode && x.VersionNo == 1));
+        Assert.Equal(2, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.HeWorkflowVersionId));
+        Assert.Equal(9, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.IhcWorkflowVersionId));
+        Assert.Equal(1, await dbContext.PrimaryAntibodyWorkflowMappings.CountAsync(x =>
+            x.PrimaryAntibodyCode == ReferenceDataSeeder.ManualPrimaryAntibodyCode
+            && x.WorkflowVersionId == firstSummary.IhcWorkflowVersionId));
+
+        foreach (var reagentCode in firstSummary.RequiredReagentCodes)
+        {
+            Assert.Equal(1, await dbContext.ReagentDefinitions.CountAsync(x => x.ReagentCode == reagentCode));
+        }
+    }
+
+    [Fact]
     public async Task Sqlite_foreign_keys_are_enforced()
     {
         await using var dbContext = await CreateMigratedContextAsync();

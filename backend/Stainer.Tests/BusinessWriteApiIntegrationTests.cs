@@ -213,6 +213,65 @@ public sealed class BusinessWriteApiIntegrationTests
     }
 
     [Fact]
+    public async Task Seeded_manual_acceptance_workflows_are_queryable_and_001_is_compatible()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var workflows = await client.GetFromJsonAsync<List<WorkflowSummaryResponse>>("/api/workflows");
+        Assert.NotNull(workflows);
+        var he = workflows!.Single(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode);
+        var heVersion = he.Versions.Single(x => x.VersionNo == 1);
+        Assert.Equal("测试 HE 流程", he.Name);
+        Assert.Equal(StainingTaskType.He, he.WorkflowType);
+        Assert.Equal(WorkflowVersionStatus.Published, heVersion.Status);
+
+        var ihc = workflows.Single(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode);
+        var ihcVersion = ihc.Versions.Single(x => x.VersionNo == 1);
+        Assert.Equal("测试 IHC 001-A", ihc.Name);
+        Assert.Equal(StainingTaskType.Ihc, ihc.WorkflowType);
+        Assert.Equal(WorkflowVersionStatus.Published, ihcVersion.Status);
+
+        await LoginAsync(client, "operator", "operator");
+        _ = await PostJsonAsync<ChannelBatchActivationResponse>(client, "/api/channel-batches/active", new
+        {
+            commandId = "cmd-seed-compatible-active-d",
+            drawerCode = "D"
+        });
+        _ = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-seed-compatible-select-d",
+            drawerCode = "D",
+            experimentType = StainingTaskType.Ihc,
+            workflowVersionId = ihcVersion.Id
+        });
+
+        var task = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
+        {
+            commandId = "cmd-seed-compatible-ihc-001",
+            inputMode = "DirectPrimaryAntibody",
+            rawCode = ReferenceDataSeeder.ManualPrimaryAntibodyCode,
+            drawerCode = "D",
+            slotCode = "D-01"
+        });
+        Assert.True(task.Ok);
+        Assert.Equal(ihcVersion.Id, task.WorkflowVersionId);
+        Assert.Equal("Compatible", task.CompatibilityValidationStatus);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        Assert.True(await dbContext.PrimaryAntibodyWorkflowMappings
+            .Include(x => x.WorkflowVersion)
+            .ThenInclude(x => x!.WorkflowDefinition)
+            .AnyAsync(x =>
+                x.PrimaryAntibodyCode == ReferenceDataSeeder.ManualPrimaryAntibodyCode
+                && x.WorkflowVersionId == ihcVersion.Id
+                && x.IsEnabled
+                && x.WorkflowVersion!.Status == WorkflowVersionStatus.Published
+                && x.WorkflowVersion.WorkflowDefinition!.WorkflowType == StainingTaskType.Ihc));
+    }
+
+    [Fact]
     public async Task Task_creation_covers_he_manual_confirmation_and_ihc_selection_rules()
     {
         await using var factory = CreateFactory();

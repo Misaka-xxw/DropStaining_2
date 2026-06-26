@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Stainer.Web.Application.Services;
 using Stainer.Web.Domain.Entities;
@@ -7,7 +8,11 @@ namespace Stainer.Web.Infrastructure.Data;
 public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
 {
     public const string DefaultCoordinateProfileCode = "FactoryDefault-v1";
+    public const string ManualHeWorkflowCode = "TEST-HE-V1";
+    public const string ManualIhcWorkflowCode = "TEST-IHC-001-A-V1";
+    public const string ManualPrimaryAntibodyCode = "001";
     private const string DefaultDeviceProfileCode = "FactoryDevice-v1";
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task SeedAsync(CancellationToken cancellationToken = default)
     {
@@ -20,8 +25,42 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         await SeedPhysicalLayoutAsync(now, cancellationToken);
         var coordinateProfile = await SeedCoordinateProfileAsync(now, cancellationToken);
         await SeedCoordinatePointsAsync(coordinateProfile, now, cancellationToken);
+        await SeedManualAcceptanceWorkflowsAsync(now, cancellationToken);
 
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<ManualAcceptanceSeedSummary> GetManualAcceptanceSeedSummaryAsync(CancellationToken cancellationToken = default)
+    {
+        var he = await LoadSeedWorkflowAsync(ManualHeWorkflowCode, cancellationToken);
+        var ihc = await LoadSeedWorkflowAsync(ManualIhcWorkflowCode, cancellationToken);
+        var mapping = await dbContext.PrimaryAntibodyWorkflowMappings
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.PrimaryAntibodyCode == ManualPrimaryAntibodyCode
+                    && ihc.WorkflowVersionId != null
+                    && x.WorkflowVersionId == ihc.WorkflowVersionId,
+                cancellationToken);
+
+        var reagentCodes = await dbContext.WorkflowReagentRequirements
+            .AsNoTracking()
+            .Where(x => x.WorkflowVersionId == he.WorkflowVersionId || x.WorkflowVersionId == ihc.WorkflowVersionId)
+            .Select(x => x.ReagentCode)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync(cancellationToken);
+
+        return new ManualAcceptanceSeedSummary(
+            he.Name,
+            he.Code,
+            he.WorkflowVersionId,
+            ihc.Name,
+            ihc.Code,
+            ihc.WorkflowVersionId,
+            ManualPrimaryAntibodyCode,
+            mapping?.IsEnabled == true,
+            mapping?.WorkflowVersionId,
+            reagentCodes);
     }
 
     private async Task SeedRolesAsync(DateTimeOffset now, CancellationToken cancellationToken)
@@ -288,4 +327,327 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             CreatedAtUtc = now
         });
     }
+
+    private async Task SeedManualAcceptanceWorkflowsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await SeedManualAcceptanceReagentsAsync(now, cancellationToken);
+
+        var heVersion = await EnsureSeedWorkflowAsync(
+            ManualHeWorkflowCode,
+            "测试 HE 流程",
+            StainingTaskType.He,
+            "测试 HE 流程 for manual Mock acceptance.",
+            HeSteps(),
+            [("HEM", 200), ("WAS", 100)],
+            now,
+            cancellationToken);
+
+        var ihcVersion = await EnsureSeedWorkflowAsync(
+            ManualIhcWorkflowCode,
+            "测试 IHC 001-A",
+            StainingTaskType.Ihc,
+            "测试 IHC 001-A for manual Mock acceptance.",
+            IhcSteps(),
+            [("BLK", 100), ("P01", 100), ("SEC", 100), ("DAB", 100), ("HEM", 100), ("WAS", 400)],
+            now,
+            cancellationToken);
+
+        await EnsurePrimaryAntibodyMappingAsync(ManualPrimaryAntibodyCode, ihcVersion.Id, now, cancellationToken);
+    }
+
+    private async Task SeedManualAcceptanceReagentsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        foreach (var reagent in ManualAcceptanceReagents())
+        {
+            var definition = await dbContext.ReagentDefinitions
+                .SingleOrDefaultAsync(x => x.ReagentCode == reagent.Code, cancellationToken);
+            if (definition is null)
+            {
+                dbContext.ReagentDefinitions.Add(new ReagentDefinition
+                {
+                    ReagentCode = reagent.Code,
+                    Name = reagent.Name,
+                    ReagentType = reagent.Type,
+                    MinimumAlarmVolumeUl = reagent.MinimumAlarmVolumeUl,
+                    LegacyMetadataJson = JsonSerializer.Serialize(new
+                    {
+                        manualAcceptance = true,
+                        barcodePrefix = reagent.Code,
+                        alias = reagent.Alias
+                    }, JsonOptions),
+                    IsEnabled = true,
+                    CreatedAtUtc = now
+                });
+                continue;
+            }
+
+            var changed = false;
+            if (string.IsNullOrWhiteSpace(definition.Name) || definition.Name.StartsWith("Definition ", StringComparison.Ordinal))
+            {
+                definition.Name = reagent.Name;
+                changed = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(definition.ReagentType) || definition.ReagentType == "test")
+            {
+                definition.ReagentType = reagent.Type;
+                changed = true;
+            }
+
+            if (!definition.IsEnabled)
+            {
+                definition.IsEnabled = true;
+                changed = true;
+            }
+
+            if (definition.MinimumAlarmVolumeUl is null)
+            {
+                definition.MinimumAlarmVolumeUl = reagent.MinimumAlarmVolumeUl;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                definition.UpdatedAtUtc = now;
+            }
+        }
+    }
+
+    private async Task<WorkflowVersion> EnsureSeedWorkflowAsync(
+        string code,
+        string name,
+        string workflowType,
+        string description,
+        IReadOnlyList<SeedWorkflowStep> steps,
+        IReadOnlyList<(string ReagentCode, int RequiredVolumeUl)> requirements,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var definition = await dbContext.WorkflowDefinitions
+            .AsSplitQuery()
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.Steps)
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.ReagentRequirements)
+            .SingleOrDefaultAsync(x => x.Code == code, cancellationToken);
+
+        if (definition is null)
+        {
+            definition = new WorkflowDefinition
+            {
+                Code = code,
+                Name = name,
+                WorkflowType = workflowType,
+                Description = description,
+                IsEnabled = true,
+                CreatedAtUtc = now
+            };
+            dbContext.WorkflowDefinitions.Add(definition);
+        }
+        else
+        {
+            var changed = false;
+            if (definition.Name != name)
+            {
+                definition.Name = name;
+                changed = true;
+            }
+
+            if (definition.WorkflowType != workflowType)
+            {
+                definition.WorkflowType = workflowType;
+                changed = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(definition.Description))
+            {
+                definition.Description = description;
+                changed = true;
+            }
+
+            if (!definition.IsEnabled)
+            {
+                definition.IsEnabled = true;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                definition.UpdatedAtUtc = now;
+            }
+        }
+
+        var version = definition.Versions.SingleOrDefault(x => x.VersionNo == 1);
+        if (version is null)
+        {
+            version = new WorkflowVersion
+            {
+                WorkflowDefinition = definition,
+                VersionNo = 1,
+                VersionLabel = "1",
+                Status = WorkflowVersionStatus.Published,
+                ChangeNote = "Seeded for manual Mock acceptance.",
+                PublishedAtUtc = now,
+                CreatedAtUtc = now
+            };
+            definition.Versions.Add(version);
+            AddWorkflowChildren(version, steps, requirements, now);
+            return version;
+        }
+
+        if (version.Status == WorkflowVersionStatus.Published)
+        {
+            return version;
+        }
+
+        version.VersionLabel = "1";
+        version.Status = WorkflowVersionStatus.Published;
+        version.ChangeNote = "Seeded for manual Mock acceptance.";
+        version.PublishedAtUtc ??= now;
+        version.RetiredAtUtc = null;
+        version.UpdatedAtUtc = now;
+        dbContext.WorkflowSteps.RemoveRange(version.Steps);
+        dbContext.WorkflowReagentRequirements.RemoveRange(version.ReagentRequirements);
+        AddWorkflowChildren(version, steps, requirements, now);
+        return version;
+    }
+
+    private static void AddWorkflowChildren(
+        WorkflowVersion version,
+        IReadOnlyList<SeedWorkflowStep> steps,
+        IReadOnlyList<(string ReagentCode, int RequiredVolumeUl)> requirements,
+        DateTimeOffset now)
+    {
+        foreach (var step in steps)
+        {
+            version.Steps.Add(new WorkflowStep
+            {
+                StepNo = step.StepNo,
+                MajorStepCode = step.MajorStepCode,
+                StepName = step.StepName,
+                ActionType = step.ActionType,
+                ReagentCode = step.ReagentCode,
+                VolumeUl = step.VolumeUl,
+                DurationSeconds = step.DurationSeconds,
+                MixParametersJson = "{}",
+                WashParametersJson = "{}",
+                LegacyParametersJson = "{}",
+                FailureStrategy = "Stop",
+                CreatedAtUtc = now
+            });
+        }
+
+        foreach (var requirement in requirements)
+        {
+            version.ReagentRequirements.Add(new WorkflowReagentRequirement
+            {
+                ReagentCode = requirement.ReagentCode,
+                RequiredVolumeUl = requirement.RequiredVolumeUl,
+                IsRequired = true,
+                CreatedAtUtc = now
+            });
+        }
+    }
+
+    private async Task EnsurePrimaryAntibodyMappingAsync(
+        string primaryAntibodyCode,
+        string workflowVersionId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var mapping = await dbContext.PrimaryAntibodyWorkflowMappings
+            .SingleOrDefaultAsync(
+                x => x.PrimaryAntibodyCode == primaryAntibodyCode
+                    && x.WorkflowVersionId == workflowVersionId,
+                cancellationToken);
+        if (mapping is null)
+        {
+            dbContext.PrimaryAntibodyWorkflowMappings.Add(new PrimaryAntibodyWorkflowMapping
+            {
+                PrimaryAntibodyCode = primaryAntibodyCode,
+                WorkflowVersionId = workflowVersionId,
+                IsEnabled = true,
+                CreatedAtUtc = now
+            });
+            return;
+        }
+
+        if (!mapping.IsEnabled)
+        {
+            mapping.IsEnabled = true;
+        }
+    }
+
+    private async Task<SeedWorkflowSummary> LoadSeedWorkflowAsync(string code, CancellationToken cancellationToken)
+    {
+        var workflow = await dbContext.WorkflowDefinitions
+            .AsNoTracking()
+            .Include(x => x.Versions)
+            .SingleAsync(x => x.Code == code, cancellationToken);
+        var version = workflow.Versions.Single(x => x.VersionNo == 1);
+        return new SeedWorkflowSummary(workflow.Code, workflow.Name, version.Id);
+    }
+
+    private static IReadOnlyList<SeedReagentDefinition> ManualAcceptanceReagents()
+    {
+        return
+        [
+            new("BLK", "测试封闭液", "blocking", 1000, "BLOCKER"),
+            new("P01", "测试一抗 001", "primary", 1000, "PRIMARY-001"),
+            new("SEC", "测试二抗", "secondary", 1000, "SECONDARY"),
+            new("DAB", "测试 DAB 显色液", "dab", 1000, "DAB-A/B"),
+            new("HEM", "测试苏木素", "common", 1000, "HEMATOXYLIN"),
+            new("WAS", "测试清洗液", "wash", 1000, "WASH")
+        ];
+    }
+
+    private static IReadOnlyList<SeedWorkflowStep> HeSteps()
+    {
+        return
+        [
+            new(1, "HEMATOXYLIN", "HE hematoxylin", "Dispense", "HEM", 200, 4),
+            new(2, "TERMINAL_WASH", "HE terminal wash", "Wash", "WAS", 100, 3)
+        ];
+    }
+
+    private static IReadOnlyList<SeedWorkflowStep> IhcSteps()
+    {
+        return
+        [
+            new(1, "BLOCKING", "Blocking", "Dispense", "BLK", 100, 3),
+            new(2, "PRIMARY_ANTIBODY", "Primary antibody 001", "Dispense", "P01", 100, 4),
+            new(3, "WASH_AFTER_PRIMARY", "Wash after primary", "Wash", "WAS", 100, 3),
+            new(4, "SECONDARY_ANTIBODY", "Secondary antibody", "Dispense", "SEC", 100, 4),
+            new(5, "WASH_AFTER_SECONDARY", "Wash after secondary", "Wash", "WAS", 100, 3),
+            new(6, "DAB", "DAB development", "Dab", "DAB", 100, 4),
+            new(7, "WASH_AFTER_DAB", "Wash after DAB", "Wash", "WAS", 100, 3),
+            new(8, "HEMATOXYLIN", "Hematoxylin counterstain", "Dispense", "HEM", 100, 4),
+            new(9, "FINAL_WASH", "Final wash", "Wash", "WAS", 100, 3)
+        ];
+    }
+
+    private sealed record SeedReagentDefinition(string Code, string Name, string Type, int MinimumAlarmVolumeUl, string Alias);
+
+    private sealed record SeedWorkflowStep(
+        int StepNo,
+        string MajorStepCode,
+        string StepName,
+        string ActionType,
+        string? ReagentCode,
+        int? VolumeUl,
+        int DurationSeconds);
+
+    private sealed record SeedWorkflowSummary(string Code, string Name, string WorkflowVersionId);
 }
+
+public sealed record ManualAcceptanceSeedSummary(
+    string HeWorkflowName,
+    string HeWorkflowCode,
+    string HeWorkflowVersionId,
+    string IhcWorkflowName,
+    string IhcWorkflowCode,
+    string IhcWorkflowVersionId,
+    string PrimaryAntibodyCode,
+    bool PrimaryAntibodyMappingEnabled,
+    string? PrimaryAntibodyWorkflowVersionId,
+    IReadOnlyList<string> RequiredReagentCodes);
