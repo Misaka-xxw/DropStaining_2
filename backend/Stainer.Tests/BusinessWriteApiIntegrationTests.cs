@@ -199,11 +199,14 @@ public sealed class BusinessWriteApiIntegrationTests
             heVersionId = heVersion.Id;
             ihcVersionOneId = ihcVersionOne.Id;
         }
+        _ = await CreateEmptyChannelBatchAsync(factory, "A");
+        _ = await CreateEmptyChannelBatchAsync(factory, "B");
 
         var heSelection = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
         {
             commandId = "cmd-channel-a-he-select-001",
             drawerCode = "A",
+            experimentType = StainingTaskType.He,
             workflowVersionId = heVersionId
         });
         Assert.Equal(StainingTaskType.He, heSelection.ExperimentType);
@@ -212,6 +215,7 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             commandId = "cmd-channel-b-ihc-select-001",
             drawerCode = "B",
+            experimentType = StainingTaskType.Ihc,
             workflowVersionId = ihcVersionOneId
         });
         Assert.Equal(StainingTaskType.Ihc, ihcSelection.ExperimentType);
@@ -220,6 +224,7 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             commandId = "cmd-he-task-001",
             workflowVersionId = heVersionId,
+            drawerCode = "A",
             slotCode = "A-01"
         });
         Assert.True(heTask.Ok);
@@ -230,6 +235,7 @@ public sealed class BusinessWriteApiIntegrationTests
             commandId = "cmd-ihc-multi-workflow-001",
             inputMode = "DirectPrimaryAntibody",
             rawCode = "PA1",
+            drawerCode = "A",
             slotCode = "A-02"
         });
         Assert.Equal(HttpStatusCode.Conflict, multiWorkflow.StatusCode);
@@ -241,6 +247,7 @@ public sealed class BusinessWriteApiIntegrationTests
             commandId = "cmd-ihc-lis-missing-001",
             inputMode = "HospitalBarcode",
             rawCode = " UNKNOWN\r\n",
+            drawerCode = "A",
             slotCode = "A-02"
         });
         Assert.Equal(HttpStatusCode.NotFound, lisMissing.StatusCode);
@@ -250,6 +257,7 @@ public sealed class BusinessWriteApiIntegrationTests
             commandId = "cmd-ihc-multi-antibody-001",
             inputMode = "HospitalBarcode",
             rawCode = " HOSP-MULTI\r\n",
+            drawerCode = "A",
             slotCode = "A-02"
         });
         Assert.Equal(HttpStatusCode.Conflict, multiAntibody.StatusCode);
@@ -262,6 +270,7 @@ public sealed class BusinessWriteApiIntegrationTests
             commandId = "cmd-ihc-task-001",
             inputMode = "DirectPrimaryAntibody",
             rawCode = "PA1",
+            drawerCode = "B",
             slotCode = "B-01"
         });
         Assert.True(ihcTask.Ok);
@@ -274,6 +283,311 @@ public sealed class BusinessWriteApiIntegrationTests
         var batch = await verifyContext.ChannelBatches.Include(x => x.SlideTasks).SingleAsync(x => x.Id == ihcSelection.ChannelBatchId);
         Assert.Equal(ihcVersionOneId, batch.SelectedWorkflowVersionId);
         Assert.Single(batch.SlideTasks);
+    }
+
+    [Fact]
+    public async Task Task_creation_inherits_channel_workflow_and_validates_ihc_compatibility()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "operator", "operator");
+
+        string heVersionId;
+        string ihcVersionId;
+        string otherIhcVersionId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            heVersionId = (await CreatePublishedWorkflowVersionAsync(dbContext, "HE-102", StainingTaskType.He, "HEM", 100)).Id;
+            ihcVersionId = (await CreatePublishedWorkflowVersionAsync(dbContext, "IHC-102", StainingTaskType.Ihc, "ABC", 100)).Id;
+            otherIhcVersionId = (await CreatePublishedWorkflowVersionAsync(dbContext, "IHC-102-OTHER", StainingTaskType.Ihc, "XYZ", 100)).Id;
+            dbContext.PrimaryAntibodyWorkflowMappings.AddRange(
+                new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA1", WorkflowVersionId = ihcVersionId },
+                new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA2", WorkflowVersionId = ihcVersionId },
+                new PrimaryAntibodyWorkflowMapping { PrimaryAntibodyCode = "PA3", WorkflowVersionId = otherIhcVersionId });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var batchAId = await CreateEmptyChannelBatchAsync(factory, "A");
+        var batchBId = await CreateEmptyChannelBatchAsync(factory, "B");
+        var batchCId = await CreateEmptyChannelBatchAsync(factory, "C");
+
+        var unselected = await client.PostAsJsonAsync("/api/tasks/he", new
+        {
+            commandId = "cmd-102-unselected-he",
+            drawerCode = "A",
+            slotCode = "A-01"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, unselected.StatusCode);
+        Assert.Equal("channel_workflow_required", (await unselected.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var heSelection = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-102-select-a-he",
+            channelBatchId = batchAId,
+            experimentType = StainingTaskType.He,
+            workflowVersionId = heVersionId
+        });
+        var ihcSelection = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-102-select-b-ihc",
+            channelBatchId = batchBId,
+            experimentType = StainingTaskType.Ihc,
+            workflowVersionId = ihcVersionId
+        });
+        _ = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-102-select-c-ihc",
+            channelBatchId = batchCId,
+            experimentType = StainingTaskType.Ihc,
+            workflowVersionId = ihcVersionId
+        });
+
+        var heTask = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/he", new
+        {
+            commandId = "cmd-102-he-task",
+            drawerCode = "A",
+            slotCode = "A-01",
+            workflowVersionId = heVersionId
+        });
+        Assert.Equal(heSelection.ChannelBatchId, heTask.ChannelBatchId);
+        Assert.Equal(StainingTaskType.He, heTask.ExperimentType);
+        Assert.Equal(heVersionId, heTask.WorkflowVersionId);
+
+        var ihcOnHeChannel = await client.PostAsJsonAsync("/api/tasks/ihc", new
+        {
+            commandId = "cmd-102-ihc-on-he",
+            inputMode = "DirectPrimaryAntibody",
+            rawCode = "PA1",
+            drawerCode = "A",
+            slotCode = "A-02"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, ihcOnHeChannel.StatusCode);
+        Assert.Equal("channel_experiment_type_mismatch", (await ihcOnHeChannel.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var ihcRequest = new
+        {
+            commandId = "cmd-102-ihc-pa1",
+            inputMode = "DirectPrimaryAntibody",
+            rawCode = "PA1",
+            drawerCode = "B",
+            slotCode = "B-01",
+            selectedWorkflowVersionId = ihcVersionId,
+            lisQueryLogId = "lis-102-001"
+        };
+        var ihcTask = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", ihcRequest);
+        Assert.Equal(ihcSelection.ChannelBatchId, ihcTask.ChannelBatchId);
+        Assert.Equal(StainingTaskType.Ihc, ihcTask.ExperimentType);
+        Assert.Equal(ihcVersionId, ihcTask.WorkflowVersionId);
+        Assert.Equal("Compatible", ihcTask.CompatibilityValidationStatus);
+
+        var replayed = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", ihcRequest);
+        Assert.True(replayed.Replayed);
+        Assert.Equal(ihcTask.TaskId, replayed.TaskId);
+
+        var ihcTaskTwo = await PostJsonAsync<TaskCreationResponse>(client, "/api/tasks/ihc", new
+        {
+            commandId = "cmd-102-ihc-pa2",
+            inputMode = "DirectPrimaryAntibody",
+            rawCode = "PA2",
+            drawerCode = "B",
+            slotCode = "B-02",
+            workflowVersionId = ihcVersionId
+        });
+        Assert.Equal(ihcVersionId, ihcTaskTwo.WorkflowVersionId);
+
+        var incompatible = await client.PostAsJsonAsync("/api/tasks/ihc", new
+        {
+            commandId = "cmd-102-ihc-incompatible",
+            inputMode = "DirectPrimaryAntibody",
+            rawCode = "PA_BAD",
+            drawerCode = "B",
+            slotCode = "B-03"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, incompatible.StatusCode);
+        Assert.Equal("ihc_channel_workflow_incompatible", (await incompatible.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var legacyMismatch = await client.PostAsJsonAsync("/api/tasks/ihc", new
+        {
+            commandId = "cmd-102-ihc-legacy-mismatch",
+            inputMode = "DirectPrimaryAntibody",
+            rawCode = "PA1",
+            drawerCode = "B",
+            slotCode = "B-03",
+            workflowVersionId = otherIhcVersionId
+        });
+        Assert.Equal(HttpStatusCode.Conflict, legacyMismatch.StatusCode);
+        Assert.Equal("channel_workflow_mismatch", (await legacyMismatch.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var concurrentResponses = await Task.WhenAll(
+            client.PostAsJsonAsync("/api/tasks/ihc", new
+            {
+                commandId = "cmd-102-concurrent-one",
+                inputMode = "DirectPrimaryAntibody",
+                rawCode = "PA1",
+                drawerCode = "C",
+                slotCode = "C-01"
+            }),
+            client.PostAsJsonAsync("/api/tasks/ihc", new
+            {
+                commandId = "cmd-102-concurrent-two",
+                inputMode = "DirectPrimaryAntibody",
+                rawCode = "PA2",
+                drawerCode = "C",
+                slotCode = "C-01"
+            }));
+        Assert.Equal(1, concurrentResponses.Count(x => x.StatusCode == HttpStatusCode.OK));
+        Assert.Equal(1, concurrentResponses.Count(x => x.StatusCode == HttpStatusCode.Conflict));
+        var concurrentConflict = concurrentResponses.Single(x => x.StatusCode == HttpStatusCode.Conflict);
+        Assert.Equal("slot_not_idle", (await concurrentConflict.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        await using (var lockScope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = lockScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var batch = await dbContext.ChannelBatches.SingleAsync(x => x.Id == batchBId);
+            batch.WorkflowLockedAtUtc = DateTimeOffset.UtcNow;
+            batch.StartedAtUtc = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync();
+        }
+
+        var lockedAdd = await client.PostAsJsonAsync("/api/tasks/ihc", new
+        {
+            commandId = "cmd-102-locked-add",
+            inputMode = "DirectPrimaryAntibody",
+            rawCode = "PA1",
+            drawerCode = "B",
+            slotCode = "B-04"
+        });
+        Assert.Equal(HttpStatusCode.Conflict, lockedAdd.StatusCode);
+        Assert.Equal("channel_batch_locked", (await lockedAdd.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var batchB = await verifyContext.ChannelBatches.SingleAsync(x => x.Id == batchBId);
+        var bTasks = await verifyContext.StainingTasks
+            .Where(x => x.Id == ihcTask.TaskId || x.Id == ihcTaskTwo.TaskId)
+            .OrderBy(x => x.PhysicalSlotId)
+            .ToListAsync();
+        Assert.Equal(2, bTasks.Count);
+        Assert.All(bTasks, x =>
+        {
+            Assert.Equal(ihcVersionId, x.WorkflowVersionId);
+            Assert.Equal(batchB.WorkflowSnapshotJson, x.WorkflowSnapshotJson);
+            Assert.Equal("Compatible", x.CompatibilityValidationStatus);
+        });
+        Assert.Contains(bTasks, x => x.ConfirmedPrimaryAntibodyCode == "PA1" && x.LisQueryLogId == "lis-102-001");
+        Assert.Contains(bTasks, x => x.ConfirmedPrimaryAntibodyCode == "PA2");
+        Assert.Equal(1, await verifyContext.StainingTasks.CountAsync(x => x.Id == ihcTask.TaskId));
+        Assert.Equal(1, await verifyContext.SlideTasks.CountAsync(x => x.ChannelBatchId == batchCId && x.SlotCode == "C-01"));
+        Assert.False(await verifyContext.SlideTasks.AnyAsync(x => x.ChannelBatchId == batchBId && x.SlotCode == "B-03"));
+        Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "task.ihc.compatibility_failed" && x.EntityId == batchBId));
+    }
+
+    [Fact]
+    public async Task Initial_channel_workflow_selection_api_validates_published_type_idempotency_history_and_audit()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "operator", "operator");
+
+        string hePublishedId;
+        string ihcPublishedId;
+        string heDraftId;
+        string heRetiredId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            hePublishedId = (await CreateWorkflowVersionAsync(dbContext, "HE-INITIAL-API", StainingTaskType.He, "HEM", 100, WorkflowVersionStatus.Published)).Id;
+            ihcPublishedId = (await CreateWorkflowVersionAsync(dbContext, "IHC-INITIAL-API", StainingTaskType.Ihc, "ABC", 100, WorkflowVersionStatus.Published)).Id;
+            heDraftId = (await CreateWorkflowVersionAsync(dbContext, "HE-DRAFT-INITIAL-API", StainingTaskType.He, "HEM", 100, WorkflowVersionStatus.Draft)).Id;
+            heRetiredId = (await CreateWorkflowVersionAsync(dbContext, "HE-RETIRED-INITIAL-API", StainingTaskType.He, "HEM", 100, WorkflowVersionStatus.Retired)).Id;
+        }
+
+        var batchAId = await CreateEmptyChannelBatchAsync(factory, "A");
+        _ = await CreateEmptyChannelBatchAsync(factory, "B");
+        _ = await CreateEmptyChannelBatchAsync(factory, "C");
+        _ = await CreateEmptyChannelBatchAsync(factory, "D");
+
+        var heRequest = new
+        {
+            commandId = "cmd-initial-select-he",
+            channelBatchId = batchAId,
+            experimentType = StainingTaskType.He,
+            workflowVersionId = hePublishedId
+        };
+        var he = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", heRequest);
+        Assert.Equal(StainingTaskType.He, he.ExperimentType);
+        Assert.Equal(WorkflowSelectionStatus.Selected, he.WorkflowSelectionStatus);
+
+        var replayed = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", heRequest);
+        Assert.True(replayed.Replayed);
+        Assert.Equal(he.ChannelBatchId, replayed.ChannelBatchId);
+
+        var ihc = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-initial-select-ihc",
+            drawerCode = "B",
+            experimentType = StainingTaskType.Ihc,
+            workflowVersionId = ihcPublishedId
+        });
+        Assert.Equal(StainingTaskType.Ihc, ihc.ExperimentType);
+
+        var draft = await client.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-initial-select-draft",
+            drawerCode = "C",
+            experimentType = StainingTaskType.He,
+            workflowVersionId = heDraftId
+        });
+        Assert.Equal(HttpStatusCode.Conflict, draft.StatusCode);
+        Assert.Equal("workflow_version_not_published", (await draft.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var retired = await client.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-initial-select-retired",
+            drawerCode = "C",
+            experimentType = StainingTaskType.He,
+            workflowVersionId = heRetiredId
+        });
+        Assert.Equal(HttpStatusCode.Conflict, retired.StatusCode);
+        Assert.Equal("workflow_version_not_published", (await retired.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var mismatch = await client.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-initial-select-type-mismatch",
+            drawerCode = "C",
+            experimentType = StainingTaskType.He,
+            workflowVersionId = ihcPublishedId
+        });
+        Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
+        Assert.Equal("workflow_type_mismatch", (await mismatch.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        var alreadySelected = await client.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-initial-select-he-again",
+            channelBatchId = batchAId,
+            experimentType = StainingTaskType.He,
+            workflowVersionId = hePublishedId
+        });
+        Assert.Equal(HttpStatusCode.Conflict, alreadySelected.StatusCode);
+        Assert.Equal("channel_workflow_already_selected", (await alreadySelected.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var batch = await verifyContext.ChannelBatches.SingleAsync(x => x.Id == batchAId);
+        Assert.Equal(StainingTaskType.He, batch.ExperimentType);
+        Assert.Equal(hePublishedId, batch.SelectedWorkflowVersionId);
+        Assert.Equal(WorkflowSelectionStatus.Selected, batch.WorkflowSelectionStatus);
+        Assert.NotEqual("{}", batch.WorkflowSnapshotJson);
+        Assert.NotNull(batch.WorkflowSelectedAtUtc);
+        Assert.NotNull(batch.WorkflowSelectedByUserId);
+        Assert.Equal(1, await verifyContext.WorkflowAssignmentHistory.CountAsync(x => x.ChannelBatchId == batchAId && x.ActionType == WorkflowAssignmentAction.InitialSelection));
+        var history = await verifyContext.WorkflowAssignmentHistory.SingleAsync(x => x.ChannelBatchId == batchAId);
+        Assert.Equal(hePublishedId, history.NewWorkflowVersionId);
+        Assert.Equal(StainingTaskType.He, history.NewExperimentType);
+        Assert.Equal("cmd-initial-select-he", history.CommandId);
+        Assert.Equal("cmd-initial-select-he", history.CorrelationId);
+        Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "channel.workflow.select" && x.EntityId == batchAId));
     }
 
     [Fact]
@@ -302,11 +616,16 @@ public sealed class BusinessWriteApiIntegrationTests
             heVersionTwoId = heVersionTwo.Id;
             ihcVersionId = ihcVersion.Id;
         }
+        _ = await CreateEmptyChannelBatchAsync(factory, "A");
+        _ = await CreateEmptyChannelBatchAsync(factory, "B");
+        _ = await CreateEmptyChannelBatchAsync(factory, "C");
+        _ = await CreateEmptyChannelBatchAsync(factory, "D");
 
         var channelA = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
         {
             commandId = "cmd-channel-rules-a-he-select",
             drawerCode = "A",
+            experimentType = StainingTaskType.He,
             workflowVersionId = heVersionOneId
         });
         Assert.Equal(WorkflowSelectionStatus.Selected, channelA.WorkflowSelectionStatus);
@@ -315,6 +634,7 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             commandId = "cmd-channel-rules-b-ihc-select",
             drawerCode = "B",
+            experimentType = StainingTaskType.Ihc,
             workflowVersionId = ihcVersionId
         });
         Assert.Equal(StainingTaskType.Ihc, channelB.ExperimentType);
@@ -326,6 +646,7 @@ public sealed class BusinessWriteApiIntegrationTests
             {
                 commandId = $"cmd-channel-rules-he-task-{i}",
                 workflowVersionId = heVersionOneId,
+                drawerCode = "A",
                 slotCode = $"A-{i:00}"
             });
             taskIds.Add(task.TaskId!);
@@ -352,6 +673,7 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             commandId = "cmd-channel-rules-he-task-5",
             workflowVersionId = heVersionOneId,
+            drawerCode = "A",
             slotCode = "A-05"
         });
         Assert.Equal(HttpStatusCode.Conflict, fifth.StatusCode);
@@ -361,12 +683,14 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             commandId = "cmd-channel-rules-c-he-select",
             drawerCode = "C",
+            experimentType = StainingTaskType.He,
             workflowVersionId = heVersionOneId
         });
         var differentScript = await client.PostAsJsonAsync("/api/tasks/he", new
         {
             commandId = "cmd-channel-rules-c-he-task-mismatch",
             workflowVersionId = heVersionTwoId,
+            drawerCode = "C",
             slotCode = "C-01"
         });
         Assert.Equal(HttpStatusCode.Conflict, differentScript.StatusCode);
@@ -376,6 +700,7 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             commandId = "cmd-channel-rules-d-he-select",
             drawerCode = "D",
+            experimentType = StainingTaskType.He,
             workflowVersionId = heVersionOneId
         });
         var mixedType = await client.PostAsJsonAsync("/api/tasks/ihc", new
@@ -383,35 +708,29 @@ public sealed class BusinessWriteApiIntegrationTests
             commandId = "cmd-channel-rules-d-ihc-mix",
             inputMode = "DirectPrimaryAntibody",
             rawCode = "PA1",
+            drawerCode = "D",
             slotCode = "D-01"
         });
         Assert.Equal(HttpStatusCode.Conflict, mixedType.StatusCode);
         Assert.Equal("channel_experiment_type_mismatch", (await mixedType.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
 
-        var missingReason = await client.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
+        var secondSelection = await client.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
         {
-            commandId = "cmd-channel-rules-a-change-missing-reason",
+            commandId = "cmd-channel-rules-a-second-selection",
             drawerCode = "A",
+            experimentType = StainingTaskType.He,
             workflowVersionId = heVersionTwoId
         });
-        Assert.Equal(HttpStatusCode.BadRequest, missingReason.StatusCode);
-
-        var changed = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
-        {
-            commandId = "cmd-channel-rules-a-change",
-            drawerCode = "A",
-            workflowVersionId = heVersionTwoId,
-            reason = "operator selected revised HE workflow before start"
-        });
-        Assert.Equal(heVersionTwoId, changed.WorkflowVersionId);
+        Assert.Equal(HttpStatusCode.Conflict, secondSelection.StatusCode);
+        Assert.Equal("channel_workflow_already_selected", (await secondSelection.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
 
         await using (var verifyScope = factory.Services.CreateAsyncScope())
         {
             var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
-            Assert.Equal(heVersionTwoId, await dbContext.ChannelBatches.Where(x => x.Id == channelA.ChannelBatchId).Select(x => x.SelectedWorkflowVersionId).SingleAsync());
-            Assert.Equal(4, await dbContext.StainingTasks.CountAsync(x => taskIds.Contains(x.Id) && x.WorkflowVersionId == heVersionTwoId));
-            Assert.True(await dbContext.WorkflowAssignmentHistory.AnyAsync(x => x.ChannelBatchId == channelA.ChannelBatchId && x.ActionType == WorkflowAssignmentAction.PreStartChange && x.Reason.Contains("revised HE")));
-            Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "channel.workflow.change" && x.EntityId == channelA.ChannelBatchId && x.Message.Contains("preflightInvalidated")));
+            Assert.Equal(heVersionOneId, await dbContext.ChannelBatches.Where(x => x.Id == channelA.ChannelBatchId).Select(x => x.SelectedWorkflowVersionId).SingleAsync());
+            Assert.Equal(4, await dbContext.StainingTasks.CountAsync(x => taskIds.Contains(x.Id) && x.WorkflowVersionId == heVersionOneId));
+            Assert.False(await dbContext.WorkflowAssignmentHistory.AnyAsync(x => x.ChannelBatchId == channelA.ChannelBatchId && x.ActionType == WorkflowAssignmentAction.PreStartChange));
+            Assert.False(await dbContext.AuditLogs.AnyAsync(x => x.Action == "channel.workflow.change" && x.EntityId == channelA.ChannelBatchId));
         }
 
         var run = await PostJsonAsync<MachineRunResponse>(client, "/api/runs", new
@@ -425,6 +744,7 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             commandId = "cmd-channel-rules-a-change-after-start",
             drawerCode = "A",
+            experimentType = StainingTaskType.He,
             workflowVersionId = heVersionOneId,
             reason = "should be rejected after start"
         });
@@ -434,7 +754,8 @@ public sealed class BusinessWriteApiIntegrationTests
         var lockedAdd = await client.PostAsJsonAsync("/api/tasks/he", new
         {
             commandId = "cmd-channel-rules-a-add-after-start",
-            workflowVersionId = heVersionTwoId,
+            workflowVersionId = heVersionOneId,
+            drawerCode = "A",
             slotCode = "A-05"
         });
         Assert.Equal(HttpStatusCode.Conflict, lockedAdd.StatusCode);
@@ -449,13 +770,11 @@ public sealed class BusinessWriteApiIntegrationTests
     }
 
     [Fact]
-    public async Task Concurrent_channel_workflow_selection_leaves_only_one_active_batch_per_drawer()
+    public async Task Second_channel_workflow_selection_is_rejected()
     {
         await using var factory = CreateFactory();
-        using var clientOne = factory.CreateClient();
-        using var clientTwo = factory.CreateClient();
-        await LoginAsync(clientOne, "operator", "operator");
-        await LoginAsync(clientTwo, "operator", "operator");
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "operator", "operator");
 
         string heVersionOneId;
         string heVersionTwoId;
@@ -465,26 +784,29 @@ public sealed class BusinessWriteApiIntegrationTests
             heVersionOneId = (await CreatePublishedWorkflowVersionAsync(seedContext, "HE-CONCURRENT-1", StainingTaskType.He, "HEM", 100)).Id;
             heVersionTwoId = (await CreatePublishedWorkflowVersionAsync(seedContext, "HE-CONCURRENT-2", StainingTaskType.He, "EOS", 100)).Id;
         }
+        _ = await CreateEmptyChannelBatchAsync(factory, "A");
 
-        var responses = await Task.WhenAll(
-            clientOne.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
-            {
-                commandId = "cmd-channel-concurrent-one",
-                drawerCode = "A",
-                workflowVersionId = heVersionOneId
-            }),
-            clientTwo.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
-            {
-                commandId = "cmd-channel-concurrent-two",
-                drawerCode = "A",
-                workflowVersionId = heVersionTwoId
-            }));
+        _ = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-channel-concurrent-one",
+            drawerCode = "A",
+            experimentType = StainingTaskType.He,
+            workflowVersionId = heVersionOneId
+        });
+        var second = await client.PostAsJsonAsync("/api/channel-batches/workflow-selection", new
+        {
+            commandId = "cmd-channel-concurrent-two",
+            drawerCode = "A",
+            experimentType = StainingTaskType.He,
+            workflowVersionId = heVersionTwoId
+        });
 
-        Assert.Equal(1, responses.Count(x => x.StatusCode == HttpStatusCode.OK));
-        Assert.Contains(responses, x => x.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Conflict);
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+        Assert.Equal("channel_workflow_already_selected", (await second.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString());
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
         Assert.Equal(1, await dbContext.ChannelBatches.CountAsync(x => x.DrawerCode == "A" && x.Status == RuntimeLedgerStatus.Pending));
+        Assert.Equal(1, await dbContext.WorkflowAssignmentHistory.CountAsync(x => x.ActionType == WorkflowAssignmentAction.InitialSelection));
     }
 
     [Fact]
@@ -501,11 +823,13 @@ public sealed class BusinessWriteApiIntegrationTests
             var heVersion = await CreatePublishedWorkflowVersionAsync(dbContext, "HE-PREFLIGHT", StainingTaskType.He, "ABC", 1000);
             heVersionId = heVersion.Id;
         }
+        _ = await CreateEmptyChannelBatchAsync(factory, "B");
 
         _ = await PostJsonAsync<ChannelBatchWorkflowResponse>(client, "/api/channel-batches/workflow-selection", new
         {
             commandId = "cmd-preflight-channel-b-he-select-001",
             drawerCode = "B",
+            experimentType = StainingTaskType.He,
             workflowVersionId = heVersionId
         });
 
@@ -513,6 +837,7 @@ public sealed class BusinessWriteApiIntegrationTests
         {
             commandId = "cmd-preflight-task-001",
             workflowVersionId = heVersionId,
+            drawerCode = "B",
             slotCode = "B-01"
         });
 
@@ -645,12 +970,48 @@ public sealed class BusinessWriteApiIntegrationTests
         return body!;
     }
 
+    private static async Task<string> CreateEmptyChannelBatchAsync(WebApplicationFactory<Program> factory, string drawerCode)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var drawer = await dbContext.Drawers.SingleAsync(x => x.Code == drawerCode);
+        var batch = new ChannelBatch
+        {
+            DrawerId = drawer.Id,
+            DrawerCode = drawer.Code,
+            Status = RuntimeLedgerStatus.Pending,
+            WorkflowSnapshotJson = "{}",
+            WorkflowSelectionStatus = WorkflowSelectionStatus.Unselected,
+            CreatedAtUtc = DateTimeOffset.UtcNow
+        };
+        dbContext.ChannelBatches.Add(batch);
+        await dbContext.SaveChangesAsync();
+        return batch.Id;
+    }
+
     private static async Task<WorkflowVersion> CreatePublishedWorkflowVersionAsync(
         StainerDbContext dbContext,
         string workflowCode,
         string workflowType,
         string reagentCode,
         int requiredVolumeUl)
+    {
+        return await CreateWorkflowVersionAsync(
+            dbContext,
+            workflowCode,
+            workflowType,
+            reagentCode,
+            requiredVolumeUl,
+            WorkflowVersionStatus.Published);
+    }
+
+    private static async Task<WorkflowVersion> CreateWorkflowVersionAsync(
+        StainerDbContext dbContext,
+        string workflowCode,
+        string workflowType,
+        string reagentCode,
+        int requiredVolumeUl,
+        string status)
     {
         var reagentDefinition = await dbContext.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == reagentCode);
         if (reagentDefinition is null)
@@ -677,9 +1038,10 @@ public sealed class BusinessWriteApiIntegrationTests
             WorkflowDefinition = workflowDefinition,
             VersionNo = 1,
             VersionLabel = "1.0",
-            Status = WorkflowVersionStatus.Published,
+            Status = status,
             ChangeNote = "Published for API integration test.",
-            PublishedAtUtc = DateTimeOffset.UtcNow,
+            PublishedAtUtc = status == WorkflowVersionStatus.Published ? DateTimeOffset.UtcNow : null,
+            RetiredAtUtc = status == WorkflowVersionStatus.Retired ? DateTimeOffset.UtcNow : null,
             CreatedAtUtc = DateTimeOffset.UtcNow
         };
         workflowVersion.Steps.Add(new WorkflowStep

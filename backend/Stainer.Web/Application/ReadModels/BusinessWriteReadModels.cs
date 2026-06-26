@@ -58,7 +58,14 @@ public sealed record TaskCreationResponse(
     string? TaskId,
     string? TaskCode,
     IReadOnlyList<string> CandidatePrimaryAntibodyCodes,
-    IReadOnlyList<TaskWorkflowCandidateResponse> CandidateWorkflows);
+    IReadOnlyList<TaskWorkflowCandidateResponse> CandidateWorkflows,
+    string? ChannelBatchId = null,
+    string? DrawerCode = null,
+    string? ExperimentType = null,
+    string? WorkflowVersionId = null,
+    string? WorkflowSelectionStatus = null,
+    string? CompatibilityValidationStatus = null,
+    string? CompatibilityValidationMessage = null);
 
 public sealed record ReagentScanConfirmationResponse(
     bool Ok,

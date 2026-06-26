@@ -14,6 +14,8 @@ public sealed class TaskCreationService(
     ChannelBatchWorkflowService channelBatchWorkflowService)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const string CompatibilityCompatible = "Compatible";
+    private const string CompatibilityIncompatible = "Incompatible";
 
     public Task<TaskCreationResponse> CreateHeTaskAsync(
         CreateHeTaskRequest request,
@@ -27,9 +29,13 @@ public sealed class TaskCreationService(
             actor,
             async () =>
             {
-                var slot = await LoadIdleSlotAsync(request.SlotCode, cancellationToken);
-                var batch = await channelBatchWorkflowService.RequireSelectedActiveBatchAsync(slot.Drawer!.Code, cancellationToken);
-                EnsureCanAddSlideToBatch(batch, StainingTaskType.He, request.WorkflowVersionId);
+                var (slot, batch) = await LoadSlotAndBatchAsync(
+                    request.SlotCode,
+                    request.DrawerCode,
+                    request.ChannelBatchId,
+                    cancellationToken);
+                var legacyWorkflowVersionId = NormalizeOptional(request.WorkflowVersionId);
+                EnsureCanAddSlideToBatch(batch, StainingTaskType.He, legacyWorkflowVersionId);
                 var version = await LoadChannelWorkflowVersionAsync(batch, StainingTaskType.He, cancellationToken);
                 var task = CreateTask(
                     request.CommandId,
@@ -42,12 +48,28 @@ public sealed class TaskCreationService(
                     rawCode: null,
                     normalizedCode: null,
                     primaryAntibodyCode: null,
-                    candidateResults: Array.Empty<object>());
+                    candidateResults: Array.Empty<object>(),
+                    rawSampleCode: null,
+                    normalizedSampleCode: null,
+                    lisQueryLogId: null,
+                    lisCandidatePrimaryAntibodyCodes: [],
+                    confirmedPrimaryAntibodyCode: null,
+                    compatibilityValidationStatus: null,
+                    compatibilityValidationMessage: null);
                 dbContext.StainingTasks.Add(task);
                 AddSlideTask(batch, task, slot, StainingTaskType.He);
-                AddAudit(actor, "task.create_he", task.Id, new { task.TaskCode, slot = slot.Code, channelBatchId = batch.Id, workflowVersionId = batch.SelectedWorkflowVersionId });
+                AddAudit(actor, "task.create_he", "StainingTask", task.Id, new
+                {
+                    task.TaskCode,
+                    slot = slot.Code,
+                    channelBatchId = batch.Id,
+                    drawerCode = batch.DrawerCode,
+                    inheritedWorkflowVersionId = batch.SelectedWorkflowVersionId,
+                    legacyWorkflowVersionCompatibilityField = legacyWorkflowVersionId is not null,
+                    legacyWorkflowVersionId
+                });
                 return new CommandExecutionResult<TaskCreationResponse>(
-                    CreatedResponse(request.CommandId, false, task, "HE task created."),
+                    CreatedResponse(request.CommandId, false, task, batch, "HE task created."),
                     "StainingTask",
                     task.Id);
             },
@@ -59,7 +81,7 @@ public sealed class TaskCreationService(
         AuthenticatedUser actor,
         CancellationToken cancellationToken = default)
     {
-        var resolution = await ResolveIhcSelectionAsync(request, cancellationToken);
+        var resolution = await ResolveIhcSampleAsync(request, cancellationToken);
         if (resolution.RequiresSelection)
         {
             throw new BusinessSelectionRequiredException(new TaskCreationResponse(
@@ -71,63 +93,109 @@ public sealed class TaskCreationService(
                 null,
                 null,
                 resolution.CandidatePrimaryAntibodyCodes,
-                resolution.CandidateWorkflows));
+                []));
         }
 
-        return await idempotencyService.RunAsync(
-            request.CommandId,
-            "task.create_ihc",
-            request,
-            actor,
-            async () =>
-            {
-                var slot = await LoadIdleSlotAsync(request.SlotCode, cancellationToken);
-                var batch = await channelBatchWorkflowService.RequireSelectedActiveBatchAsync(slot.Drawer!.Code, cancellationToken);
-                EnsureCanAddSlideToBatch(batch, StainingTaskType.Ihc, request.SelectedWorkflowVersionId);
-                var version = await LoadChannelWorkflowVersionAsync(batch, StainingTaskType.Ihc, cancellationToken);
-                await EnsurePrimaryAntibodyCompatibleAsync(resolution.PrimaryAntibodyCode!, version.Id, cancellationToken);
-                var task = CreateTask(
-                    request.CommandId,
-                    StainingTaskType.Ihc,
-                    slot,
-                    batch,
-                    version,
-                    actor,
-                    request.InputMode,
-                    request.RawCode,
-                    resolution.NormalizedCode,
-                    resolution.PrimaryAntibodyCode,
-                    new[]
-                    {
-                        new
-                        {
-                            candidatePrimaryAntibodyCodes = resolution.CandidatePrimaryAntibodyCodes,
-                            candidateWorkflows = resolution.CandidateWorkflows,
-                            selectedPrimaryAntibodyCode = resolution.PrimaryAntibodyCode,
-                            selectedWorkflowVersionId = version.Id
-                        }
-                    });
-                dbContext.StainingTasks.Add(task);
-                AddSlideTask(batch, task, slot, StainingTaskType.Ihc);
-                AddAudit(actor, "task.create_ihc", task.Id, new
+        var legacyWorkflowVersionId = GetLegacyWorkflowVersionId(request);
+        IhcCompatibilityFailureAudit? compatibilityFailureAudit = null;
+        try
+        {
+            return await idempotencyService.RunAsync(
+                request.CommandId,
+                "task.create_ihc",
+                request,
+                actor,
+                async () =>
                 {
-                    task.TaskCode,
-                    slot = slot.Code,
-                    channelBatchId = batch.Id,
-                    task.RawCode,
-                    task.NormalizedCode,
-                    task.PrimaryAntibodyCode,
-                    workflowVersionId = batch.SelectedWorkflowVersionId
-                });
-                return new CommandExecutionResult<TaskCreationResponse>(
-                    CreatedResponse(request.CommandId, false, task, "IHC task created."),
-                    "StainingTask",
-                    task.Id);
-            },
-            cancellationToken);
+                    var (slot, batch) = await LoadSlotAndBatchAsync(
+                        request.SlotCode,
+                        request.DrawerCode,
+                        request.ChannelBatchId,
+                        cancellationToken);
+                    EnsureCanAddSlideToBatch(batch, StainingTaskType.Ihc, legacyWorkflowVersionId);
+                    var version = await LoadChannelWorkflowVersionAsync(batch, StainingTaskType.Ihc, cancellationToken);
+                    var compatibility = await ValidatePrimaryAntibodyCompatibleAsync(
+                        resolution.PrimaryAntibodyCode!,
+                        version.Id,
+                        cancellationToken);
+                    if (!compatibility.Ok)
+                    {
+                        compatibilityFailureAudit = new IhcCompatibilityFailureAudit(
+                            batch.Id,
+                            batch.DrawerCode,
+                            slot.Code,
+                            request.RawCode,
+                            resolution.NormalizedCode,
+                            resolution.PrimaryAntibodyCode!,
+                            version.Id,
+                            compatibility.Message,
+                            request.CommandId);
+                        throw new BusinessRuleException("ihc_channel_workflow_incompatible", compatibility.Message, StatusCodes.Status409Conflict);
+                    }
+
+                    var task = CreateTask(
+                        request.CommandId,
+                        StainingTaskType.Ihc,
+                        slot,
+                        batch,
+                        version,
+                        actor,
+                        request.InputMode,
+                        request.RawCode,
+                        resolution.NormalizedCode,
+                        resolution.PrimaryAntibodyCode,
+                        new[]
+                        {
+                            new
+                            {
+                                lisCandidatePrimaryAntibodyCodes = resolution.CandidatePrimaryAntibodyCodes,
+                                confirmedPrimaryAntibodyCode = resolution.PrimaryAntibodyCode,
+                                inheritedWorkflowVersionId = version.Id,
+                                compatibilityValidationStatus = CompatibilityCompatible,
+                                compatibilityValidationMessage = compatibility.Message
+                            }
+                        },
+                        rawSampleCode: request.RawCode,
+                        normalizedSampleCode: resolution.NormalizedCode,
+                        lisQueryLogId: NormalizeOptional(request.LisQueryLogId),
+                        lisCandidatePrimaryAntibodyCodes: resolution.CandidatePrimaryAntibodyCodes,
+                        confirmedPrimaryAntibodyCode: resolution.PrimaryAntibodyCode,
+                        compatibilityValidationStatus: CompatibilityCompatible,
+                        compatibilityValidationMessage: compatibility.Message);
+                    dbContext.StainingTasks.Add(task);
+                    AddSlideTask(batch, task, slot, StainingTaskType.Ihc);
+                    AddAudit(actor, "task.create_ihc", "StainingTask", task.Id, new
+                    {
+                        task.TaskCode,
+                        slot = slot.Code,
+                        channelBatchId = batch.Id,
+                        drawerCode = batch.DrawerCode,
+                        task.RawSampleCode,
+                        task.NormalizedSampleCode,
+                        task.LisQueryLogId,
+                        task.LisCandidatePrimaryAntibodyCodesJson,
+                        task.ConfirmedPrimaryAntibodyCode,
+                        inheritedWorkflowVersionId = batch.SelectedWorkflowVersionId,
+                        task.CompatibilityValidationStatus,
+                        task.CompatibilityValidationMessage,
+                        legacyWorkflowVersionCompatibilityField = legacyWorkflowVersionId is not null,
+                        legacyWorkflowVersionId
+                    });
+                    return new CommandExecutionResult<TaskCreationResponse>(
+                        CreatedResponse(request.CommandId, false, task, batch, "IHC task created."),
+                        "StainingTask",
+                        task.Id);
+                },
+                cancellationToken);
+        }
+        catch (BusinessRuleException ex) when (ex.Code == "ihc_channel_workflow_incompatible" && compatibilityFailureAudit is not null)
+        {
+            await PersistIhcCompatibilityFailureAuditAsync(actor, compatibilityFailureAudit, cancellationToken);
+            throw;
+        }
     }
 
-    private async Task<IhcResolution> ResolveIhcSelectionAsync(CreateIhcTaskRequest request, CancellationToken cancellationToken)
+    private async Task<IhcResolution> ResolveIhcSampleAsync(CreateIhcTaskRequest request, CancellationToken cancellationToken)
     {
         var inputMode = (request.InputMode ?? string.Empty).Trim();
         if (string.Equals(inputMode, "HospitalBarcode", StringComparison.OrdinalIgnoreCase)
@@ -151,19 +219,19 @@ public sealed class TaskCreationService(
                 return IhcResolution.Selection(
                     "Multiple primary antibody codes were found. Operator selection is required.",
                     normalized,
-                    candidates,
-                    []);
+                    candidates);
             }
 
             var selected = string.IsNullOrWhiteSpace(request.SelectedPrimaryAntibodyCode)
                 ? candidates.Single()
                 : request.SelectedPrimaryAntibodyCode.Trim();
-            if (!candidates.Contains(selected, StringComparer.OrdinalIgnoreCase))
+            var candidateMatch = candidates.FirstOrDefault(x => string.Equals(x, selected, StringComparison.OrdinalIgnoreCase));
+            if (candidateMatch is null)
             {
                 throw new BusinessRuleException("invalid_primary_antibody_selection", "Selected primary antibody code is not in the LIS candidate list.");
             }
 
-            return await ResolveWorkflowSelectionAsync(request, normalized, selected, candidates, cancellationToken);
+            return IhcResolution.Final(normalized, candidateMatch, candidates);
         }
 
         var directCode = (request.RawCode ?? string.Empty).Trim();
@@ -172,62 +240,7 @@ public sealed class TaskCreationService(
             throw new BusinessRuleException("primary_antibody_required", "Primary antibody code is required.");
         }
 
-        return await ResolveWorkflowSelectionAsync(request, directCode, directCode, [directCode], cancellationToken);
-    }
-
-    private async Task<IhcResolution> ResolveWorkflowSelectionAsync(
-        CreateIhcTaskRequest request,
-        string normalizedCode,
-        string primaryAntibodyCode,
-        IReadOnlyList<string> antibodyCandidates,
-        CancellationToken cancellationToken)
-    {
-        var workflowRows = await dbContext.PrimaryAntibodyWorkflowMappings
-            .AsNoTracking()
-            .Where(x => x.IsEnabled && x.PrimaryAntibodyCode == primaryAntibodyCode)
-            .Include(x => x.WorkflowVersion)
-            .ThenInclude(x => x!.WorkflowDefinition)
-            .Select(x => new
-            {
-                x.WorkflowVersionId,
-                x.WorkflowVersion!.WorkflowDefinitionId,
-                WorkflowCode = x.WorkflowVersion.WorkflowDefinition!.Code,
-                WorkflowName = x.WorkflowVersion.WorkflowDefinition.Name,
-                x.WorkflowVersion.VersionLabel,
-                x.WorkflowVersion.Status,
-                WorkflowType = x.WorkflowVersion.WorkflowDefinition.WorkflowType
-            })
-            .OrderBy(x => x.WorkflowCode)
-            .ThenBy(x => x.VersionLabel)
-            .ToListAsync(cancellationToken);
-
-        var workflowCandidates = workflowRows
-            .Where(x => x.Status == WorkflowVersionStatus.Published && x.WorkflowType == StainingTaskType.Ihc)
-            .Select(x => new TaskWorkflowCandidateResponse(
-                x.WorkflowVersionId,
-                x.WorkflowDefinitionId,
-                x.WorkflowCode,
-                x.WorkflowName,
-                x.VersionLabel))
-            .ToList();
-
-        if (workflowCandidates.Count == 0)
-        {
-            throw new BusinessRuleException("ihc_workflow_not_found", "No published IHC workflow is mapped to the selected primary antibody code.", StatusCodes.Status404NotFound);
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.SelectedWorkflowVersionId)
-            && !workflowCandidates.Any(x => x.WorkflowVersionId == request.SelectedWorkflowVersionId.Trim()))
-        {
-            throw new BusinessRuleException("invalid_workflow_selection", "Selected workflow version is not in the candidate list.");
-        }
-
-        return IhcResolution.Final(
-            normalizedCode,
-            primaryAntibodyCode,
-            request.SelectedWorkflowVersionId?.Trim(),
-            antibodyCandidates,
-            workflowCandidates);
+        return IhcResolution.Final(directCode, directCode, [directCode]);
     }
 
     private async Task<PhysicalSlot> LoadIdleSlotAsync(string slotCode, CancellationToken cancellationToken)
@@ -250,6 +263,75 @@ public sealed class TaskCreationService(
         }
 
         return slot;
+    }
+
+    private async Task<(PhysicalSlot Slot, ChannelBatch Batch)> LoadSlotAndBatchAsync(
+        string slotCode,
+        string? drawerCode,
+        string? channelBatchId,
+        CancellationToken cancellationToken)
+    {
+        var slot = await LoadIdleSlotAsync(slotCode, cancellationToken);
+        var normalizedDrawerCode = NormalizeOptional(drawerCode)?.ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(channelBatchId))
+        {
+            var batch = await LoadSelectedBatchByIdAsync(channelBatchId.Trim(), cancellationToken);
+            if (!string.Equals(batch.DrawerId, slot.DrawerId, StringComparison.Ordinal))
+            {
+                throw new BusinessRuleException("channel_slot_mismatch", "Physical slot must belong to the selected channel.", StatusCodes.Status409Conflict);
+            }
+
+            if (normalizedDrawerCode is not null && !string.Equals(batch.DrawerCode, normalizedDrawerCode, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new BusinessRuleException("channel_slot_mismatch", "drawerCode does not match the selected channel batch.", StatusCodes.Status409Conflict);
+            }
+
+            return (slot, batch);
+        }
+
+        if (normalizedDrawerCode is null)
+        {
+            throw new BusinessRuleException("channel_required", "drawerCode or channelBatchId is required.", StatusCodes.Status400BadRequest);
+        }
+
+        if (!string.Equals(slot.Drawer?.Code, normalizedDrawerCode, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new BusinessRuleException("channel_slot_mismatch", "Physical slot must belong to the requested drawer.", StatusCodes.Status409Conflict);
+        }
+
+        var activeBatch = await channelBatchWorkflowService.RequireSelectedActiveBatchAsync(normalizedDrawerCode, cancellationToken);
+        return (slot, activeBatch);
+    }
+
+    private async Task<ChannelBatch> LoadSelectedBatchByIdAsync(string channelBatchId, CancellationToken cancellationToken)
+    {
+        var batch = await dbContext.ChannelBatches
+            .Include(x => x.SlideTasks)
+            .ThenInclude(x => x.StainingTask)
+            .Include(x => x.SelectedWorkflowVersion)
+            .ThenInclude(x => x!.WorkflowDefinition)
+            .SingleOrDefaultAsync(x => x.Id == channelBatchId, cancellationToken);
+        if (batch is null)
+        {
+            throw new BusinessRuleException("channel_batch_not_found", "Channel batch was not found.", StatusCodes.Status404NotFound);
+        }
+
+        if (!ChannelBatchWorkflowService.IsActiveStatus(batch.Status))
+        {
+            throw new BusinessRuleException("channel_batch_not_active", "Channel batch is not active.", StatusCodes.Status409Conflict);
+        }
+
+        if (batch.WorkflowSelectionStatus == WorkflowSelectionStatus.NeedsManualResolution || batch.NeedsManualResolution)
+        {
+            throw new BusinessRuleException("channel_batch_needs_manual_resolution", "Channel batch needs manual workflow resolution before it can be used.", StatusCodes.Status409Conflict);
+        }
+
+        if (batch.WorkflowSelectionStatus != WorkflowSelectionStatus.Selected || string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId))
+        {
+            throw new BusinessRuleException("channel_workflow_required", "Select a channel workflow before adding slides.", StatusCodes.Status409Conflict);
+        }
+
+        return batch;
     }
 
     private async Task<WorkflowVersion> LoadPublishedWorkflowVersionAsync(
@@ -308,7 +390,14 @@ public sealed class TaskCreationService(
         string? rawCode,
         string? normalizedCode,
         string? primaryAntibodyCode,
-        object candidateResults)
+        object candidateResults,
+        string? rawSampleCode,
+        string? normalizedSampleCode,
+        string? lisQueryLogId,
+        IReadOnlyList<string> lisCandidatePrimaryAntibodyCodes,
+        string? confirmedPrimaryAntibodyCode,
+        string? compatibilityValidationStatus,
+        string? compatibilityValidationMessage)
     {
         return new StainingTask
         {
@@ -324,6 +413,15 @@ public sealed class TaskCreationService(
             NormalizedCode = normalizedCode,
             PrimaryAntibodyCode = primaryAntibodyCode,
             CandidateResultsJson = JsonSerializer.Serialize(candidateResults, JsonOptions),
+            RawSampleCode = rawSampleCode,
+            NormalizedSampleCode = normalizedSampleCode,
+            LisQueryLogId = lisQueryLogId,
+            LisCandidatePrimaryAntibodyCodesJson = lisCandidatePrimaryAntibodyCodes.Count == 0
+                ? null
+                : JsonSerializer.Serialize(lisCandidatePrimaryAntibodyCodes, JsonOptions),
+            ConfirmedPrimaryAntibodyCode = confirmedPrimaryAntibodyCode,
+            CompatibilityValidationStatus = compatibilityValidationStatus,
+            CompatibilityValidationMessage = compatibilityValidationMessage,
             CreatedByUserId = actor.UserId,
             CreatedAtUtc = DateTimeOffset.UtcNow
         };
@@ -355,13 +453,20 @@ public sealed class TaskCreationService(
             throw new BusinessRuleException("channel_batch_needs_manual_resolution", "Channel batch needs manual workflow resolution.", StatusCodes.Status409Conflict);
         }
 
+        if (batch.WorkflowSelectionStatus != WorkflowSelectionStatus.Selected
+            || string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
+            || string.IsNullOrWhiteSpace(batch.WorkflowSnapshotJson)
+            || batch.WorkflowSnapshotJson == "{}")
+        {
+            throw new BusinessRuleException("channel_workflow_required", "Select a channel workflow before adding slides.", StatusCodes.Status409Conflict);
+        }
+
         if (batch.ExperimentType != taskType)
         {
             throw new BusinessRuleException("channel_experiment_type_mismatch", "All slides in a channel must share the selected experiment type.", StatusCodes.Status409Conflict);
         }
 
-        if (!string.IsNullOrWhiteSpace(requestedWorkflowVersionId)
-            && requestedWorkflowVersionId.Trim() != batch.SelectedWorkflowVersionId)
+        if (requestedWorkflowVersionId is not null && requestedWorkflowVersionId != batch.SelectedWorkflowVersionId)
         {
             throw new BusinessRuleException("channel_workflow_mismatch", "Slide workflow must match the selected channel workflow.", StatusCodes.Status409Conflict);
         }
@@ -372,39 +477,90 @@ public sealed class TaskCreationService(
         }
     }
 
-    private async Task EnsurePrimaryAntibodyCompatibleAsync(
+    private async Task<IhcCompatibilityResult> ValidatePrimaryAntibodyCompatibleAsync(
         string primaryAntibodyCode,
         string workflowVersionId,
         CancellationToken cancellationToken)
     {
-        var compatible = await dbContext.PrimaryAntibodyWorkflowMappings
+        var mapping = await dbContext.PrimaryAntibodyWorkflowMappings
             .AsNoTracking()
-            .AnyAsync(x => x.IsEnabled
-                && x.PrimaryAntibodyCode == primaryAntibodyCode
-                && x.WorkflowVersionId == workflowVersionId,
+            .Include(x => x.WorkflowVersion)
+            .ThenInclude(x => x!.WorkflowDefinition)
+            .SingleOrDefaultAsync(
+                x => x.PrimaryAntibodyCode == primaryAntibodyCode && x.WorkflowVersionId == workflowVersionId,
                 cancellationToken);
-        if (!compatible)
+        if (mapping is null)
         {
-            throw new BusinessRuleException("channel_workflow_incompatible", "Selected primary antibody is not compatible with the channel workflow.", StatusCodes.Status409Conflict);
+            return IhcCompatibilityResult.Fail("Selected primary antibody is not mapped to this channel workflow. Select another channel or change the channel workflow before starting the run.");
         }
+
+        if (!mapping.IsEnabled)
+        {
+            return IhcCompatibilityResult.Fail("Selected primary antibody mapping is disabled. Select another channel or change the channel workflow before starting the run.");
+        }
+
+        if (mapping.WorkflowVersion?.Status != WorkflowVersionStatus.Published
+            || mapping.WorkflowVersion.WorkflowDefinition?.WorkflowType != StainingTaskType.Ihc)
+        {
+            return IhcCompatibilityResult.Fail("Selected primary antibody mapping does not point to a published IHC workflow. Select another channel or change the channel workflow before starting the run.");
+        }
+
+        return IhcCompatibilityResult.Success("Primary antibody is compatible with the selected channel workflow.");
     }
 
-    private void AddAudit(AuthenticatedUser actor, string action, string entityId, object details)
+    private async Task PersistIhcCompatibilityFailureAuditAsync(
+        AuthenticatedUser actor,
+        IhcCompatibilityFailureAudit failure,
+        CancellationToken cancellationToken)
+    {
+        dbContext.ChangeTracker.Clear();
+        AddAudit(actor, "task.ihc.compatibility_failed", "ChannelBatch", failure.ChannelBatchId, new
+        {
+            failure.DrawerCode,
+            failure.SlotCode,
+            failure.RawSampleCode,
+            failure.NormalizedSampleCode,
+            failure.ConfirmedPrimaryAntibodyCode,
+            inheritedWorkflowVersionId = failure.WorkflowVersionId,
+            compatibilityValidationStatus = CompatibilityIncompatible,
+            compatibilityValidationMessage = failure.Message,
+            commandId = failure.CommandId
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private void AddAudit(AuthenticatedUser actor, string action, string entityType, string entityId, object details)
     {
         dbContext.AuditLogs.Add(new AuditLog
         {
             ActorUserId = actor.UserId,
             Action = action,
-            EntityType = "StainingTask",
+            EntityType = entityType,
             EntityId = entityId,
             Message = JsonSerializer.Serialize(details, JsonOptions),
             CreatedAtUtc = DateTimeOffset.UtcNow
         });
     }
 
-    private static TaskCreationResponse CreatedResponse(string commandId, bool replayed, StainingTask task, string message)
+    private static TaskCreationResponse CreatedResponse(string commandId, bool replayed, StainingTask task, ChannelBatch batch, string message)
     {
-        return new TaskCreationResponse(true, commandId, replayed, false, message, task.Id, task.TaskCode, [], []);
+        return new TaskCreationResponse(
+            true,
+            commandId,
+            replayed,
+            false,
+            message,
+            task.Id,
+            task.TaskCode,
+            [],
+            [],
+            batch.Id,
+            batch.DrawerCode,
+            batch.ExperimentType,
+            batch.SelectedWorkflowVersionId,
+            batch.WorkflowSelectionStatus,
+            task.CompatibilityValidationStatus,
+            task.CompatibilityValidationMessage);
     }
 
     private static string NormalizeHospitalCode(string rawCode)
@@ -418,32 +574,71 @@ public sealed class TaskCreationService(
         return normalized;
     }
 
+    private static string? GetLegacyWorkflowVersionId(CreateIhcTaskRequest request)
+    {
+        var selectedWorkflowVersionId = NormalizeOptional(request.SelectedWorkflowVersionId);
+        var workflowVersionId = NormalizeOptional(request.WorkflowVersionId);
+        if (selectedWorkflowVersionId is not null
+            && workflowVersionId is not null
+            && selectedWorkflowVersionId != workflowVersionId)
+        {
+            throw new BusinessRuleException("legacy_workflow_version_conflict", "Legacy workflow version fields must match when both are provided.", StatusCodes.Status409Conflict);
+        }
+
+        return selectedWorkflowVersionId ?? workflowVersionId;
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        var normalized = value?.Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
     private sealed record IhcResolution(
         bool RequiresSelection,
         string Message,
         string NormalizedCode,
         string? PrimaryAntibodyCode,
-        string? WorkflowVersionId,
-        IReadOnlyList<string> CandidatePrimaryAntibodyCodes,
-        IReadOnlyList<TaskWorkflowCandidateResponse> CandidateWorkflows)
+        IReadOnlyList<string> CandidatePrimaryAntibodyCodes)
     {
         public static IhcResolution Selection(
             string message,
             string normalizedCode,
-            IReadOnlyList<string> candidatePrimaryAntibodyCodes,
-            IReadOnlyList<TaskWorkflowCandidateResponse> candidateWorkflows)
+            IReadOnlyList<string> candidatePrimaryAntibodyCodes)
         {
-            return new IhcResolution(true, message, normalizedCode, null, null, candidatePrimaryAntibodyCodes, candidateWorkflows);
+            return new IhcResolution(true, message, normalizedCode, null, candidatePrimaryAntibodyCodes);
         }
 
         public static IhcResolution Final(
             string normalizedCode,
             string primaryAntibodyCode,
-            string? workflowVersionId,
-            IReadOnlyList<string> candidatePrimaryAntibodyCodes,
-            IReadOnlyList<TaskWorkflowCandidateResponse> candidateWorkflows)
+            IReadOnlyList<string> candidatePrimaryAntibodyCodes)
         {
-            return new IhcResolution(false, string.Empty, normalizedCode, primaryAntibodyCode, workflowVersionId, candidatePrimaryAntibodyCodes, candidateWorkflows);
+            return new IhcResolution(false, string.Empty, normalizedCode, primaryAntibodyCode, candidatePrimaryAntibodyCodes);
         }
     }
+
+    private sealed record IhcCompatibilityResult(bool Ok, string Message)
+    {
+        public static IhcCompatibilityResult Success(string message)
+        {
+            return new IhcCompatibilityResult(true, message);
+        }
+
+        public static IhcCompatibilityResult Fail(string message)
+        {
+            return new IhcCompatibilityResult(false, message);
+        }
+    }
+
+    private sealed record IhcCompatibilityFailureAudit(
+        string ChannelBatchId,
+        string DrawerCode,
+        string SlotCode,
+        string RawSampleCode,
+        string NormalizedSampleCode,
+        string ConfirmedPrimaryAntibodyCode,
+        string WorkflowVersionId,
+        string Message,
+        string CommandId);
 }

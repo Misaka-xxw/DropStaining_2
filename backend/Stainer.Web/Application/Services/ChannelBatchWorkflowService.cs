@@ -21,68 +21,26 @@ public sealed class ChannelBatchWorkflowService(
         RuntimeLedgerStatus.Faulted
     ];
 
-    public Task<ChannelBatchWorkflowResponse> SelectWorkflowAsync(
+    public Task<ChannelBatchWorkflowResponse> SelectInitialWorkflowAsync(
         SelectChannelWorkflowRequest request,
         AuthenticatedUser actor,
         CancellationToken cancellationToken = default)
     {
         return idempotencyService.RunAsync(
             request.CommandId,
-            "channel.workflow.select",
+            "channel.workflow.initial_select",
             request,
             actor,
             async () =>
             {
                 var now = DateTimeOffset.UtcNow;
-                var drawerCode = NormalizeDrawerCode(request.DrawerCode);
-                var drawer = await dbContext.Drawers.SingleOrDefaultAsync(x => x.Code == drawerCode, cancellationToken);
-                if (drawer is null)
-                {
-                    throw new BusinessRuleException("drawer_not_found", "Drawer was not found.", StatusCodes.Status404NotFound);
-                }
-
-                var version = await LoadPublishedWorkflowVersionAsync(request.WorkflowVersionId, cancellationToken);
-                var experimentType = version.WorkflowDefinition!.WorkflowType;
+                var experimentType = NormalizeExperimentType(request.ExperimentType);
+                var version = await LoadPublishedWorkflowVersionAsync(request.WorkflowVersionId, experimentType, cancellationToken);
                 var snapshot = JsonSerializer.Serialize(WorkflowSnapshotFactory.Create(version), JsonOptions);
 
-                var batch = await LoadActiveBatchAsync(drawer.Id, cancellationToken);
-                if (batch is null)
-                {
-                    batch = new ChannelBatch
-                    {
-                        DrawerId = drawer.Id,
-                        DrawerCode = drawer.Code,
-                        Status = RuntimeLedgerStatus.Pending,
-                        CreatedAtUtc = now
-                    };
-                    dbContext.ChannelBatches.Add(batch);
-                }
-
-                EnsureBatchCanChangeWorkflow(batch);
-                await EnsureExistingSlidesAreCompatibleAsync(batch, experimentType, version.Id, cancellationToken);
-
-                var isInitialSelection = string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId);
-                var isSameSelection = batch.ExperimentType == experimentType
-                    && batch.SelectedWorkflowVersionId == version.Id
-                    && batch.WorkflowSelectionStatus == WorkflowSelectionStatus.Selected;
-                if (!isInitialSelection && !isSameSelection && string.IsNullOrWhiteSpace(request.Reason))
-                {
-                    throw new BusinessRuleException("workflow_change_reason_required", "Reason is required when changing a pre-start channel workflow.", StatusCodes.Status400BadRequest);
-                }
-
-                if (!isSameSelection)
-                {
-                    AddHistory(
-                        batch,
-                        isInitialSelection ? WorkflowAssignmentAction.InitialSelection : WorkflowAssignmentAction.PreStartChange,
-                        actor,
-                        request.CommandId,
-                        request.Reason ?? (isInitialSelection ? "Initial channel workflow selection." : string.Empty),
-                        experimentType,
-                        version.Id,
-                        snapshot,
-                        now);
-                }
+                var batch = await LoadTargetBatchAsync(request, cancellationToken);
+                EnsureBatchCanInitialSelect(batch);
+                AddInitialSelectionHistory(batch, actor, request.CommandId, experimentType, version.Id, snapshot, now);
 
                 batch.ExperimentType = experimentType;
                 batch.SelectedWorkflowVersionId = version.Id;
@@ -90,20 +48,14 @@ public sealed class ChannelBatchWorkflowService(
                 batch.WorkflowSelectionStatus = WorkflowSelectionStatus.Selected;
                 batch.WorkflowSelectedAtUtc = now;
                 batch.WorkflowSelectedByUserId = actor.UserId;
-                foreach (var task in batch.SlideTasks.Select(x => x.StainingTask).Where(x => x is not null).Cast<StainingTask>())
-                {
-                    task.WorkflowDefinitionId = version.WorkflowDefinitionId;
-                    task.WorkflowVersionId = version.Id;
-                    task.WorkflowSnapshotJson = snapshot;
-                }
 
-                AddAudit(actor, isInitialSelection ? "channel.workflow.select" : "channel.workflow.change", batch.Id, new
+                AddAudit(actor, "channel.workflow.select", batch.Id, new
                 {
                     batch.DrawerCode,
                     batch.ExperimentType,
                     workflowVersionId = version.Id,
-                    request.Reason,
-                    preflightInvalidated = !isInitialSelection
+                    commandId = request.CommandId,
+                    correlationId = request.CommandId
                 });
 
                 return new CommandExecutionResult<ChannelBatchWorkflowResponse>(
@@ -117,11 +69,19 @@ public sealed class ChannelBatchWorkflowService(
                         version.Id,
                         batch.WorkflowSelectionStatus,
                         batch.WorkflowSelectedAtUtc,
-                        isInitialSelection ? "Channel workflow selected." : "Channel workflow changed and preflight must be rerun."),
+                        "Channel workflow selected."),
                     "ChannelBatch",
                     batch.Id);
             },
             cancellationToken);
+    }
+
+    public Task<ChannelBatchWorkflowResponse> SelectWorkflowAsync(
+        SelectChannelWorkflowRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return SelectInitialWorkflowAsync(request, actor, cancellationToken);
     }
 
     public async Task<ChannelBatch?> GetActiveBatchAsync(string drawerCode, CancellationToken cancellationToken = default)
@@ -158,79 +118,57 @@ public sealed class ChannelBatchWorkflowService(
         return ActiveBatchStatuses.Contains(status);
     }
 
-    private async Task<ChannelBatch?> LoadActiveBatchAsync(string drawerId, CancellationToken cancellationToken)
+    private async Task<ChannelBatch> LoadTargetBatchAsync(SelectChannelWorkflowRequest request, CancellationToken cancellationToken)
     {
+        if (!string.IsNullOrWhiteSpace(request.ChannelBatchId))
+        {
+            var batch = await dbContext.ChannelBatches
+                .Include(x => x.SlideTasks)
+                .SingleOrDefaultAsync(x => x.Id == request.ChannelBatchId.Trim(), cancellationToken);
+            return batch ?? throw new BusinessRuleException("channel_batch_not_found", "Channel batch was not found.", StatusCodes.Status404NotFound);
+        }
+
+        var drawerCode = NormalizeDrawerCode(request.DrawerCode);
         var batches = await dbContext.ChannelBatches
             .Include(x => x.SlideTasks)
-            .ThenInclude(x => x.StainingTask)
-            .Where(x => x.DrawerId == drawerId && ActiveBatchStatuses.Contains(x.Status))
+            .Where(x => x.DrawerCode == drawerCode && ActiveBatchStatuses.Contains(x.Status))
             .ToListAsync(cancellationToken);
-        return batches.OrderByDescending(x => x.CreatedAtUtc).FirstOrDefault();
+        var activeBatch = batches.OrderByDescending(x => x.CreatedAtUtc).FirstOrDefault();
+        if (activeBatch is null)
+        {
+            throw new BusinessRuleException("channel_batch_not_found", "Channel batch was not found.", StatusCodes.Status404NotFound);
+        }
+
+        return activeBatch;
     }
 
-    private static void EnsureBatchCanChangeWorkflow(ChannelBatch batch)
+    private static void EnsureBatchCanInitialSelect(ChannelBatch batch)
     {
+        if (batch.NeedsManualResolution || batch.WorkflowSelectionStatus == WorkflowSelectionStatus.NeedsManualResolution)
+        {
+            throw new BusinessRuleException("channel_batch_needs_manual_resolution", "Channel batch needs manual workflow resolution.", StatusCodes.Status409Conflict);
+        }
+
         if (batch.WorkflowLockedAtUtc is not null || batch.StartedAtUtc is not null || !string.IsNullOrWhiteSpace(batch.MachineRunId))
         {
             throw new BusinessRuleException("channel_workflow_locked", "Channel workflow is locked after run start.", StatusCodes.Status409Conflict);
         }
 
-        if (batch.WorkflowSelectionStatus == WorkflowSelectionStatus.NeedsManualResolution)
+        if (batch.WorkflowSelectionStatus != WorkflowSelectionStatus.Unselected
+            || !string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
+            || !string.IsNullOrWhiteSpace(batch.ExperimentType)
+            || (!string.IsNullOrWhiteSpace(batch.WorkflowSnapshotJson) && batch.WorkflowSnapshotJson != "{}"))
         {
-            throw new BusinessRuleException("channel_batch_needs_manual_resolution", "Channel batch needs manual workflow resolution.", StatusCodes.Status409Conflict);
+            throw new BusinessRuleException("channel_workflow_already_selected", "Channel workflow has already been selected.", StatusCodes.Status409Conflict);
+        }
+
+        if (batch.SlideTasks.Count > 0)
+        {
+            throw new BusinessRuleException("channel_batch_not_empty", "Initial workflow selection is only allowed for an empty channel batch.", StatusCodes.Status409Conflict);
         }
     }
 
-    private async Task EnsureExistingSlidesAreCompatibleAsync(
-        ChannelBatch batch,
-        string experimentType,
-        string workflowVersionId,
-        CancellationToken cancellationToken)
-    {
-        var tasks = batch.SlideTasks.Select(x => x.StainingTask).Where(x => x is not null).Cast<StainingTask>().ToList();
-        if (tasks.Count == 0)
-        {
-            return;
-        }
-
-        if (tasks.Any(x => x.TaskType != experimentType))
-        {
-            throw new BusinessRuleException("channel_experiment_type_mismatch", "All slides in a channel must share the same experiment type.", StatusCodes.Status409Conflict);
-        }
-
-        if (experimentType == StainingTaskType.He)
-        {
-            return;
-        }
-
-        foreach (var task in tasks)
-        {
-            if (string.IsNullOrWhiteSpace(task.PrimaryAntibodyCode))
-            {
-                throw new BusinessRuleException("primary_antibody_required", "Existing IHC slides must have a primary antibody code before workflow change.", StatusCodes.Status409Conflict);
-            }
-        }
-
-        var antibodyCodes = tasks.Select(x => x.PrimaryAntibodyCode!).Distinct().ToList();
-        var compatibleCodes = await dbContext.PrimaryAntibodyWorkflowMappings
-            .AsNoTracking()
-            .Where(x => x.IsEnabled
-                && x.WorkflowVersionId == workflowVersionId
-                && antibodyCodes.Contains(x.PrimaryAntibodyCode))
-            .Select(x => x.PrimaryAntibodyCode)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-        var incompatible = antibodyCodes.Except(compatibleCodes, StringComparer.OrdinalIgnoreCase).ToList();
-        if (incompatible.Count > 0)
-        {
-            throw new BusinessRuleException(
-                "channel_workflow_incompatible",
-                $"Existing IHC slides are not compatible with the selected workflow: {string.Join(", ", incompatible)}.",
-                StatusCodes.Status409Conflict);
-        }
-    }
-
-    private async Task<WorkflowVersion> LoadPublishedWorkflowVersionAsync(string workflowVersionId, CancellationToken cancellationToken)
+    private async Task<WorkflowVersion> LoadPublishedWorkflowVersionAsync(string workflowVersionId, string experimentType, CancellationToken cancellationToken)
     {
         var normalized = (workflowVersionId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(normalized))
@@ -258,15 +196,18 @@ public sealed class ChannelBatchWorkflowService(
             throw new BusinessRuleException("workflow_type_not_supported", "Only HE and IHC workflows are supported.", StatusCodes.Status409Conflict);
         }
 
+        if (version.WorkflowDefinition.WorkflowType != experimentType)
+        {
+            throw new BusinessRuleException("workflow_type_mismatch", "Workflow experiment type does not match the requested experiment type.", StatusCodes.Status409Conflict);
+        }
+
         return version;
     }
 
-    private void AddHistory(
+    private void AddInitialSelectionHistory(
         ChannelBatch batch,
-        string action,
         AuthenticatedUser actor,
         string commandId,
-        string reason,
         string newExperimentType,
         string newWorkflowVersionId,
         string newSnapshot,
@@ -281,11 +222,13 @@ public sealed class ChannelBatchWorkflowService(
             NewExperimentType = newExperimentType,
             NewWorkflowVersionId = newWorkflowVersionId,
             NewWorkflowSnapshotJson = newSnapshot,
-            ActionType = action,
+            ActionType = WorkflowAssignmentAction.InitialSelection,
             ActorUserId = actor.UserId,
+            OperatorUserId = actor.UserId,
             CreatedAtUtc = now,
-            Reason = reason,
-            CommandId = commandId
+            Reason = "Initial channel workflow selection.",
+            CommandId = commandId,
+            CorrelationId = commandId
         });
     }
 
@@ -302,12 +245,23 @@ public sealed class ChannelBatchWorkflowService(
         });
     }
 
-    private static string NormalizeDrawerCode(string drawerCode)
+    private static string NormalizeDrawerCode(string? drawerCode)
     {
         var normalized = (drawerCode ?? string.Empty).Trim().ToUpperInvariant();
         if (string.IsNullOrWhiteSpace(normalized))
         {
             throw new BusinessRuleException("drawer_code_required", "drawerCode is required.", StatusCodes.Status400BadRequest);
+        }
+
+        return normalized;
+    }
+
+    private static string NormalizeExperimentType(string? experimentType)
+    {
+        var normalized = (experimentType ?? string.Empty).Trim().ToUpperInvariant();
+        if (normalized is not (StainingTaskType.He or StainingTaskType.Ihc))
+        {
+            throw new BusinessRuleException("experiment_type_invalid", "ExperimentType must be HE or IHC.", StatusCodes.Status400BadRequest);
         }
 
         return normalized;

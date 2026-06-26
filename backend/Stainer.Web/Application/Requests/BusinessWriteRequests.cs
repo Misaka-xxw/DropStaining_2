@@ -35,22 +35,29 @@ public sealed record CreateWorkflowDraftRequest(
 
 public sealed record SelectChannelWorkflowRequest(
     string CommandId,
-    string DrawerCode,
-    string WorkflowVersionId,
-    string? Reason);
+    string? ChannelBatchId,
+    string? DrawerCode,
+    string ExperimentType,
+    string WorkflowVersionId);
 
 public sealed record CreateHeTaskRequest(
     string CommandId,
-    string? WorkflowVersionId,
-    string SlotCode);
+    string SlotCode,
+    string? DrawerCode = null,
+    string? ChannelBatchId = null,
+    string? WorkflowVersionId = null);
 
 public sealed record CreateIhcTaskRequest(
     string CommandId,
     string InputMode,
     string RawCode,
     string SlotCode,
-    string? SelectedPrimaryAntibodyCode,
-    string? SelectedWorkflowVersionId);
+    string? DrawerCode = null,
+    string? ChannelBatchId = null,
+    string? SelectedPrimaryAntibodyCode = null,
+    string? SelectedWorkflowVersionId = null,
+    string? WorkflowVersionId = null,
+    string? LisQueryLogId = null);
 
 public sealed record ReagentScanInputItem(
     string Position,

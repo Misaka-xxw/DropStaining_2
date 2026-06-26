@@ -15,6 +15,13 @@ public sealed class StainingTask
     public string? NormalizedCode { get; set; }
     public string? PrimaryAntibodyCode { get; set; }
     public string CandidateResultsJson { get; set; } = "[]";
+    public string? RawSampleCode { get; set; }
+    public string? NormalizedSampleCode { get; set; }
+    public string? LisQueryLogId { get; set; }
+    public string? LisCandidatePrimaryAntibodyCodesJson { get; set; }
+    public string? ConfirmedPrimaryAntibodyCode { get; set; }
+    public string? CompatibilityValidationStatus { get; set; }
+    public string? CompatibilityValidationMessage { get; set; }
     public string? CreatedByUserId { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAtUtc { get; set; }

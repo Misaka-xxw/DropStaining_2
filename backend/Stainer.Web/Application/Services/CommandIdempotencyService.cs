@@ -72,6 +72,10 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         {
             throw new BusinessRuleException("active_channel_batch_exists", "Drawer already has an active channel batch.", StatusCodes.Status409Conflict);
         }
+        catch (DbUpdateException ex) when (IsActiveSlideSlotConflict(ex))
+        {
+            throw new BusinessRuleException("slot_not_idle", "Selected slot is not idle.", StatusCodes.Status409Conflict);
+        }
 
         return result.Response;
     }
@@ -98,6 +102,13 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         var message = exception.InnerException?.Message ?? exception.Message;
         return message.Contains("channel_batches.drawer_id", StringComparison.OrdinalIgnoreCase)
             || message.Contains("ix_channel_batches_drawer_id", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsActiveSlideSlotConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains("slide_tasks.physical_slot_id", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("ix_slide_tasks_physical_slot_id", StringComparison.OrdinalIgnoreCase);
     }
 
     private static T MarkReplay<T>(T response)

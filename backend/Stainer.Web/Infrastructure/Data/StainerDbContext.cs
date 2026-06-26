@@ -859,6 +859,13 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.NormalizedCode).HasColumnName("normalized_code").HasMaxLength(512);
         entity.Property(x => x.PrimaryAntibodyCode).HasColumnName("primary_antibody_code").HasMaxLength(64);
         entity.Property(x => x.CandidateResultsJson).HasColumnName("candidate_results_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.RawSampleCode).HasColumnName("raw_sample_code").HasMaxLength(512);
+        entity.Property(x => x.NormalizedSampleCode).HasColumnName("normalized_sample_code").HasMaxLength(512);
+        entity.Property(x => x.LisQueryLogId).HasColumnName("lis_query_log_id").HasMaxLength(128);
+        entity.Property(x => x.LisCandidatePrimaryAntibodyCodesJson).HasColumnName("lis_candidate_primary_antibody_codes_json").HasMaxLength(40000);
+        entity.Property(x => x.ConfirmedPrimaryAntibodyCode).HasColumnName("confirmed_primary_antibody_code").HasMaxLength(64);
+        entity.Property(x => x.CompatibilityValidationStatus).HasColumnName("compatibility_validation_status").HasMaxLength(32);
+        entity.Property(x => x.CompatibilityValidationMessage).HasColumnName("compatibility_validation_message").HasMaxLength(2000);
         entity.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
@@ -866,6 +873,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.HasIndex(x => new { x.PhysicalSlotId, x.Status });
         entity.HasIndex(x => x.WorkflowVersionId);
         entity.HasIndex(x => x.PrimaryAntibodyCode);
+        entity.HasIndex(x => x.ConfirmedPrimaryAntibodyCode);
+        entity.HasIndex(x => x.CompatibilityValidationStatus);
         entity.HasOne(x => x.PhysicalSlot).WithMany().HasForeignKey(x => x.PhysicalSlotId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.WorkflowDefinition).WithMany().HasForeignKey(x => x.WorkflowDefinitionId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.WorkflowVersion).WithMany().HasForeignKey(x => x.WorkflowVersionId).OnDelete(DeleteBehavior.Restrict);
