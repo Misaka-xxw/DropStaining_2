@@ -1745,6 +1745,138 @@ function exportTraceCsv(type){
   location.href = entry[0] + (query ? '?' + query : '');
 }
 
+function sampleShortCode(slide){
+  const value = String(slide?.sampleIdentifier || slide?.normalizedSampleCode || slide?.rawSampleCode || slide?.barcode || slide?.id || '--');
+  return value.length > 18 ? value.slice(0, 15) + '...' : value;
+}
+
+function sampleWorkflowText(channel, slide){
+  return [
+    slide?.workflowName || channel?.workflowName || slide?.protocolCode || channel?.workflowCode,
+    slide?.workflowVersionLabel || channel?.workflowVersionLabel
+  ].filter(Boolean).join(' / ');
+}
+
+function renderSampleSlot(channel, letter, slot){
+  const slide = (channel.slides || []).find(x => Number(x.slot) === slot);
+  const code = slotCode(letter, slot);
+  const safeLetter = escapeHtml(letter);
+  if(!slide){
+    const disabled = !channel.workflowVersionId || channel.workflowLocked ? ' disabled' : '';
+    const label = channel.workflowVersionId && !channel.workflowLocked ? '添加样本' : '请先选脚本';
+    return `<div class="sample-slot empty compact-slot"><div class="slot-no">${escapeHtml(code)}</div><div class="slot-main"><b>空闲</b><span>${channel.workflowLocked ? '已锁定' : '可用 Slot'}</span></div><button class="btn btn-soft"${disabled} onclick="openConfirmModalForSlot('${safeLetter}', ${slot})">${label}</button></div>`;
+  }
+  const inherited = sampleWorkflowText(channel, slide);
+  const status = statusText(slide.status || 'loaded');
+  return `<div class="sample-slot occupied compact-slot" onclick="showSampleDetail('${safeLetter}', ${slot})"><div class="slot-no">${escapeHtml(code)}</div><div class="slot-main"><b>${escapeHtml(sampleShortCode(slide))}</b><span>${escapeHtml(status)}${inherited ? ` / ${escapeHtml(inherited)}` : ''}</span></div><button class="btn btn-soft" onclick="event.stopPropagation();showSampleDetail('${safeLetter}', ${slot})">查看</button></div>`;
+}
+
+function renderChannelWorkflowPicker(channel, letter, workflow){
+  const locked = channel.workflowLocked || channel.workflowSelectionStatus === 'Locked';
+  const canSelect = !workflow.selected && channel.canSelectWorkflow !== false && !locked;
+  const canChange = workflow.selected && channel.canChangeWorkflow && !locked;
+  const action = canSelect
+    ? `<button class="btn btn-soft" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'select')">选择实验脚本</button>`
+    : canChange
+      ? `<button class="btn btn-soft" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'change')">更换实验脚本</button>`
+      : locked
+        ? '<button class="btn btn-soft" disabled>已锁定</button>'
+        : '';
+  const label = workflow.selected ? `${workflow.label} / ${workflow.version}` : '未选择';
+  const detail = workflow.selected ? `${channel.experimentType || '--'} · ${workflowStatusLabel(channel)}` : '先选脚本';
+  return `<div class="channel-script-line ${workflow.selected ? 'selected' : 'unselected'}"><span>脚本：<b>${escapeHtml(label)}</b><em>${escapeHtml(detail)}</em></span>${action}</div>`;
+}
+
+function renderSamples(state){
+  if(!document.getElementById('sampleCabinet')) return;
+  const count = slideCount(state);
+  setText('sampleBadge', `${count}/16 已占用`);
+  const root = document.getElementById('sampleCabinet');
+  const channels = (state.channels && state.channels.length)
+    ? state.channels
+    : ['A','B','C','D'].map((letter, index) => ({drawerCode: letter, id: index + 1, slides: [], status: 'empty'}));
+  root.innerHTML = channels.map((channel, index) => {
+    const letter = channel.drawerCode || ['A','B','C','D'][index] || channel.id;
+    const slides = channel.slides || [];
+    const workflow = channelWorkflowInfo(channel);
+    const slots = [4,3,2,1].map(slot => renderSampleSlot(channel, letter, slot)).join('');
+    return `<div class="sample-column status-${escapeHtml(channel.status || 'empty')}"><div class="column-handle"><span>${escapeHtml(letter)} 通道</span><b>${slides.length}/4</b></div>${renderChannelWorkflowPicker(channel, letter, workflow)}<div class="slot-stack">${slots}</div></div>`;
+  }).join('');
+  refreshConfirmSlotOptions();
+}
+
+function showSampleDetail(letter, slot){
+  const channel = channelByLetter(letter);
+  const slide = (channel?.slides || []).find(x => Number(x.slot) === Number(slot));
+  if(!channel || !slide){
+    toast('未找到该 Slot 的样本详情。', true);
+    return;
+  }
+  const body = document.getElementById('sampleDetailBody');
+  if(body){
+    const inherited = sampleWorkflowText(channel, slide) || '--';
+    const fields = [
+      ['Slot', slotCode(letter, slot)],
+      ['状态', statusText(slide.status || 'loaded')],
+      ['样本标识', slide.sampleIdentifier || slide.normalizedSampleCode || slide.rawSampleCode || slide.barcode || slide.id || '--'],
+      ['实验类型', channel.experimentType || slide.experimentType || '--'],
+      ['继承通道脚本', inherited],
+      ['一抗代码', slide.confirmedPrimaryAntibodyCode || slide.primaryAntibodyCode || '--'],
+      ['当前步骤', slide.currentStep || '--'],
+      ['任务编号', slide.id || '--']
+    ];
+    body.innerHTML = fields.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('');
+  }
+  document.getElementById('sampleDetailModal')?.classList.remove('hidden');
+}
+
+function closeSampleDetailModal(){
+  document.getElementById('sampleDetailModal')?.classList.add('hidden');
+}
+
+function reagentShortStateLabel(scanState){
+  return ({VALID:'VALID', INVALID:'INVALID', EMPTY:'EMPTY', UNSCANNED:'未扫码'}[scanState] || scanState || '未扫码');
+}
+
+function renderReagentRackFromDatabase(rack){
+  const positions = Array.isArray(rack) ? rack : [];
+  const validCount = positions.filter(x => scanStateOf(x) === 'VALID').length;
+  const invalidCount = positions.filter(x => scanStateOf(x) === 'INVALID').length;
+  setText('reagentBadge', `${validCount}/40 VALID${invalidCount ? ` · ${invalidCount} INVALID` : ''}`);
+  const byPosition = new Map(positions.map(x => [String(x.position || '').toUpperCase(), x]));
+  const deck = document.getElementById('reagentDeck');
+  if(!deck) return;
+  deck.innerHTML = [1,2,3,4,5].map(col => {
+    const rows = [1,2,3,4,5,6,7,8].map(row => {
+      const pos = 'R' + (((col - 1) * 8) + row);
+      const position = byPosition.get(pos);
+      const bottle = position?.bottle;
+      const scanState = scanStateOf(position);
+      const code = bottle?.reagentCode || position?.reagentCode || position?.parsedReagentCode || '';
+      const title = scanState === 'VALID' ? ['VALID', code].filter(Boolean).join(' ') : reagentShortStateLabel(scanState);
+      const subtitle = scanState === 'VALID'
+        ? [bottle?.lotNo, bottle?.barcodeSummary || position?.barcodeSummary].filter(Boolean).join(' / ')
+        : (scanState === 'INVALID' ? (invalidOrScanMessage(position) || '点击查看原因') : '');
+      const end = scanState === 'VALID' && bottle ? formatVolume(bottle.remainingVolumeUl) : '';
+      return `<button type="button" class="vial ${bottle ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(bottle?.reagentType || '')}" onclick="showReagentDetail('${pos}')" title="${escapeHtml(pos + ' ' + title + ' ' + invalidOrScanMessage(position))}"><b>${pos}</b><div class="vial-main"><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle)}</small></div><em>${escapeHtml(end)}</em></button>`;
+    }).join('');
+    return `<div class="reagent-rack"><header><b>ch${col}</b><span>R${(col-1)*8+1}-R${col*8}</span></header>${rows}</div>`;
+  }).join('');
+
+  const columnStatus = document.getElementById('columnStatus');
+  if(columnStatus){
+    columnStatus.innerHTML = [1,2,3,4,5].map(col => {
+      const column = positions.filter(x => x.columnNo === col);
+      const valid = column.filter(x => scanStateOf(x) === 'VALID').length;
+      const invalid = column.filter(x => scanStateOf(x) === 'INVALID').length;
+      const empty = column.filter(x => scanStateOf(x) === 'EMPTY').length;
+      const stateClass = invalid ? 'invalid' : valid ? 'has-data' : 'empty';
+      const label = invalid ? `${invalid} INVALID` : `${valid}/8 VALID`;
+      return `<div class="${stateClass}"><b>ch${col}</b><span>${escapeHtml(label)}</span><em>${escapeHtml(empty ? `${empty} EMPTY` : `R${(col-1)*8+1}-R${col*8}`)}</em></div>`;
+    }).join('');
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('confirmSlot')?.addEventListener('change', updateConfirmModalFromSlot);
   document.getElementById('confirmPath')?.addEventListener('change', () => {

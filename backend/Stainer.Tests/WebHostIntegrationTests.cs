@@ -35,6 +35,13 @@ public sealed class WebHostIntegrationTests
             Assert.DoesNotContain("{{", html);
         }
 
+        var login = await client.GetStringAsync("/");
+        Assert.Contains("role-picker two-roles", login);
+        Assert.Contains("value=\"operator\"", login);
+        Assert.Contains("value=\"admin\"", login);
+        Assert.DoesNotContain("value=\"engineer\"", login);
+        Assert.DoesNotContain("ENG", login);
+
         var dashboard = await client.GetStringAsync("/dashboard");
         Assert.Contains("app-shell", dashboard);
         Assert.Contains("drawerBoard", dashboard);

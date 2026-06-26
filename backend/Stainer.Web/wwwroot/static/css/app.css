@@ -157,3 +157,84 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 .workflow-version-published{border-color:#bbf7d0;background:#f0fdf4}
 .workflow-version-retired{border-color:#e2e8f0;background:#f8fafc;opacity:.82}
 @media(max-width:1000px){.workflow-step-table .table-row,.workflow-requirement-table .table-row,.mapping-table .table-row{grid-template-columns:1fr}}
+
+/* UI closeout: samples and reagents fit a 1920x1080 workbench without page scroll. */
+@media(min-width:1001px){
+  body:has(.sample-screen),
+  body:has(.reagent-toolbar){overflow:hidden}
+  body:has(.sample-screen) .app-shell,
+  body:has(.reagent-toolbar) .app-shell{height:100vh;overflow:hidden}
+  body:has(.sample-screen) .workbench,
+  body:has(.reagent-toolbar) .workbench{height:100vh;overflow:hidden;padding:16px 26px 18px}
+  body:has(.sample-screen) .top-panel,
+  body:has(.reagent-toolbar) .top-panel{margin-bottom:10px;gap:14px}
+  body:has(.sample-screen) .top-panel h1,
+  body:has(.reagent-toolbar) .top-panel h1{font-size:30px;letter-spacing:0;margin:2px 0 4px}
+  body:has(.sample-screen) .top-panel p,
+  body:has(.reagent-toolbar) .top-panel p{font-size:14px;line-height:1.38;max-height:40px;overflow:hidden}
+  body:has(.sample-screen) .crumb,
+  body:has(.reagent-toolbar) .crumb{font-size:12px}
+  body:has(.sample-screen) .status-cluster,
+  body:has(.reagent-toolbar) .status-cluster{gap:8px}
+  body:has(.sample-screen) .top-panel .mini-metric,
+  body:has(.sample-screen) .top-panel .clock-card,
+  body:has(.reagent-toolbar) .top-panel .mini-metric,
+  body:has(.reagent-toolbar) .top-panel .clock-card{height:46px;min-width:72px;border-radius:15px;padding:5px 10px}
+  body:has(.sample-screen) .top-panel .mini-metric b,
+  body:has(.sample-screen) .top-panel .clock-card span,
+  body:has(.reagent-toolbar) .top-panel .mini-metric b,
+  body:has(.reagent-toolbar) .top-panel .clock-card span{font-size:17px}
+  body:has(.sample-screen) .top-panel .icon-btn,
+  body:has(.reagent-toolbar) .top-panel .icon-btn{width:46px;height:46px;border-radius:15px;font-size:18px}
+
+  .compact-toolbar{margin-bottom:10px;padding:12px 14px;min-height:66px}
+  .compact-toolbar .control-main{gap:10px}
+  .compact-toolbar .control-main>b{font-size:18px;color:#0d1726;white-space:nowrap}
+  .compact-toolbar .btn{min-height:40px;border-radius:14px;padding:0 13px;font-size:14px}
+  .compact-toolbar .scan-hint{max-width:430px;font-size:14px}
+  .compact-toolbar .scan-hint.one-line{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .compact-toolbar .badge-soft{min-height:32px;font-size:14px}
+
+  .sample-screen{height:calc(100vh - 176px);margin-bottom:0;padding:14px;overflow:hidden}
+  .sample-cabinet.v18-slot-grid{height:100%;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .sample-column{min-height:0;padding:12px;border-radius:22px;display:grid;grid-template-rows:44px auto minmax(0,1fr);gap:8px}
+  .column-handle{height:44px;border-radius:16px;margin-bottom:0;padding:0 14px}
+  .column-handle span{font-size:15px}
+  .channel-script-line{min-height:40px;border:1px solid #d6eaff;border-radius:15px;background:#fff;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:7px 9px}
+  .channel-script-line.unselected{background:#f8fbff;border-style:dashed}
+  .channel-script-line span{min-width:0;display:flex;align-items:center;gap:7px;color:#64748b;font-size:14px;font-weight:900}
+  .channel-script-line b{min-width:0;color:#0c63bd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .channel-script-line em{font-style:normal;color:#64748b;font-size:13px;white-space:nowrap}
+  .channel-script-line .btn{min-height:34px;border-radius:12px;padding:0 10px;font-size:14px}
+  .slot-stack{min-height:0;display:grid;grid-template-rows:repeat(4,minmax(0,1fr));gap:8px}
+  .sample-slot.compact-slot{min-height:0;height:auto;margin:0;padding:8px 10px;border-radius:16px;grid-template-columns:54px minmax(0,1fr) 94px;gap:8px}
+  .sample-slot.compact-slot .slot-no{width:46px;height:36px;border-radius:13px;font-size:15px}
+  .sample-slot.compact-slot .slot-main{min-width:0;display:grid;gap:2px}
+  .sample-slot.compact-slot b,.sample-slot.compact-slot span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sample-slot.compact-slot b{font-size:15px}
+  .sample-slot.compact-slot span{font-size:14px}
+  .sample-slot.compact-slot .btn{min-height:36px;border-radius:12px;padding:0 8px;font-size:14px}
+  .sample-slot.compact-slot.empty{cursor:default}
+  .sample-slot.compact-slot.occupied{cursor:pointer}
+  .slot-order-note{display:none}
+
+  .reagent-v18-layout{height:calc(100vh - 176px);overflow:hidden;grid-template-columns:minmax(0,1fr) 300px;gap:12px}
+  .reagent-rack-card{height:100%;margin-bottom:0;padding:12px;overflow:hidden}
+  .reagent-side-panel{height:100%;min-height:0;gap:12px;grid-template-rows:minmax(0,1fr) auto}
+  .reagent-side-panel .modern-card{margin-bottom:0;padding:14px;min-height:0}
+  .reagent-side-panel h3{font-size:18px;margin:0 0 8px}
+  .v18-reagent-deck{height:100%;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+  .v18-reagent-deck .reagent-rack{min-height:0;padding:8px;border-radius:18px}
+  .v18-reagent-deck .reagent-rack header{height:34px;border-radius:13px;margin-bottom:7px;padding:0 10px}
+  .v18-reagent-deck .vial{height:44px;min-height:44px;grid-template-columns:32px minmax(0,1fr) 44px;gap:5px;padding:5px 7px;margin-bottom:6px;border-radius:12px}
+  .v18-reagent-deck .vial b{font-size:14px}
+  .v18-reagent-deck .vial span{font-size:14px;line-height:1.05;letter-spacing:0}
+  .v18-reagent-deck .vial small{font-size:11px;line-height:1.1}
+  .v18-reagent-deck .vial em{font-size:11px}
+  .column-status-grid{gap:6px}
+  .column-status-grid div{grid-template-columns:.5fr 1fr auto;gap:6px;padding:8px 9px;border-radius:13px;font-size:14px}
+  .dab-mini-grid{grid-template-columns:repeat(4,1fr);gap:6px;margin:8px 0}
+  .dab-mini-grid span{height:32px;border-radius:11px;font-size:14px}
+  .mini-action{min-height:38px;border-radius:13px;font-size:14px}
+}
+@keyframes pulse{50%{opacity:.72;box-shadow:0 0 0 14px rgba(245,158,11,.06)}}

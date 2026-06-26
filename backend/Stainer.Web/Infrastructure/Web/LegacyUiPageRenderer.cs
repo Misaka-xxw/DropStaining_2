@@ -5,7 +5,7 @@ namespace Stainer.Web.Infrastructure.Web;
 
 public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
-    private const string AssetVersion = "20260626-r3";
+    private const string AssetVersion = "20260626-r4";
 
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {
@@ -181,10 +181,9 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                 <div class="brand-orb big">冰</div>
                 <div><h2>用户登录</h2><p>选择角色后进入对应工作台</p></div>
               </div>
-              <div class="role-picker" role="radiogroup">
+              <div class="role-picker two-roles" role="radiogroup">
                 <label class="role-tile active"><input type="radio" name="role" value="operator" checked><i>OP</i><b>操作员</b><span>实验操作</span></label>
                 <label class="role-tile"><input type="radio" name="role" value="admin"><i>AD</i><b>管理员</b><span>用户与配置</span></label>
-                <label class="role-tile disabled" title="工程师账号待接入"><i>ENG</i><b>服务工程师</b><span>待账号接入</span></label>
               </div>
               <label class="field-label">用户名<input id="username" class="input input-xl" value="operator" placeholder="用户名"></label>
               <label class="field-label">密码<input id="password" class="input input-xl" type="password" value="123456" placeholder="密码"></label>
@@ -247,18 +246,20 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
     private static string SamplesContent()
     {
         return """
-        <section class="control-strip modern-card v18-sample-actions">
+        <section class="control-strip modern-card v18-sample-actions compact-toolbar">
           <div class="control-main">
-            <label class="stepper-field"><span>Slot 总数</span><input id="sampleCount" type="number" min="1" max="16" value="16" disabled><em>位</em></label>
-            <button class="btn btn-primary btn-xl" onclick="scanSamples()">刷新样本状态</button>
-            <button class="btn btn-soft btn-xl" onclick="openConfirmModal('ihc-tl')">IHC 一抗码</button>
-            <button class="btn btn-soft btn-xl" onclick="openConfirmModal('ihc-hospital')">医院码 / LIS</button>
-            <button class="btn btn-soft btn-xl" onclick="openConfirmModal('he')">HE 手动确认</button>
+            <b>A-D 样本区</b>
+            <span class="badge-soft" id="sampleBadge">0/16 已占用</span>
+            <button class="btn btn-primary" onclick="scanSamples()">刷新</button>
+            <button class="btn btn-soft" onclick="openConfirmModal('ihc-tl')">IHC 一抗码</button>
+            <button class="btn btn-soft" onclick="openConfirmModal('ihc-hospital')">医院码 / LIS</button>
+            <button class="btn btn-soft" onclick="openConfirmModal('he')">HE</button>
           </div>
-          <div class="scan-hint"><b>通道规则</b><span>先选择通道实验脚本，再在空 Slot 添加样本；启动后脚本和 Slot 永久锁定。</span></div>
+          <div class="scan-hint one-line"><span>先选通道脚本，再添加样本；启动后锁定。</span></div>
         </section>
-        <section class="split-grid wide-left"><article class="modern-card"><div class="section-title"><div><h2>A-D 样本区</h2><p>Slot 状态、通道脚本和任务信息均来自后端 ChannelBatch / SlideTask。</p></div><div class="badge-soft" id="sampleBadge">0/16 已占用</div></div><div class="sample-cabinet v18-slot-grid" id="sampleCabinet"></div></article><aside class="stack-panel"><article class="modern-card compact-card"><h3>识别路径</h3><div class="decision-list"><div><b>IHC 一抗码</b><span>直接输入或模拟扫码一抗代码，只做与当前通道脚本的兼容性校验。</span></div><div><b>医院码 / LIS</b><span>保留原始样本码，后端返回候选一抗时由操作员确认。</span></div><div><b>HE 玻片</b><span>不需要二维码，继承当前通道 HE 脚本创建任务。</span></div></div></article></aside></section>
+        <section class="sample-screen modern-card"><div class="sample-cabinet v18-slot-grid" id="sampleCabinet"></div></section>
         <div id="sampleConfirmModal" class="modal-mask hidden"><div class="modal-card sample-confirm-card"><header><h2 id="confirmTitle">添加样本</h2><button class="icon-btn" onclick="closeConfirmModal()">×</button></header><div class="form-grid-mini"><label>目标 Slot<select id="confirmSlot" class="input"></select></label><label>识别路径<select id="confirmPath" class="input"><option value="ihc-tl">IHC 一抗码</option><option value="ihc-hospital">医院码 / LIS</option><option value="he">HE 手动确认</option></select></label><label id="rawCodeLabel">样本码 / 一抗码<input class="input" id="rawCode" value="PA1"></label><label id="primaryAntibodyLabel" class="hidden">确认一抗<select id="primaryAntibodySelect" class="input"></select></label></div><div class="notice-box" id="confirmChannelScript">当前通道脚本：未选择</div><div class="notice-box hidden" id="sampleTaskError"></div><footer><button class="btn btn-soft" onclick="closeConfirmModal()">取消</button><button class="btn btn-primary" id="confirmTaskButton" onclick="confirmTask()">确认创建任务</button></footer></div></div>
+        <div id="sampleDetailModal" class="modal-mask hidden"><div class="modal-card sample-confirm-card"><header><h2>样本详情</h2><button class="icon-btn" onclick="closeSampleDetailModal()">×</button></header><div id="sampleDetailBody" class="detail-grid"></div><footer><button class="btn btn-soft" onclick="closeSampleDetailModal()">关闭</button><button class="btn btn-primary" onclick="location.href='/history'">查看追溯</button></footer></div></div>
         <div id="channelScriptModal" class="modal-mask hidden"><div class="modal-card sample-confirm-card"><header><h2 id="channelScriptTitle">选择通道实验脚本</h2><button class="icon-btn" onclick="closeChannelScriptModal()">×</button></header><div class="form-grid-mini"><label>实验类型<select id="channelScriptExperimentType" class="input" onchange="refreshChannelScriptOptions()"><option value="HE">HE</option><option value="IHC">IHC</option></select></label><label>已发布流程<select id="channelScriptSelect" class="input"></select></label></div><label class="field-label hidden" id="channelScriptReasonLabel">变更原因<input id="channelScriptReason" class="input" placeholder="请输入变更原因"></label><div class="notice-box" id="channelScriptHint">该选择会保存到后端 ChannelBatch，并应用于该通道 1-4 号 Slot。</div><footer><button class="btn btn-soft" onclick="closeChannelScriptModal()">取消</button><button class="btn btn-primary" onclick="applyChannelScriptSelection()">确认</button></footer></div></div>
         """;
     }
@@ -266,8 +267,8 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
     private static string ReagentsContent()
     {
         return """
-        <section class="control-strip modern-card"><div class="control-main reagent-scan-actions"><button class="btn btn-primary btn-xl" id="startReagentScanSessionBtn" onclick="startReagentScanSession()">开始扫码</button><button class="btn btn-soft btn-xl" id="completeReagentScanSessionBtn" onclick="completeReagentScanSession()" disabled>完成扫码</button><button class="btn btn-soft btn-xl" onclick="scanReagents()">扫描全部试剂架</button><button class="btn btn-soft btn-xl" onclick="mockColumnScan(1)">扫描 ch1</button><button class="btn btn-soft btn-xl" onclick="mockColumnScan(2)">扫描 ch2</button><button class="btn btn-soft btn-xl" onclick="mockColumnScan(3)">扫描 ch3</button><button class="btn btn-soft btn-xl" onclick="mockColumnScan(4)">扫描 ch4</button><button class="btn btn-soft btn-xl" onclick="mockColumnScan(5)">扫描 ch5</button></div><div class="scan-hint"><b>扫码会话</b><span id="reagentScanSessionSummary">正在读取后端扫码会话...</span></div></section>
-        <section class="split-grid wide-left reagent-v18-layout"><article class="modern-card"><div class="section-title"><div><h2>5×8 试剂架 / R1-R40</h2><p>状态来自后端数据库：EMPTY / VALID / INVALID / 未扫码；点击瓶位查看解析结果。</p></div><div class="badge-soft" id="reagentBadge">0 个 VALID</div></div><div class="reagent-deck v18-reagent-deck" id="reagentDeck"></div></article><aside class="stack-panel"><article class="modern-card compact-card"><h3>列扫码状态</h3><div class="column-status-grid" id="columnStatus"></div></article><article class="modern-card compact-card dab-mini"><h3>DAB 临时配液区</h3><div class="dab-mini-grid"><span>M1</span><span>M2</span><span>M3</span><span>M4</span><span>M5</span><span>M6</span><span>M7</span><span>M8</span></div><button class="btn btn-soft full" onclick="toast('DAB 清洗确认写入尚未接入正式接口', true)">确认清洗完成</button></article></aside></section>
+        <section class="control-strip modern-card compact-toolbar reagent-toolbar"><div class="control-main reagent-scan-actions"><b>5×8 试剂架</b><span class="badge-soft" id="reagentBadge">0/40 VALID</span><button class="btn btn-primary" id="startReagentScanSessionBtn" onclick="startReagentScanSession()">开始扫码</button><button class="btn btn-soft" id="completeReagentScanSessionBtn" onclick="completeReagentScanSession()" disabled>完成扫码</button><button class="btn btn-soft" onclick="scanReagents()">扫描全部</button><button class="btn btn-soft" onclick="mockColumnScan(1)">ch1</button><button class="btn btn-soft" onclick="mockColumnScan(2)">ch2</button><button class="btn btn-soft" onclick="mockColumnScan(3)">ch3</button><button class="btn btn-soft" onclick="mockColumnScan(4)">ch4</button><button class="btn btn-soft" onclick="mockColumnScan(5)">ch5</button></div><div class="scan-hint one-line"><span id="reagentScanSessionSummary">扫码会话：读取中...</span></div></section>
+        <section class="split-grid wide-left reagent-v18-layout"><article class="modern-card reagent-rack-card"><div class="reagent-deck v18-reagent-deck" id="reagentDeck"></div></article><aside class="stack-panel reagent-side-panel"><article class="modern-card compact-card"><h3>列扫码状态</h3><div class="column-status-grid" id="columnStatus"></div></article><article class="modern-card compact-card dab-mini"><h3>DAB 临时配液区</h3><div class="dab-mini-grid"><span>M1</span><span>M2</span><span>M3</span><span>M4</span><span>M5</span><span>M6</span><span>M7</span><span>M8</span></div><button class="btn btn-soft full mini-action" onclick="toast('DAB 清洗确认写入尚未接入正式接口', true)">确认清洗完成</button></article></aside></section>
         <div id="reagentDetail" class="modal-mask hidden"><div class="modal-card"><header><h2>试剂瓶解析详情</h2><button class="icon-btn" onclick="reagentDetail.classList.add('hidden')">×</button></header><div id="reagentDetailBody" class="detail-grid"></div><footer><button class="btn btn-soft" onclick="reagentDetail.classList.add('hidden')">关闭</button><button class="btn btn-primary" onclick="toast('单个 R 位正式扫码确认尚未接入。', true)">重新扫码</button></footer></div></div>
         <div id="reagentScanModal" class="modal-mask hidden"><div class="modal-card"><header><h2 id="reagentScanTitle">R 位扫码确认</h2><button class="icon-btn" onclick="cancelReagentScanModal()">×</button></header><div class="detail-grid" id="reagentScanContext"></div><div class="form-grid-mini"><label>输入方式<select id="reagentScanMode" class="input" onchange="syncReagentScanMode()"><option value="barcode">Mock 扫描文本</option><option value="empty">空位确认</option></select></label><label id="reagentBarcodeLabel">Mock 条码文本<input id="reagentBarcodeInput" class="input" placeholder="例如 ABC05020270101001"></label><label id="reagentExpirationLabel">有效期<input id="reagentExpirationInput" class="input" type="date"></label></div><div class="notice-box" id="reagentScanHint">前端只提交原始文本，条码解析和校验由后端完成。</div><div id="reagentScanResult" class="detail-grid"></div><footer><button class="btn btn-soft" onclick="cancelReagentScanModal()">取消</button><button class="btn btn-primary" onclick="confirmReagentPositionScan()">确认扫码</button></footer></div></div>
         """;
