@@ -45,12 +45,21 @@ public sealed class WebHostIntegrationTests
         var dashboard = await client.GetStringAsync("/dashboard");
         Assert.Contains("app-shell", dashboard);
         Assert.Contains("drawerBoard", dashboard);
+        Assert.Contains(">检查<", dashboard);
         Assert.Contains("data-href=\"/control-console\"", dashboard);
+        Assert.Contains("current-page-card", dashboard);
+        Assert.Contains("currentPageLabel", dashboard);
+        Assert.Contains("userMenu", dashboard);
+        Assert.Contains("退出登录", dashboard);
+        Assert.DoesNotContain("top-panel", dashboard);
+        Assert.DoesNotContain("workflow-strip v18-flow", dashboard);
+        Assert.DoesNotContain("kpiInit", dashboard);
 
         var controlConsole = await client.GetStringAsync("/control-console");
         Assert.Contains("app-shell", controlConsole);
         Assert.Contains("controlConsoleFrame", controlConsole);
-        Assert.Contains("/static/control-console/index.html?v=20260626-r6", controlConsole);
+        Assert.Contains("/static/control-console/index.html?v=20260626-r8", controlConsole);
+        Assert.DoesNotContain("top-panel", controlConsole);
 
         var mockTimeline = await client.GetStringAsync("/mock-timeline");
         Assert.Contains("mockGanttBoard", mockTimeline);

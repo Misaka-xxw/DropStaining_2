@@ -195,7 +195,7 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
   .compact-toolbar .scan-hint.one-line{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .compact-toolbar .badge-soft{min-height:32px;font-size:14px}
 
-  .sample-screen{height:calc(100vh - 176px);margin-bottom:0;padding:14px;overflow:hidden}
+  .sample-screen{height:calc(100vh - 66px);margin-bottom:0;padding:14px;overflow:hidden}
   .sample-cabinet.v18-slot-grid{height:100%;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
   .sample-column{min-height:0;padding:12px;border-radius:22px;display:grid;grid-template-rows:44px auto minmax(0,1fr);gap:8px}
   .column-handle{height:44px;border-radius:16px;margin-bottom:0;padding:0 14px}
@@ -218,7 +218,7 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
   .sample-slot.compact-slot.occupied{cursor:pointer}
   .slot-order-note{display:none}
 
-  .reagent-v18-layout{height:calc(100vh - 176px);overflow:hidden;grid-template-columns:minmax(0,1fr) 300px;gap:12px}
+  .reagent-v18-layout{height:calc(100vh - 66px);overflow:hidden;grid-template-columns:minmax(0,1fr) 300px;gap:12px}
   .reagent-rack-card{height:100%;margin-bottom:0;padding:12px;overflow:hidden}
   .reagent-side-panel{height:100%;min-height:0;gap:12px;grid-template-rows:minmax(0,1fr) auto}
   .reagent-side-panel .modern-card{margin-bottom:0;padding:14px;min-height:0}
@@ -237,7 +237,18 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
   .dab-mini-grid span{height:32px;border-radius:11px;font-size:14px}
   .mini-action{min-height:38px;border-radius:13px;font-size:14px}
 }
-.control-console-shell{height:calc(100vh - 190px);min-height:680px;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:var(--shadow-soft)}
+.current-page-card{min-height:118px;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:12px 8px;gap:8px}
+.current-page-card .brand-orb{width:46px;height:46px;flex:0 0 46px}
+.current-page-card .brand-copy{min-width:0;width:100%}
+.current-page-card .brand-copy strong{display:block;font-size:22px;line-height:1.1;letter-spacing:0}
+.current-page-card .brand-copy .page-mode{display:inline-flex;align-items:center;justify-content:center;gap:3px;min-height:22px;margin-top:7px;padding:3px 8px;border-radius:999px;background:rgba(125,211,252,.12);border:1px solid rgba(125,211,252,.18);color:#bfe8ff;font-size:10px;font-weight:900}
+.current-page-card .brand-copy .page-mode b{font-size:11px;color:#fff}
+.operator-card{position:relative;cursor:pointer;transition:.16s ease}
+.operator-card:hover{background:rgba(255,255,255,.1);transform:translateY(-1px)}
+.user-menu{position:absolute;left:calc(100% + 12px);bottom:8px;z-index:20;min-width:132px;padding:8px;border-radius:16px;background:#fff;color:#0d1726;border:1px solid #dbe7f5;box-shadow:0 18px 42px rgba(2,6,23,.24)}
+.user-menu button{width:100%;min-height:42px;border:0;border-radius:12px;background:#fee2e2;color:#dc2626;font-weight:900;cursor:pointer}
+.user-menu button:hover{background:#fecaca}
+.control-console-shell{height:calc(100vh - 66px);min-height:760px;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:var(--shadow-soft)}
 .control-console-shell iframe{width:100%;height:100%;border:0;display:block;background:#f5f7fb}
-@media(max-width:1000px){.control-console-shell{height:calc(100vh - 190px);min-height:620px}}
+@media(max-width:1000px){.control-console-shell{height:calc(100vh - 132px);min-height:620px}}
 @keyframes pulse{50%{opacity:.72;box-shadow:0 0 0 14px rgba(245,158,11,.06)}}

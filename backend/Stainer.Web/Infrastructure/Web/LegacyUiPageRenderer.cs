@@ -5,7 +5,7 @@ namespace Stainer.Web.Infrastructure.Web;
 
 public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
-    private const string AssetVersion = "20260626-r6";
+    private const string AssetVersion = "20260626-r8";
 
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {
@@ -55,11 +55,29 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
         return Results.Content(html, "text/html; charset=utf-8");
     }
 
+    private static string PageLabel(string path)
+    {
+        return path.ToLowerInvariant() switch
+        {
+            "/control-console" => "主控",
+            "/dashboard" => "检查",
+            "/samples" => "样本",
+            "/reagents" => "试剂",
+            "/run" => "运行",
+            "/alerts" or "/alarms" => "告警",
+            "/history" => "历史",
+            "/configure" => "配置",
+            "/engineer" => "工程",
+            "/admin" or "/management" => "管理",
+            "/mock-timeline" => "Timeline",
+            _ => "主控"
+        };
+    }
+
     private string RenderShell(string path, PageDefinition page)
     {
         var encodedTitle = WebUtility.HtmlEncode(page.Title);
-        var encodedCrumb = WebUtility.HtmlEncode(page.Crumb);
-        var encodedSubtitle = WebUtility.HtmlEncode(page.Subtitle);
+        var encodedPageLabel = WebUtility.HtmlEncode(PageLabel(path));
         var pageScript = string.IsNullOrWhiteSpace(page.ScriptPath) ? string.Empty : $"""<script src="{VersionedAsset(page.ScriptPath)}"></script>""";
         var mockNavigation = environment.IsProduction()
             ? string.Empty
@@ -85,16 +103,16 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
         <body data-status="idle">
           <div class="app-shell">
             <aside class="side-rail">
-              <div class="brand-card" onclick="location.href='/control-console'">
+              <div class="brand-card current-page-card" onclick="location.href='/control-console'" title="返回主控台">
                 <div class="brand-orb">冰</div>
                 <div class="brand-copy">
-                  <strong>冰冻切片染色机</strong>
-                  <span>V2.0 基线 / Mock</span>
+                  <strong id="currentPageLabel">{{encodedPageLabel}}</strong>
+                  <span class="page-mode">模式：<b id="metricDeviceMode">Mock</b></span>
                 </div>
               </div>
               <nav class="nav-stack" aria-label="主导航">
                 <a href="/control-console" class="nav-item" data-href="/control-console"><i>01</i><span>主控</span><small>总台</small></a>
-                <a href="/dashboard" class="nav-item" data-href="/dashboard"><i>02</i><span>总览</span><small>运行</small></a>
+                <a href="/dashboard" class="nav-item" data-href="/dashboard"><i>02</i><span>检查</span><small>运行</small></a>
                 <a href="/samples" class="nav-item" data-href="/samples"><i>03</i><span>样本</span><small>确认</small></a>
                 <a href="/reagents" class="nav-item" data-href="/reagents"><i>04</i><span>试剂</span><small>扫描</small></a>
                 <a href="/run" class="nav-item" data-href="/run"><i>05</i><span>运行</span><small>详情</small></a>
@@ -105,33 +123,19 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                 <a href="/admin" class="nav-item admin-only" data-href="/admin"><i>A</i><span>管理</span><small>用户</small></a>
                 {{mockNavigation}}
               </nav>
-              <div class="operator-card">
+              <div class="operator-card" id="operatorCard" onclick="toggleUserMenu(event)" role="button" tabindex="0" aria-label="用户菜单">
                 <div class="avatar" id="operatorAvatar">访</div>
                 <div>
                   <strong id="operatorName">未登录</strong>
                   <span id="operatorRole">guest</span>
                 </div>
+                <div class="user-menu hidden" id="userMenu">
+                  <button type="button" onclick="event.stopPropagation(); logout()">退出登录</button>
+                </div>
               </div>
             </aside>
 
             <main class="workbench">
-              <header class="top-panel">
-                <div>
-                  <div class="crumb">全自动冰冻切片染色机 / {{encodedCrumb}}</div>
-                  <h1>{{encodedTitle}}</h1>
-                  <p>{{encodedSubtitle}}</p>
-                </div>
-                <div class="status-cluster">
-                  <div class="status-chip status-idle" id="statusChip"><span></span><b data-status-label>idle</b></div>
-                  <div class="mini-metric"><span>玻片</span><b id="metricSlides">0</b></div>
-                  <div class="mini-metric"><span>试剂</span><b id="metricReagents">0</b></div>
-                  <div class="mini-metric"><span>告警</span><b id="metricAlarms">0</b></div>
-                  <div class="mini-metric"><span>模式</span><b id="metricDeviceMode">Mock</b></div>
-                  <div class="clock-card"><span id="clockTime">--:--</span><small id="clockDate">----</small></div>
-                  <button class="icon-btn" onclick="location.href='/control-console'" title="主控台">⌂</button>
-                  <button class="icon-btn danger" onclick="logout()" title="退出">×</button>
-                </div>
-              </header>
               <section class="alert-banner hidden" id="alertBanner" onclick="location.href='/alerts'">
                 <div class="pulse-dot"></div>
                 <div><b>当前告警</b><span id="alertText"></span></div>
@@ -143,6 +147,26 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
           <div id="toast" class="toast hidden"></div>
           <script src="{{VersionedAsset("/static/js/api.js")}}"></script>
           <script src="{{VersionedAsset("/static/js/stainer-host.js")}}"></script>
+          <script>
+            function toggleUserMenu(event){
+              event.stopPropagation();
+              const menu = document.getElementById('userMenu');
+              if(menu) menu.classList.toggle('hidden');
+            }
+            document.addEventListener('click', () => {
+              const menu = document.getElementById('userMenu');
+              if(menu) menu.classList.add('hidden');
+            });
+            document.addEventListener('keydown', event => {
+              if(event.key === 'Escape'){
+                const menu = document.getElementById('userMenu');
+                if(menu) menu.classList.add('hidden');
+              }
+              if((event.key === 'Enter' || event.key === ' ') && event.target?.id === 'operatorCard'){
+                toggleUserMenu(event);
+              }
+            });
+          </script>
           {{pageScript}}
           {{inlineScript}}
         </body>
@@ -218,8 +242,8 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
     private static string ControlConsoleContent()
     {
         return """
-        <section class="control-console-shell" aria-label="主控台数字孪生" style="width:100%;height:calc(100vh - 190px);min-height:680px;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:0 20px 55px rgba(15,23,42,.12)">
-          <iframe id="controlConsoleFrame" title="主控台数字孪生" src="/static/control-console/index.html?v=20260626-r6" style="width:100%;height:100%;border:0;display:block;background:#f5f7fb"></iframe>
+        <section class="control-console-shell" aria-label="主控台数字孪生" style="width:100%;height:calc(100vh - 66px);min-height:760px;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:0 20px 55px rgba(15,23,42,.12)">
+          <iframe id="controlConsoleFrame" title="主控台数字孪生" src="/static/control-console/index.html?v=20260626-r8" style="width:100%;height:100%;border:0;display:block;background:#f5f7fb"></iframe>
         </section>
         """;
     }
@@ -227,19 +251,6 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
     private static string DashboardContent()
     {
         return """
-        <section class="workflow-strip v18-flow">
-          <article class="workflow-step active" id="stepInit" onclick="initializeSystem()"><i>01</i><b>登录与初始化</b><span>回零 / 通讯 / 液位 / 洗针</span></article>
-          <article class="workflow-step" id="stepSamples" onclick="location.href='/samples'"><i>02</i><b>样本确认</b><span>通灵码 / 医院码 / HE 手动</span></article>
-          <article class="workflow-step" id="stepReagents" onclick="location.href='/reagents'"><i>03</i><b>试剂扫描</b><span>ch1-ch5 / R1-R40</span></article>
-          <article class="workflow-step" onclick="location.href='/run'"><i>04</i><b>启动校验</b><span>不允许绕过强制启动</span></article>
-          <article class="workflow-step" id="stepRun" onclick="location.href='/run'"><i>05</i><b>运行详情</b><span>大步骤 / 原子动作 / 日志</span></article>
-        </section>
-        <section class="kpi-grid">
-          <article class="kpi-card primary"><span>初始化状态</span><strong id="kpiInit">待初始化</strong><small>登录后需完成初始化与运行前预检</small><button class="btn btn-light full" onclick="initializeSystem()">执行 / 重试初始化</button></article>
-          <article class="kpi-card"><span>通道批次</span><strong>A-D / 16 Slot</strong><small>启动后不得追加玻片</small><button class="btn btn-soft full" onclick="location.href='/samples'">创建/确认任务</button></article>
-          <article class="kpi-card"><span>试剂校验</span><strong id="kpiReagents">待扫码</strong><small>缺失/无效/未知/过期/余量不足均拦截</small><button class="btn btn-soft full" onclick="location.href='/reagents'">进入试剂管理</button></article>
-          <article class="kpi-card"><span>运行批号</span><strong id="kpiRunId">--</strong><small id="kpiRunIdFull">尚未开始实验</small><button class="btn btn-primary full" onclick="location.href='/run'">打开运行详情</button></article>
-        </section>
         <section class="split-grid wide-left">
           <article class="modern-card">
             <div class="section-title"><div><h2>A-D 抽屉与 16 Slot</h2><p>每个抽屉固定 4 个 Slot，状态用于样本装载、任务确认、运行和故障判断。</p></div><div class="legend"><span class="legend-dot idle"></span>空闲 <span class="legend-dot running"></span>运行 <span class="legend-dot warn"></span>待确认/故障</div></div>
