@@ -54,11 +54,12 @@ public sealed class WebHostIntegrationTests
         Assert.DoesNotContain("top-panel", dashboard);
         Assert.DoesNotContain("workflow-strip v18-flow", dashboard);
         Assert.DoesNotContain("kpiInit", dashboard);
+        Assert.DoesNotContain("dashboardLogs", dashboard);
 
         var controlConsole = await client.GetStringAsync("/control-console");
         Assert.Contains("app-shell", controlConsole);
         Assert.Contains("controlConsoleFrame", controlConsole);
-        Assert.Contains("/static/control-console/index.html?v=20260626-r8", controlConsole);
+        Assert.Contains("/static/control-console/index.html?v=20260626-r11", controlConsole);
         Assert.DoesNotContain("top-panel", controlConsole);
 
         var mockTimeline = await client.GetStringAsync("/mock-timeline");

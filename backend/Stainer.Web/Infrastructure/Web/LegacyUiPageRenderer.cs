@@ -5,7 +5,7 @@ namespace Stainer.Web.Infrastructure.Web;
 
 public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
-    private const string AssetVersion = "20260626-r8";
+    private const string AssetVersion = "20260626-r11";
 
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {
@@ -242,8 +242,8 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
     private static string ControlConsoleContent()
     {
         return """
-        <section class="control-console-shell" aria-label="主控台数字孪生" style="width:100%;height:calc(100vh - 66px);min-height:760px;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:0 20px 55px rgba(15,23,42,.12)">
-          <iframe id="controlConsoleFrame" title="主控台数字孪生" src="/static/control-console/index.html?v=20260626-r8" style="width:100%;height:100%;border:0;display:block;background:#f5f7fb"></iframe>
+        <section class="control-console-shell" aria-label="主控台数字孪生" style="width:100%;height:calc(100vh - 34px);min-height:0;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:0 20px 55px rgba(15,23,42,.12)">
+          <iframe id="controlConsoleFrame" title="主控台数字孪生" src="/static/control-console/index.html?v=20260626-r11" style="width:100%;height:100%;border:0;display:block;background:#f5f7fb"></iframe>
         </section>
         """;
     }
@@ -261,7 +261,6 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
             <article class="modern-card compact-card dab-mini"><h3>DAB 临时配液区</h3><div class="dab-mini-grid"><span>M1</span><span>M2</span><span>M3</span><span>M4</span><span>M5</span><span>M6</span><span>M7</span><span>M8</span></div><p class="hint-line">每次自动配制使用新试管，3 小时有效。</p></article>
           </aside>
         </section>
-        <section class="modern-card"><div class="section-title"><h2>最近事件日志</h2><button class="btn btn-soft" onclick="location.href='/history'">历史与导出</button></div><div class="timeline" id="dashboardLogs"></div></section>
         """;
     }
 
@@ -299,9 +298,18 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
     private static string RunContent()
     {
         return """
-        <section class="run-command-bar modern-card v18-runbar"><button class="command start" onclick="runAction('start')"><i>▶</i><b>启动</b><span>先执行强制校验</span></button><button class="command pause" onclick="runAction('pause')"><i>Ⅱ</i><b>暂停</b><span>当前原子动作后生效</span></button><button class="command resume" onclick="runAction('resume')"><i>↪</i><b>恢复</b><span>等待/孵育直接下一步</span></button><button class="command stop" onclick="confirmStop()"><i>■</i><b>普通整机停止</b><span>不支持单 Slot/通道终止</span></button><button class="command fault hidden" id="mockFaultButton" onclick="injectMockFault()"><i>!</i><b>Mock 故障注入</b><span>工程师 / 管理员</span></button><button class="command redo hidden" id="redoMajorStepButton" onclick="redoCurrentMajorStep()"><i>↺</i><b>大步骤重做</b><span>需填写原因</span></button><div class="run-badge"><span id="runStatus" class="status-chip status-idle"><i></i><b data-status-label>idle</b></span><small id="runIdSmall">未生成批号</small></div></section>
-        <section class="modern-card validation-card"><div class="section-title"><div><h2>启动前校验</h2><p>对全部已确认、未完成任务统一汇总；失败时只允许返回处理。</p></div><button class="btn btn-soft" onclick="openValidationModal()">查看校验详情</button></div><div class="validation-grid"><div><b>样本任务</b><span id="validationSlides">0 张</span><em id="validationSlidesState">未创建</em></div><div><b>初始化</b><span id="validationInit">待完成</span><em id="validationInitState">BLOCK</em></div><div><b>试剂状态</b><span id="validationReagents">0 个有效瓶</span><em id="validationReagentsState">BLOCK</em></div><div><b>人工覆盖</b><span>管理员/操作员均不可绕过</span><em>禁止</em></div></div></section>
-        <section class="split-grid wide-left"><article class="modern-card"><div class="section-title"><div><h2>实时通道状态</h2><p>状态推进以动作完成反馈或明确状态条件为准。</p></div><button class="btn btn-soft" onclick="refreshRun()">刷新</button></div><div id="runChannels" class="runtime-board"></div></article><aside class="stack-panel"><article class="modern-card compact-card"><h3>关键资源</h3><div class="module-grid"><div><b>双针机械臂</b><span>Mock 平台</span><em>READY</em></div><div><b>通道清洗泵</b><span>A-D 同步出液</span><em>READY</em></div><div><b>通道混匀</b><span>同轮试剂完成后混匀</span><em>READY</em></div><div><b>16 Slot 温控</b><span>目标/实测/异常</span><em>42℃</em></div></div></article><article class="modern-card compact-card"><h3>事件日志</h3><div id="logList" class="log-console"></div></article></aside></section>
+        <section class="run-command-bar modern-card v18-runbar"><button class="command start" onclick="runAction('start')"><i>▶</i><b>启动</b><span>先执行强制校验</span></button><button class="command pause" onclick="runAction('pause')"><i>Ⅱ</i><b>暂停</b><span>当前原子动作后生效</span></button><button class="command resume" onclick="runAction('resume')"><i>↪</i><b>恢复</b><span>等待/孵育直接下一步</span></button><button class="command stop" onclick="confirmStop()"><i>■</i><b>整机停止</b><span>当前动作后停止</span></button><button class="command fault hidden" id="mockFaultButton" onclick="injectMockFault()"><i>!</i><b>Mock 故障</b><span>工程师 / 管理员</span></button><button class="command redo hidden" id="redoMajorStepButton" onclick="redoCurrentMajorStep()"><i>↺</i><b>大步骤重做</b><span>需填写原因</span></button><div class="run-badge"><span id="runStatus" class="status-chip status-idle"><i></i><b data-status-label>idle</b></span><small id="runIdSmall">未生成批号</small></div></section>
+        <section class="run-grid">
+          <article class="modern-card run-channels-card">
+            <div class="section-title"><div><h2>实时通道状态</h2><p>状态推进以动作完成反馈或明确状态条件为准。</p></div><button class="btn btn-soft" onclick="refreshRun()">刷新</button></div>
+            <div id="runChannels" class="runtime-board"></div>
+          </article>
+          <aside class="run-side-stack">
+            <article class="modern-card validation-card run-side-card"><div class="section-title"><div><h2>启动前校验</h2><p>失败时只允许返回处理。</p></div><button class="btn btn-soft" onclick="openValidationModal()">查看详情</button></div><div class="validation-grid"><div><b>样本任务</b><span id="validationSlides">0 张</span><em id="validationSlidesState">未创建</em></div><div><b>初始化</b><span id="validationInit">待完成</span><em id="validationInitState">BLOCK</em></div><div><b>试剂状态</b><span id="validationReagents">0 个有效瓶</span><em id="validationReagentsState">BLOCK</em></div><div><b>人工覆盖</b><span>不可绕过</span><em>禁止</em></div></div></article>
+            <article class="modern-card compact-card run-side-card"><h3>关键资源</h3><div class="module-grid"><div><b>双针机械臂</b><span>Mock 平台</span><em>READY</em></div><div><b>通道清洗泵</b><span>A-D 同步出液</span><em>READY</em></div><div><b>通道混匀</b><span>同轮试剂后混匀</span><em>READY</em></div><div><b>16 Slot 温控</b><span>目标/实测/异常</span><em>42℃</em></div></div></article>
+            <article class="modern-card compact-card run-side-card run-log-card"><h3>事件日志</h3><div id="logList" class="log-console"></div></article>
+          </aside>
+        </section>
         <div id="validationModal" class="modal-mask hidden"><div class="modal-card large-modal"><header><h2>启动校验结果</h2><button class="icon-btn" onclick="validationModal.classList.add('hidden')">×</button></header><div id="validationBody" class="validation-result"></div><footer><button class="btn btn-soft" onclick="validationModal.classList.add('hidden')">返回处理</button><button class="btn btn-primary" id="validationStartBtn" onclick="forceStartAfterValidation()">全部通过后启动</button></footer></div></div>
         """;
     }

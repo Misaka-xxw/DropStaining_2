@@ -251,4 +251,178 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 .control-console-shell{height:calc(100vh - 66px);min-height:760px;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:var(--shadow-soft)}
 .control-console-shell iframe{width:100%;height:100%;border:0;display:block;background:#f5f7fb}
 @media(max-width:1000px){.control-console-shell{height:calc(100vh - 132px);min-height:620px}}
+
+/* 1920x1080 kiosk fit for the primary operation pages. */
+@media(min-width:1001px){
+  body:has(.control-console-shell),
+  body:has(#drawerBoard),
+  body:has(.sample-screen),
+  body:has(.reagent-toolbar),
+  body:has(.v18-runbar),
+  body:has(#alarmList),
+  body:has(#historySlides){overflow:hidden}
+
+  body:has(.control-console-shell) .app-shell,
+  body:has(#drawerBoard) .app-shell,
+  body:has(.sample-screen) .app-shell,
+  body:has(.reagent-toolbar) .app-shell,
+  body:has(.v18-runbar) .app-shell,
+  body:has(#alarmList) .app-shell,
+  body:has(#historySlides) .app-shell{height:100vh;min-height:100vh;overflow:hidden}
+
+  body:has(.control-console-shell) .side-rail,
+  body:has(#drawerBoard) .side-rail,
+  body:has(.sample-screen) .side-rail,
+  body:has(.reagent-toolbar) .side-rail,
+  body:has(.v18-runbar) .side-rail,
+  body:has(#alarmList) .side-rail,
+  body:has(#historySlides) .side-rail{height:100vh;overflow:hidden}
+
+  body:has(.control-console-shell) .workbench,
+  body:has(#drawerBoard) .workbench,
+  body:has(.sample-screen) .workbench,
+  body:has(.reagent-toolbar) .workbench,
+  body:has(.v18-runbar) .workbench,
+  body:has(#alarmList) .workbench,
+  body:has(#historySlides) .workbench{
+    height:100vh;
+    min-height:0;
+    overflow:hidden;
+    padding:16px 26px 18px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+
+  body:has(.control-console-shell) .modern-card,
+  body:has(#drawerBoard) .modern-card,
+  body:has(.sample-screen) .modern-card,
+  body:has(.reagent-toolbar) .modern-card,
+  body:has(.v18-runbar) .modern-card,
+  body:has(#alarmList) .modern-card,
+  body:has(#historySlides) .modern-card{margin-bottom:0}
+
+  body:has(.control-console-shell) .alert-banner,
+  body:has(#drawerBoard) .alert-banner,
+  body:has(.sample-screen) .alert-banner,
+  body:has(.reagent-toolbar) .alert-banner,
+  body:has(.v18-runbar) .alert-banner,
+  body:has(#alarmList) .alert-banner,
+  body:has(#historySlides) .alert-banner{flex:0 0 auto;margin-bottom:0;padding:12px 14px}
+
+  body:has(.control-console-shell) .section-title,
+  body:has(#drawerBoard) .section-title,
+  body:has(.sample-screen) .section-title,
+  body:has(.reagent-toolbar) .section-title,
+  body:has(.v18-runbar) .section-title,
+  body:has(#alarmList) .section-title,
+  body:has(#historySlides) .section-title{margin-bottom:12px}
+
+  body:has(.control-console-shell) .section-title h2,
+  body:has(#drawerBoard) .section-title h2,
+  body:has(.sample-screen) .section-title h2,
+  body:has(.reagent-toolbar) .section-title h2,
+  body:has(.v18-runbar) .section-title h2,
+  body:has(#alarmList) .section-title h2,
+  body:has(#historySlides) .section-title h2,
+  body:has(.control-console-shell) .modern-card h2,
+  body:has(#drawerBoard) .modern-card h2,
+  body:has(.sample-screen) .modern-card h2,
+  body:has(.reagent-toolbar) .modern-card h2,
+  body:has(.v18-runbar) .modern-card h2,
+  body:has(#alarmList) .modern-card h2,
+  body:has(#historySlides) .modern-card h2{font-size:22px;letter-spacing:0}
+
+  body:has(.control-console-shell) .btn,
+  body:has(#drawerBoard) .btn,
+  body:has(.sample-screen) .btn,
+  body:has(.reagent-toolbar) .btn,
+  body:has(.v18-runbar) .btn,
+  body:has(#alarmList) .btn,
+  body:has(#historySlides) .btn{min-height:44px;border-radius:15px;padding:0 14px}
+
+  body:has(.control-console-shell) .control-console-shell{flex:1 1 auto;height:auto!important;min-height:0!important;margin-bottom:0}
+
+  body:has(#drawerBoard) .workbench>.split-grid.wide-left{
+    flex:1 1 auto;
+    min-height:0;
+    grid-template-columns:minmax(0,1.52fr) minmax(320px,.52fr);
+    gap:12px;
+  }
+  body:has(#drawerBoard) .workbench>.split-grid.wide-left>.modern-card,
+  body:has(#drawerBoard) .workbench>.split-grid.wide-left>.stack-panel{height:100%;min-height:0;overflow:hidden}
+  body:has(#drawerBoard) .workbench>.split-grid.wide-left>.modern-card{padding:18px}
+  body:has(#drawerBoard) .drawer-board{height:calc(100% - 72px);min-height:0;overflow:hidden;grid-template-rows:repeat(2,minmax(0,1fr));gap:12px}
+  body:has(#drawerBoard) .drawer-card{min-height:0;padding:14px;border-radius:22px;overflow:hidden}
+  body:has(#drawerBoard) .drawer-card header{margin-bottom:8px}
+  body:has(#drawerBoard) .drawer-card header b{font-size:22px}
+  body:has(#drawerBoard) .progress-track{height:10px;margin:8px 0 10px}
+  body:has(#drawerBoard) .drawer-slots{gap:8px}
+  body:has(#drawerBoard) .drawer-slot{min-height:74px;padding:10px;border-radius:16px}
+  body:has(#drawerBoard) .drawer-card footer{margin-top:10px}
+  body:has(#drawerBoard) .stack-panel{gap:12px;grid-template-rows:minmax(0,1fr) auto}
+  body:has(#drawerBoard) .stack-panel>.modern-card{min-height:0;overflow:hidden}
+  body:has(.sample-screen) .compact-toolbar,
+  body:has(.reagent-toolbar) .compact-toolbar{flex:0 0 62px;min-height:62px;margin:0;padding:10px 12px;overflow:hidden}
+  body:has(.sample-screen) .sample-screen{flex:1 1 auto;height:auto;min-height:0;padding:12px;overflow:hidden}
+  body:has(.sample-screen) .sample-cabinet.v18-slot-grid{height:100%;min-height:0}
+  body:has(.reagent-toolbar) .reagent-v18-layout{flex:1 1 auto;height:auto;min-height:0;overflow:hidden;grid-template-columns:minmax(0,1fr) 300px;gap:12px}
+
+  body:has(.v18-runbar) .v18-runbar{flex:0 0 78px;min-height:0;padding:8px;gap:10px;grid-template-columns:repeat(auto-fit,minmax(162px,1fr))}
+  body:has(.v18-runbar) .v18-runbar .command{min-height:60px;border-radius:18px;grid-template-columns:34px minmax(0,1fr);grid-template-rows:auto auto;place-items:center start;text-align:left;column-gap:10px;padding:0 13px}
+  body:has(.v18-runbar) .v18-runbar .command i{grid-row:1/3;width:30px;height:30px;border-radius:12px;font-size:16px}
+  body:has(.v18-runbar) .v18-runbar .command b{font-size:16px;line-height:1.1;white-space:nowrap}
+  body:has(.v18-runbar) .v18-runbar .command span{font-size:11px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  body:has(.v18-runbar) .run-badge{border-radius:18px;padding:8px}
+  body:has(.v18-runbar) .run-badge .status-chip{min-height:32px;padding:0 12px}
+  body:has(.v18-runbar) .run-grid{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 560px;gap:14px}
+  body:has(.v18-runbar) .run-channels-card,
+  body:has(.v18-runbar) .run-side-stack,
+  body:has(.v18-runbar) .run-side-card{min-height:0;overflow:hidden}
+  body:has(.v18-runbar) .run-channels-card{height:100%;padding:20px}
+  body:has(.v18-runbar) .run-side-stack{height:100%;display:grid;grid-template-rows:318px 226px minmax(0,1fr);gap:14px}
+  body:has(.v18-runbar) .validation-card{padding:18px}
+  body:has(.v18-runbar) .validation-card .section-title{align-items:center;margin-bottom:10px}
+  body:has(.v18-runbar) .validation-card .section-title p{font-size:13px;line-height:1.35}
+  body:has(.v18-runbar) .validation-card .validation-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  body:has(.v18-runbar) .validation-card .validation-grid div{min-height:92px;padding:14px;border-radius:18px}
+  body:has(.v18-runbar) .validation-card .validation-grid b{font-size:17px}
+  body:has(.v18-runbar) .validation-card .validation-grid span{font-size:14px;line-height:1.3}
+  body:has(.v18-runbar) .validation-card .validation-grid em{font-size:14px}
+  body:has(.v18-runbar) #runChannels{height:calc(100% - 62px);min-height:0;overflow:hidden;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:12px}
+  body:has(.v18-runbar) .runtime-channel{min-height:0;padding:14px;border-radius:22px;overflow:hidden}
+  body:has(.v18-runbar) .runtime-head{margin-bottom:8px}
+  body:has(.v18-runbar) .runtime-head b{font-size:21px}
+  body:has(.v18-runbar) .runtime-channel p{margin:0 0 8px}
+  body:has(.v18-runbar) .runtime-slides{gap:8px}
+  body:has(.v18-runbar) .runtime-slide{min-height:0;padding:8px;border-radius:15px}
+  body:has(.v18-runbar) .runtime-slide b{font-size:16px}
+  body:has(.v18-runbar) .runtime-slide small{font-size:11px;line-height:1.25}
+  body:has(.v18-runbar) .run-side-card h3{font-size:20px;margin:0 0 12px}
+  body:has(.v18-runbar) .module-grid{height:calc(100% - 40px);gap:12px}
+  body:has(.v18-runbar) .module-grid div{min-height:0;padding:14px;border-radius:17px}
+  body:has(.v18-runbar) .module-grid b{font-size:15px}
+  body:has(.v18-runbar) .module-grid span{font-size:13px;line-height:1.35}
+  body:has(.v18-runbar) .module-grid em{font-size:16px}
+  body:has(.v18-runbar) #logList{height:calc(100% - 40px);max-height:none;overflow:auto}
+  body:has(.v18-runbar) #logList div{padding:8px 10px;border-radius:12px;line-height:1.35}
+
+  body:has(#alarmList) .workbench>.modern-card{min-height:0;overflow:hidden}
+  body:has(#alarmList) .workbench>.modern-card:first-of-type{flex:1 1 auto;padding:18px}
+  body:has(#alarmList) .workbench>.modern-card:last-of-type{flex:0 0 320px;padding:18px}
+  body:has(#alarmList) .inline-form.touch-form{gap:10px;margin-bottom:10px}
+  body:has(#alarmList) .inline-form.touch-form .input{height:44px;border-radius:14px}
+  body:has(#alarmList) #alarmList{height:calc(100% - 132px);min-height:0;overflow:auto}
+  body:has(#alarmList) #alertLogs{height:calc(100% - 54px);max-height:none;overflow:auto}
+
+  body:has(#historySlides) .workbench>.modern-card:first-of-type{flex:0 0 228px;min-height:0;overflow:hidden;padding:18px}
+  body:has(#historySlides) .workbench>.split-grid{flex:1 1 auto;min-height:0;gap:12px}
+  body:has(#historySlides) .workbench>.split-grid>.modern-card{height:100%;min-height:0;overflow:hidden;padding:18px}
+  body:has(#historySlides) .workbench>.modern-card:last-of-type{flex:0 0 220px;min-height:0;overflow:hidden;padding:18px}
+  body:has(#historySlides) .inline-form.touch-form{gap:8px;max-height:126px;overflow:auto;padding-right:4px}
+  body:has(#historySlides) .inline-form.touch-form label{min-width:150px}
+  body:has(#historySlides) .inline-form.touch-form .input{height:42px;border-radius:14px}
+  body:has(#historySlides) .history-table{height:calc(100% - 54px);max-height:none;overflow:auto}
+  body:has(#historySlides) #historyLogs{height:calc(100% - 54px);max-height:none;overflow:auto}
+}
 @keyframes pulse{50%{opacity:.72;box-shadow:0 0 0 14px rgba(245,158,11,.06)}}
