@@ -27,7 +27,7 @@ public sealed class WebHostIntegrationTests
         Assert.False(info!.PythonRuntimeRequired);
         Assert.Equal("ASP.NET Core", info.UiHost);
 
-        foreach (var route in new[] { "/", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/alarms", "/history", "/configure", "/engineer", "/admin", "/management", "/mock-timeline" })
+        foreach (var route in new[] { "/", "/control-console", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/alarms", "/history", "/configure", "/engineer", "/admin", "/management", "/mock-timeline" })
         {
             var html = await client.GetStringAsync(route);
             Assert.Contains("app.css", html);
@@ -45,6 +45,12 @@ public sealed class WebHostIntegrationTests
         var dashboard = await client.GetStringAsync("/dashboard");
         Assert.Contains("app-shell", dashboard);
         Assert.Contains("drawerBoard", dashboard);
+        Assert.Contains("data-href=\"/control-console\"", dashboard);
+
+        var controlConsole = await client.GetStringAsync("/control-console");
+        Assert.Contains("app-shell", controlConsole);
+        Assert.Contains("controlConsoleFrame", controlConsole);
+        Assert.Contains("/static/control-console/index.html?v=20260626-r6", controlConsole);
 
         var mockTimeline = await client.GetStringAsync("/mock-timeline");
         Assert.Contains("mockGanttBoard", mockTimeline);
@@ -56,6 +62,17 @@ public sealed class WebHostIntegrationTests
 
         var js = await client.GetAsync("/static/js/api.js");
         Assert.Equal(HttpStatusCode.OK, js.StatusCode);
+
+        var consoleCss = await client.GetAsync("/static/control-console/enhancement.css");
+        Assert.Equal(HttpStatusCode.OK, consoleCss.StatusCode);
+
+        var consoleJs = await client.GetAsync("/static/control-console/enhancement.js");
+        Assert.Equal(HttpStatusCode.OK, consoleJs.StatusCode);
+
+        var consolePage = await client.GetStringAsync("/static/control-console/index.html");
+        Assert.Contains("twinSvg", consolePage);
+        Assert.Contains("embedded-host", consolePage);
+        Assert.Contains("/static/control-console/enhancement.js", consolePage);
 
         var fallback = await client.GetStringAsync("/kiosk/unknown");
         Assert.Contains("drawerBoard", fallback);
@@ -167,6 +184,8 @@ public sealed class WebHostIntegrationTests
 
         var login = await client.PostAsJsonAsync("/api/login", new { username = "operator", password = "123456", role = "operator" });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        var loginResponse = await login.Content.ReadFromJsonAsync<LoginResponse>();
+        Assert.Equal("/control-console", loginResponse?.Redirect);
 
         var initialize = await client.PostAsync("/api/system/initialize", null);
         Assert.Equal(HttpStatusCode.OK, initialize.StatusCode);

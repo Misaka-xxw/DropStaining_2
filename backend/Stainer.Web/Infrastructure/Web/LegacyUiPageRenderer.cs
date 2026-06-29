@@ -5,10 +5,11 @@ namespace Stainer.Web.Infrastructure.Web;
 
 public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
-    private const string AssetVersion = "20260626-r4";
+    private const string AssetVersion = "20260626-r6";
 
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {
+        ["/control-console"] = new("主控台", "主控台", "设备数字孪生、演示控制与快速入口。", ControlConsoleContent(), null),
         ["/dashboard"] = new("首页 / 运行总览", "首页 / 运行总览", "A-D 抽屉、16 Slot、初始化、试剂与运行状态总览。", DashboardContent(), "/static/js/dashboard.js"),
         ["/samples"] = new("样本确认", "样本装载、玻片识别与流程确认", "固定 A-D x 4 Slot，支持 Mock 扫描和任务确认。", SamplesContent(), null),
         ["/reagents"] = new("试剂扫描与管理", "试剂瓶条码、列扫码、目录与库存管理", "5x8 试剂架，ch1-ch5 按列扫码，R1-R40 位置管理。", ReagentsContent(), null),
@@ -84,7 +85,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
         <body data-status="idle">
           <div class="app-shell">
             <aside class="side-rail">
-              <div class="brand-card" onclick="location.href='/dashboard'">
+              <div class="brand-card" onclick="location.href='/control-console'">
                 <div class="brand-orb">冰</div>
                 <div class="brand-copy">
                   <strong>冰冻切片染色机</strong>
@@ -92,10 +93,11 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                 </div>
               </div>
               <nav class="nav-stack" aria-label="主导航">
-                <a href="/dashboard" class="nav-item" data-href="/dashboard"><i>01</i><span>总览</span><small>运行</small></a>
-                <a href="/samples" class="nav-item" data-href="/samples"><i>02</i><span>样本</span><small>确认</small></a>
-                <a href="/reagents" class="nav-item" data-href="/reagents"><i>03</i><span>试剂</span><small>扫描</small></a>
-                <a href="/run" class="nav-item" data-href="/run"><i>04</i><span>运行</span><small>详情</small></a>
+                <a href="/control-console" class="nav-item" data-href="/control-console"><i>01</i><span>主控</span><small>总台</small></a>
+                <a href="/dashboard" class="nav-item" data-href="/dashboard"><i>02</i><span>总览</span><small>运行</small></a>
+                <a href="/samples" class="nav-item" data-href="/samples"><i>03</i><span>样本</span><small>确认</small></a>
+                <a href="/reagents" class="nav-item" data-href="/reagents"><i>04</i><span>试剂</span><small>扫描</small></a>
+                <a href="/run" class="nav-item" data-href="/run"><i>05</i><span>运行</span><small>详情</small></a>
                 <a href="/alerts" class="nav-item" data-href="/alerts"><i>!</i><span>告警</span><small>处理</small></a>
                 <a href="/history" class="nav-item" data-href="/history"><i>H</i><span>历史</span><small>导出</small></a>
                 <a href="/configure" class="nav-item admin-only" data-href="/configure"><i>C</i><span>配置</span><small>协议</small></a>
@@ -126,7 +128,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                   <div class="mini-metric"><span>告警</span><b id="metricAlarms">0</b></div>
                   <div class="mini-metric"><span>模式</span><b id="metricDeviceMode">Mock</b></div>
                   <div class="clock-card"><span id="clockTime">--:--</span><small id="clockDate">----</small></div>
-                  <button class="icon-btn" onclick="location.href='/dashboard'" title="主控台">⌂</button>
+                  <button class="icon-btn" onclick="location.href='/control-console'" title="主控台">⌂</button>
                   <button class="icon-btn danger" onclick="logout()" title="退出">×</button>
                 </div>
               </header>
@@ -210,6 +212,15 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
           </script>
         </body>
         </html>
+        """;
+    }
+
+    private static string ControlConsoleContent()
+    {
+        return """
+        <section class="control-console-shell" aria-label="主控台数字孪生" style="width:100%;height:calc(100vh - 190px);min-height:680px;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:0 20px 55px rgba(15,23,42,.12)">
+          <iframe id="controlConsoleFrame" title="主控台数字孪生" src="/static/control-console/index.html?v=20260626-r6" style="width:100%;height:100%;border:0;display:block;background:#f5f7fb"></iframe>
+        </section>
         """;
     }
 

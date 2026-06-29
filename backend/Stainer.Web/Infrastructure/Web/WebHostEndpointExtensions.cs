@@ -11,6 +11,7 @@ public static class WebHostEndpointExtensions
     [
         "/",
         "/login",
+        "/control-console",
         "/dashboard",
         "/samples",
         "/reagents",

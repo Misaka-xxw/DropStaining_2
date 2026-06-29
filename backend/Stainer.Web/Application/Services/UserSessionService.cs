@@ -65,7 +65,7 @@ public sealed class UserSessionService(StainerDbContext dbContext, PasswordHashS
         });
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        return new LoginResponse(true, ToCurrentUser(principal), "/dashboard");
+        return new LoginResponse(true, ToCurrentUser(principal), "/control-console");
     }
 
     public async Task LogoutAsync(HttpContext httpContext, CancellationToken cancellationToken = default)

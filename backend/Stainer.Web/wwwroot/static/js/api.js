@@ -43,7 +43,7 @@ function updateClock(){
   d.textContent = now.toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit',weekday:'short'});
 }
 function markActiveNav(){
-  const path = location.pathname || '/dashboard';
+  const path = location.pathname || '/control-console';
   document.querySelectorAll('.nav-item').forEach(a=>a.classList.toggle('active', a.dataset.href === path));
 }
 document.addEventListener('DOMContentLoaded',()=>{ syncStatusLabels(); updateClock(); setInterval(updateClock,1000); markActiveNav(); });
