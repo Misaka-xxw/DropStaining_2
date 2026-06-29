@@ -5,7 +5,7 @@ namespace Stainer.Web.Infrastructure.Web;
 
 public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
-    private const string AssetVersion = "20260626-r11";
+    private const string AssetVersion = "20260626-r12";
 
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {
@@ -116,8 +116,8 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                 <a href="/samples" class="nav-item" data-href="/samples"><i>03</i><span>样本</span><small>确认</small></a>
                 <a href="/reagents" class="nav-item" data-href="/reagents"><i>04</i><span>试剂</span><small>扫描</small></a>
                 <a href="/run" class="nav-item" data-href="/run"><i>05</i><span>运行</span><small>详情</small></a>
-                <a href="/alerts" class="nav-item" data-href="/alerts"><i>!</i><span>告警</span><small>处理</small></a>
-                <a href="/history" class="nav-item" data-href="/history"><i>H</i><span>历史</span><small>导出</small></a>
+                <a href="/alerts" class="nav-item" data-href="/alerts"><i>06</i><span>告警</span><small>处理</small></a>
+                <a href="/history" class="nav-item" data-href="/history"><i>07</i><span>历史</span><small>导出</small></a>
                 <a href="/configure" class="nav-item admin-only" data-href="/configure"><i>C</i><span>配置</span><small>协议</small></a>
                 <a href="/engineer" class="nav-item admin-only" data-href="/engineer"><i>E</i><span>工程</span><small>调试</small></a>
                 <a href="/admin" class="nav-item admin-only" data-href="/admin"><i>A</i><span>管理</span><small>用户</small></a>
@@ -241,9 +241,9 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 
     private static string ControlConsoleContent()
     {
-        return """
+        return $$"""
         <section class="control-console-shell" aria-label="主控台数字孪生" style="width:100%;height:calc(100vh - 34px);min-height:0;margin-bottom:0;border:1px solid rgba(219,231,245,.88);border-radius:20px;overflow:hidden;background:#f5f7fb;box-shadow:0 20px 55px rgba(15,23,42,.12)">
-          <iframe id="controlConsoleFrame" title="主控台数字孪生" src="/static/control-console/index.html?v=20260626-r11" style="width:100%;height:100%;border:0;display:block;background:#f5f7fb"></iframe>
+          <iframe id="controlConsoleFrame" title="主控台数字孪生" src="{{VersionedAsset("/static/control-console/index.html")}}" style="width:100%;height:100%;border:0;display:block;background:#f5f7fb"></iframe>
         </section>
         """;
     }

@@ -368,13 +368,13 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
   body:has(.sample-screen) .sample-cabinet.v18-slot-grid{height:100%;min-height:0}
   body:has(.reagent-toolbar) .reagent-v18-layout{flex:1 1 auto;height:auto;min-height:0;overflow:hidden;grid-template-columns:minmax(0,1fr) 300px;gap:12px}
 
-  body:has(.v18-runbar) .v18-runbar{flex:0 0 78px;min-height:0;padding:8px;gap:10px;grid-template-columns:repeat(auto-fit,minmax(162px,1fr))}
-  body:has(.v18-runbar) .v18-runbar .command{min-height:60px;border-radius:18px;grid-template-columns:34px minmax(0,1fr);grid-template-rows:auto auto;place-items:center start;text-align:left;column-gap:10px;padding:0 13px}
-  body:has(.v18-runbar) .v18-runbar .command i{grid-row:1/3;width:30px;height:30px;border-radius:12px;font-size:16px}
-  body:has(.v18-runbar) .v18-runbar .command b{font-size:16px;line-height:1.1;white-space:nowrap}
-  body:has(.v18-runbar) .v18-runbar .command span{font-size:11px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-  body:has(.v18-runbar) .run-badge{border-radius:18px;padding:8px}
-  body:has(.v18-runbar) .run-badge .status-chip{min-height:32px;padding:0 12px}
+  body:has(.v18-runbar) .v18-runbar{flex:0 0 108px;min-height:0;padding:10px;gap:12px;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(250px,.92fr)}
+  body:has(.v18-runbar) .v18-runbar .command{min-height:86px;border-radius:20px;grid-template-columns:42px minmax(0,1fr);grid-template-rows:auto auto;place-items:center start;text-align:left;column-gap:14px;padding:0 18px}
+  body:has(.v18-runbar) .v18-runbar .command i{grid-row:1/3;width:38px;height:38px;border-radius:14px;font-size:18px}
+  body:has(.v18-runbar) .v18-runbar .command b{font-size:18px;line-height:1.2;white-space:nowrap}
+  body:has(.v18-runbar) .v18-runbar .command span{font-size:12px;line-height:1.35;white-space:normal;overflow:visible;max-width:100%}
+  body:has(.v18-runbar) .run-badge{border-radius:20px;padding:12px}
+  body:has(.v18-runbar) .run-badge .status-chip{min-height:36px;padding:0 14px}
   body:has(.v18-runbar) .run-grid{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 560px;gap:14px}
   body:has(.v18-runbar) .run-channels-card,
   body:has(.v18-runbar) .run-side-stack,
@@ -413,6 +413,8 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
   body:has(#alarmList) .inline-form.touch-form{gap:10px;margin-bottom:10px}
   body:has(#alarmList) .inline-form.touch-form .input{height:44px;border-radius:14px}
   body:has(#alarmList) #alarmList{height:calc(100% - 132px);min-height:0;overflow:auto}
+  body:has(#alarmList) .alarm-row{grid-template-columns:96px minmax(0,1.5fr) minmax(260px,1fr) minmax(210px,1.2fr)}
+  body:has(#alarmList) .alarm-row b{width:fit-content;min-width:72px;max-width:100%;padding:0 12px;box-sizing:border-box;white-space:nowrap;justify-self:start}
   body:has(#alarmList) #alertLogs{height:calc(100% - 54px);max-height:none;overflow:auto}
 
   body:has(#historySlides) .workbench>.modern-card:first-of-type{flex:0 0 228px;min-height:0;overflow:hidden;padding:18px}
