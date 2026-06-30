@@ -61,7 +61,7 @@ public sealed class WebHostIntegrationTests
         var controlConsole = await client.GetStringAsync("/control-console");
         Assert.Contains("app-shell", controlConsole);
         Assert.Contains("controlConsoleFrame", controlConsole);
-        Assert.Contains("/static/control-console/index.html?v=20260629-r13", controlConsole);
+        Assert.Contains("/static/control-console/index.html?v=20260630-r14", controlConsole);
         Assert.DoesNotContain("top-panel", controlConsole);
 
         var mockTimeline = await client.GetStringAsync("/mock-timeline");
@@ -203,7 +203,10 @@ public sealed class WebHostIntegrationTests
         var loginResponse = await login.Content.ReadFromJsonAsync<LoginResponse>();
         Assert.Equal("/control-console", loginResponse?.Redirect);
 
-        var initialize = await client.PostAsync("/api/system/initialize", null);
+        var initialize = await client.PostAsJsonAsync("/api/system/initialize", new
+        {
+            commandId = "cmd-web-host-initialize"
+        });
         Assert.Equal(HttpStatusCode.OK, initialize.StatusCode);
 
         var samples = await client.PostAsync("/api/samples/scan?count=4", null);

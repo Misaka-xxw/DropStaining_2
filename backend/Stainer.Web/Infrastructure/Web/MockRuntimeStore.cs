@@ -334,12 +334,16 @@ public sealed class MockRuntimeState
 
 public sealed class MockSystemCheck
 {
+    public bool ControllerOnline { get; set; }
     public bool RoboticArmHome { get; set; }
     public bool ReagentCooling { get; set; }
     public bool ScannerOnline { get; set; }
+    public bool SampleScannerOnline { get; set; }
+    public bool ReagentScannerOnline { get; set; }
     public bool LiquidSensor { get; set; }
     public bool NeedleWash { get; set; }
     public bool PureWaterOk { get; set; } = true;
+    public bool PbsOk { get; set; } = true;
     public bool WasteTankFull { get; set; }
     public bool ToxicTankFull { get; set; }
     public decimal CurrentTemperatureC { get; set; } = 42;

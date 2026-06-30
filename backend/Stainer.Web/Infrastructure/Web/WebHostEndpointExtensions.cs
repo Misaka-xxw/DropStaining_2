@@ -57,6 +57,42 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.RequestModeChangeAsync(request, actor, cancellationToken));
             }));
+        app.MapGet("/api/device/state", async (HttpContext context, UserSessionService sessionService, DeviceControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.GetStateAsync(cancellationToken));
+            }));
+        app.MapPost("/api/device/mock-faults", async (HttpContext context, ConfigureMockDeviceFaultRequest request, UserSessionService sessionService, DeviceControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ConfigureFaultAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/device/mock-faults/clear", async (HttpContext context, ClearMockDeviceFaultRequest request, UserSessionService sessionService, DeviceControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ClearFaultsAsync(request, actor, cancellationToken));
+            }));
+        app.MapGet("/api/device-initialization", async (HttpContext context, UserSessionService sessionService, DeviceInitializationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.GetLatestAsync(cancellationToken));
+            }));
+        app.MapPost("/api/device-initialization", async (HttpContext context, StartDeviceInitializationRequest request, UserSessionService sessionService, DeviceInitializationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.InitializeAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/device-initialization/{initializationRunId}/retry", async (HttpContext context, string initializationRunId, RetryDeviceInitializationRequest request, UserSessionService sessionService, DeviceInitializationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.RetryAsync(initializationRunId, request, actor, cancellationToken));
+            }));
         app.MapGet("/api/executor/lease", (MachineExecutorLeaseService service) => Results.Ok(service.GetStatus()));
         app.MapPost("/api/startup/recovery", async (HttpContext context, UserSessionService sessionService, StartupRecoveryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
@@ -264,7 +300,7 @@ public static class WebHostEndpointExtensions
         app.MapPost("/api/channel-batches/experiment-type-selection", async (HttpContext context, SelectChannelExperimentTypeRequest request, UserSessionService sessionService, ChannelBatchWorkflowService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.SelectExperimentTypeAsync(request, actor, cancellationToken));
             }));
         app.MapPost("/api/channel-batches/active", async (HttpContext context, EnsureChannelBatchRequest request, UserSessionService sessionService, ChannelBatchWorkflowService service, CancellationToken cancellationToken) =>
@@ -517,8 +553,15 @@ public static class WebHostEndpointExtensions
                 return Results.Ok(await service.RedoCurrentMajorStepAsync(id, request, actor, cancellationToken));
             }));
 
-        app.MapPost("/api/system/initialize", (MockRuntimeStore store) => Results.Ok(store.Initialize()));
-        app.MapPost("/api/system/reset", (MockRuntimeStore store) => Results.Ok(store.Reset()));
+        app.MapPost("/api/system/initialize", async (HttpContext context, StartDeviceInitializationRequest request, UserSessionService sessionService, DeviceInitializationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.InitializeAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/system/reset", () => Results.Json(
+            new { code = "legacy_runtime_reset_disabled", message = "Legacy MockRuntimeStore reset is disabled." },
+            statusCode: StatusCodes.Status410Gone));
         app.MapPost("/api/samples/scan", (MockRuntimeStore store, int? count) => Results.Ok(store.ScanSamples(count ?? 8)));
         app.MapPost("/api/reagents/scan", (MockRuntimeStore store) => Results.Ok(store.ScanReagents()));
         app.MapPost("/api/run/start", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>

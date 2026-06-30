@@ -24,6 +24,7 @@ public sealed class RuntimeLedgerExecutorTests
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
         await LoginAsync(client, "operator", "operator");
+        await InitializeDevicesAsync(client, "executor-001");
 
         string ihcTaskId;
         string heTaskId;
@@ -76,6 +77,7 @@ public sealed class RuntimeLedgerExecutorTests
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
         await LoginAsync(client, "admin", "admin");
+        await InitializeDevicesAsync(client, "executor-002");
 
         string taskId;
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -137,6 +139,7 @@ public sealed class RuntimeLedgerExecutorTests
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
         await LoginAsync(client, "admin", "admin");
+        await InitializeDevicesAsync(client, "executor-003");
 
         string taskId;
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -178,6 +181,7 @@ public sealed class RuntimeLedgerExecutorTests
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
         await LoginAsync(client, "admin", "admin");
+        await InitializeDevicesAsync(client, "executor-004");
 
         string taskId;
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -234,6 +238,7 @@ public sealed class RuntimeLedgerExecutorTests
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
         var cookie = await LoginAsync(client, "admin", "admin");
+        await InitializeDevicesAsync(client, "executor-signalr");
 
         string taskId;
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -281,6 +286,7 @@ public sealed class RuntimeLedgerExecutorTests
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
         await LoginAsync(client, "operator", "operator");
+        await InitializeDevicesAsync(client, "executor-legacy");
 
         await using (var scope = factory.Services.CreateAsyncScope())
         {
@@ -348,6 +354,15 @@ public sealed class RuntimeLedgerExecutorTests
         var body = await response.Content.ReadFromJsonAsync<T>();
         Assert.NotNull(body);
         return body!;
+    }
+
+    private static async Task InitializeDevicesAsync(HttpClient client, string suffix)
+    {
+        var result = await PostJsonAsync<DeviceInitializationResponse>(client, "/api/device-initialization", new
+        {
+            commandId = $"cmd-device-initialize-{suffix}"
+        });
+        Assert.True(result.Ok, result.Message);
     }
 
     private static async Task<MachineRunDetailResponse> WaitForRunStatusAsync(HttpClient client, string runId, string status)

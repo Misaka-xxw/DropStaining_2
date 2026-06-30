@@ -82,6 +82,8 @@ public static class MachineEventTypes
     public const string AlarmRaised = "alarm.raised";
     public const string AlarmAcknowledged = "alarm.acknowledged";
     public const string DeviceConnectionChanged = "device.connectionChanged";
+    public const string DeviceStateChanged = "device.stateChanged";
+    public const string DeviceInitializationChanged = "device.initializationChanged";
     public const string QrScanCompleted = "qr.scanCompleted";
     public const string ScanSessionChanged = "scanSession.changed";
 }

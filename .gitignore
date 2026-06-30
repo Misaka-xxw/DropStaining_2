@@ -104,5 +104,10 @@ data/*.db-shm
 data/*.db-wal
 data/*.db-journal
 
+# Stainer local runtime state
+data/logs/*.jsonl
+data/machine-executor.lock
+data/backups/
+
 # Temp files
 *.tmp

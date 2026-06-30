@@ -43,6 +43,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<WorkflowExecution> WorkflowExecutions => Set<WorkflowExecution>();
     public DbSet<WorkflowStepExecution> WorkflowStepExecutions => Set<WorkflowStepExecution>();
     public DbSet<DeviceCommandExecution> DeviceCommandExecutions => Set<DeviceCommandExecution>();
+    public DbSet<DeviceInitializationRun> DeviceInitializationRuns => Set<DeviceInitializationRun>();
+    public DbSet<DeviceInitializationCheck> DeviceInitializationChecks => Set<DeviceInitializationCheck>();
     public DbSet<ReagentReservation> ReagentReservations => Set<ReagentReservation>();
     public DbSet<ReagentConsumption> ReagentConsumptions => Set<ReagentConsumption>();
     public DbSet<DispenseExecution> DispenseExecutions => Set<DispenseExecution>();
@@ -84,6 +86,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureStainingTask(modelBuilder);
         ConfigureHospitalBarcodeMapping(modelBuilder);
         ConfigureRuntimeLedger(modelBuilder);
+        ConfigureDeviceInitialization(modelBuilder);
     }
 
     public override int SaveChanges()
@@ -1196,5 +1199,57 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         actions.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         actions.HasOne(x => x.Alarm).WithMany(x => x.Actions).HasForeignKey(x => x.AlarmId).OnDelete(DeleteBehavior.Cascade);
         actions.HasOne(x => x.ActorUser).WithMany().HasForeignKey(x => x.ActorUserId).OnDelete(DeleteBehavior.SetNull);
+    }
+
+    private static void ConfigureDeviceInitialization(ModelBuilder modelBuilder)
+    {
+        var runs = modelBuilder.Entity<DeviceInitializationRun>();
+        runs.ToTable("device_initialization_runs", table =>
+        {
+            table.HasCheckConstraint(
+                "ck_device_initialization_runs_status",
+                $"status in ('{DeviceInitializationStatus.Running}', '{DeviceInitializationStatus.Ready}', '{DeviceInitializationStatus.Failed}')");
+        });
+        runs.HasKey(x => x.Id);
+        runs.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        runs.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128).IsRequired();
+        runs.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        runs.Property(x => x.DeviceMode).HasColumnName("device_mode").HasMaxLength(16).IsRequired();
+        runs.Property(x => x.AdapterName).HasColumnName("adapter_name").HasMaxLength(128).IsRequired();
+        runs.Property(x => x.AttemptNo).HasColumnName("attempt_no").IsRequired();
+        runs.Property(x => x.RetryOfRunId).HasColumnName("retry_of_run_id").HasMaxLength(36);
+        runs.Property(x => x.RequestedByUserId).HasColumnName("requested_by_user_id").HasMaxLength(36);
+        runs.Property(x => x.FailureCode).HasColumnName("failure_code").HasMaxLength(128);
+        runs.Property(x => x.Message).HasColumnName("message").HasMaxLength(2000);
+        runs.Property(x => x.StartedAtUtc).HasColumnName("started_at_utc").IsRequired();
+        runs.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
+        runs.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        runs.HasIndex(x => x.CommandId).IsUnique();
+        runs.HasIndex(x => new { x.Status, x.CreatedAtUtc });
+        runs.HasIndex(x => x.RetryOfRunId);
+        runs.HasOne(x => x.RequestedByUser).WithMany().HasForeignKey(x => x.RequestedByUserId).OnDelete(DeleteBehavior.SetNull);
+        runs.HasOne(x => x.RetryOfRun).WithMany(x => x.RetryRuns).HasForeignKey(x => x.RetryOfRunId).OnDelete(DeleteBehavior.Restrict);
+
+        var checks = modelBuilder.Entity<DeviceInitializationCheck>();
+        checks.ToTable("device_initialization_checks", table =>
+        {
+            table.HasCheckConstraint(
+                "ck_device_initialization_checks_status",
+                $"status in ('{DeviceInitializationCheckStatus.Pending}', '{DeviceInitializationCheckStatus.Running}', '{DeviceInitializationCheckStatus.Succeeded}', '{DeviceInitializationCheckStatus.Failed}', '{DeviceInitializationCheckStatus.TimedOut}', '{DeviceInitializationCheckStatus.Unknown}')");
+        });
+        checks.HasKey(x => x.Id);
+        checks.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        checks.Property(x => x.DeviceInitializationRunId).HasColumnName("device_initialization_run_id").HasMaxLength(36).IsRequired();
+        checks.Property(x => x.StepNo).HasColumnName("step_no").IsRequired();
+        checks.Property(x => x.ModuleCode).HasColumnName("module_code").HasMaxLength(128).IsRequired();
+        checks.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        checks.Property(x => x.ErrorCode).HasColumnName("error_code").HasMaxLength(128);
+        checks.Property(x => x.Message).HasColumnName("message").HasMaxLength(2000).IsRequired();
+        checks.Property(x => x.ResultJson).HasColumnName("result_json").HasMaxLength(8000).IsRequired();
+        checks.Property(x => x.StartedAtUtc).HasColumnName("started_at_utc");
+        checks.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
+        checks.HasIndex(x => new { x.DeviceInitializationRunId, x.StepNo }).IsUnique();
+        checks.HasIndex(x => new { x.ModuleCode, x.Status });
+        checks.HasOne(x => x.DeviceInitializationRun).WithMany(x => x.Checks).HasForeignKey(x => x.DeviceInitializationRunId).OnDelete(DeleteBehavior.Cascade);
     }
 }

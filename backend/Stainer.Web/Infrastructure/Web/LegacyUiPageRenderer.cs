@@ -5,7 +5,7 @@ namespace Stainer.Web.Infrastructure.Web;
 
 public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 {
-    private const string AssetVersion = "20260629-r13";
+    private const string AssetVersion = "20260630-r14";
 
     private static readonly IReadOnlyDictionary<string, PageDefinition> Pages = new Dictionary<string, PageDefinition>(StringComparer.OrdinalIgnoreCase)
     {

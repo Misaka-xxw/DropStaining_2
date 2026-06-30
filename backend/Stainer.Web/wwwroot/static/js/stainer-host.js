@@ -103,12 +103,15 @@ function renderSystemChecks(system){
   const root = document.getElementById('systemChecks');
   if(!root) return;
   const rows = [
+    ['controllerOnline', '主控连接'],
     ['roboticArmHome', '机械臂回零'],
     ['reagentCooling', '制冷连接 ' + (system.reagentTemperatureC ?? 8) + '℃'],
-    ['scannerOnline', '扫码器在线'],
+    ['sampleScannerOnline', '样本扫码器在线'],
+    ['reagentScannerOnline', '试剂扫码器在线'],
     ['liquidSensor', '液位/传感器读取'],
     ['needleWash', '洗针准备'],
-    ['pureWaterOk', '水/PBS 可用'],
+    ['pureWaterOk', '纯水可用'],
+    ['pbsOk', 'PBS 可用'],
     ['wasteTankFull', '废液未满', true],
     ['toxicTankFull', '排毒桶未满', true]
   ];
@@ -436,7 +439,7 @@ function applyMachineEvent(event){
   const payload = event.payload || {};
   appendMachineLog(state, event);
   if(typeof window.invalidatePreflightView === 'function'
-      && ['scanSession.changed','reagent.changed','reagentBottle.changed','channelBatch.changed','slideTask.created','machine.stateChanged','workflowStep.started','workflowStep.completed','alarm.raised','alarm.acknowledged','device.connectionChanged','qr.scanCompleted'].includes(event.type)){
+      && ['scanSession.changed','reagent.changed','reagentBottle.changed','channelBatch.changed','slideTask.created','machine.stateChanged','workflowStep.started','workflowStep.completed','alarm.raised','alarm.acknowledged','device.connectionChanged','device.stateChanged','device.initializationChanged','qr.scanCompleted'].includes(event.type)){
     window.invalidatePreflightView('后端状态已变化。');
   }
   if(isReagentEvent(event)){
@@ -449,6 +452,8 @@ function applyMachineEvent(event){
   switch(event.type){
     case 'channelBatch.changed':
     case 'slideTask.created':
+    case 'device.stateChanged':
+    case 'device.initializationChanged':
       loadHostState();
       if(typeof window.refreshRunView === 'function') window.refreshRunView();
       return;
@@ -495,7 +500,7 @@ function applyMachineEvent(event){
   renderEngineer(state);
   renderRunPage(state);
   if(typeof window.refreshRunView === 'function'
-      && ['machine.stateChanged','workflowStep.started','workflowStep.completed','alarm.raised','alarm.acknowledged','device.connectionChanged'].includes(event.type)){
+      && ['machine.stateChanged','workflowStep.started','workflowStep.completed','alarm.raised','alarm.acknowledged','device.connectionChanged','device.stateChanged','device.initializationChanged'].includes(event.type)){
     window.refreshRunView();
   }
 }

@@ -1041,6 +1041,11 @@ public sealed class BusinessWriteApiIntegrationTests
             commandId = "cmd-channel-rules-run-create",
             stainingTaskIds = taskIds
         });
+        var initialization = await PostJsonAsync<DeviceInitializationResponse>(client, "/api/device-initialization", new
+        {
+            commandId = "cmd-channel-rules-device-initialize"
+        });
+        Assert.True(initialization.Ok, initialization.Message);
         await PostJsonAsync<RunCommandResponse>(client, $"/api/runs/{run.RunId}/start", new { commandId = "cmd-channel-rules-run-start" });
 
         var lockedChange = await client.PostAsJsonAsync("/api/channel-batches/workflow-selection", new

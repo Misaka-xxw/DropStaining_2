@@ -2,16 +2,16 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
+using Stainer.Web.Application.Devices;
 using Stainer.Web.Domain.Entities;
 using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Application.Services;
 
-public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
+public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDeviceAdapter deviceAdapter)
 {
     private readonly Channel<MachineExecutorCommand> commands = Channel.CreateUnbounded<MachineExecutorCommand>();
     private readonly ConcurrentDictionary<string, ControlFlags> flags = new(StringComparer.Ordinal);
-    private readonly TimeSpan mockDelay = TimeSpan.FromMilliseconds(35);
     private IServiceScopeFactory? scopeFactory;
 
     public void Attach(IServiceScopeFactory serviceScopeFactory)
@@ -170,8 +170,9 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
             new Dictionary<string, object?>
             {
                 ["connected"] = true,
-                ["adapter"] = "Mock",
-                ["message"] = "Mock device connection is available."
+                ["adapter"] = deviceAdapter.Name,
+                ["mode"] = deviceAdapter.Mode,
+                ["message"] = $"{deviceAdapter.Name} is selected."
             }));
 
         while (!cancellationToken.IsCancellationRequested)
@@ -263,18 +264,36 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         command.CommandSentAtUtc = DateTimeOffset.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        await Task.Delay(mockDelay, cancellationToken);
+        var deviceResult = await ExecuteDeviceActionAsync(step, command, cancellationToken);
+        if (deviceResult.Acknowledged)
+        {
+            command.Status = DeviceCommandStatus.Acknowledged;
+            command.AcknowledgedAtUtc = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
 
-        command.Status = DeviceCommandStatus.Acknowledged;
-        command.AcknowledgedAtUtc = DateTimeOffset.UtcNow;
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        var ok = await ApplyMockActionAsync(dbContext, run, step, command, cancellationToken);
-        command.Status = ok ? DeviceCommandStatus.Completed : DeviceCommandStatus.Failed;
+        var deviceOutcomeUnknown = deviceResult.Status is DeviceCommandStatuses.Unknown or DeviceCommandStatuses.TimedOut;
+        var ok = deviceResult.Ok && await ApplyBusinessEffectsAsync(dbContext, run, step, command, deviceResult, cancellationToken);
+        command.Status = ok
+            ? DeviceCommandStatus.Completed
+            : deviceOutcomeUnknown ? DeviceCommandStatus.Unknown : DeviceCommandStatus.Failed;
         command.CompletedAtUtc = DateTimeOffset.UtcNow;
-        command.ResultJson = JsonSerializer.Serialize(new { ok });
+        command.ResultJson = JsonSerializer.Serialize(new
+        {
+            ok,
+            adapter = deviceAdapter.Name,
+            mode = deviceAdapter.Mode,
+            deviceResult.Status,
+            deviceResult.ErrorCode,
+            deviceResult.Message,
+            deviceResult.StartedAtUtc,
+            deviceResult.CompletedAtUtc,
+            deviceResult.Data
+        });
 
-        step.Status = ok ? RuntimeLedgerStatus.Completed : RuntimeLedgerStatus.Failed;
+        step.Status = ok
+            ? RuntimeLedgerStatus.Completed
+            : deviceOutcomeUnknown ? RuntimeLedgerStatus.Unknown : RuntimeLedgerStatus.Failed;
         step.CompletedAtUtc = DateTimeOffset.UtcNow;
         await dbContext.SaveChangesAsync(cancellationToken);
         PublishWorkflowStep(run.Id, step, MachineEventTypes.WorkflowStepCompleted);
@@ -282,18 +301,26 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
 
         if (!ok)
         {
-            await FaultRunAsync(dbContext, run.Id, step.Id, "Mock step failed.", cancellationToken);
+            await FaultRunAsync(
+                dbContext,
+                run.Id,
+                step.Id,
+                deviceResult.Message,
+                cancellationToken,
+                deviceOutcomeUnknown ? "device_command_unknown" : "device_command_failed",
+                deviceOutcomeUnknown);
             return false;
         }
 
         return true;
     }
 
-    private async Task<bool> ApplyMockActionAsync(
+    private async Task<bool> ApplyBusinessEffectsAsync(
         StainerDbContext dbContext,
         MachineRun run,
         WorkflowStepExecution step,
         DeviceCommandExecution command,
+        DeviceCommandResult deviceResult,
         CancellationToken cancellationToken)
     {
         if (IsDabStep(step))
@@ -314,9 +341,10 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
                     ["workflowStepExecutionId"] = step.Id,
                     ["slideTaskId"] = step.WorkflowExecution?.SlideTaskId,
                     ["majorStepCode"] = step.MajorStepCode,
-                    ["currentTemperatureDeciC"] = 420,
-                    ["targetTemperatureDeciC"] = 420,
-                    ["message"] = "Mock temperature reached target."
+                    ["currentTemperatureDeciC"] = deviceResult.Data.GetValueOrDefault("currentTemperatureDeciC") ?? 420,
+                    ["targetTemperatureDeciC"] = deviceResult.Data.GetValueOrDefault("currentTemperatureDeciC") ?? 420,
+                    ["adapter"] = deviceAdapter.Name,
+                    ["message"] = deviceResult.Message
                 }));
         }
 
@@ -326,6 +354,73 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         }
 
         return true;
+    }
+
+    private Task<DeviceCommandResult> ExecuteDeviceActionAsync(
+        WorkflowStepExecution step,
+        DeviceCommandExecution command,
+        CancellationToken cancellationToken)
+    {
+        var moduleCode = ResolveDeviceModule(step);
+        var request = new DeviceOperationRequest(
+            new DeviceCommandContext(command.Id, command.Id, "system", nameof(MachineExecutor)),
+            moduleCode,
+            step.ActionType,
+            new Dictionary<string, object?>
+            {
+                ["machineRunId"] = command.MachineRunId,
+                ["workflowStepExecutionId"] = step.Id,
+                ["stepNo"] = step.StepNo,
+                ["majorStepCode"] = step.MajorStepCode,
+                ["reagentCode"] = step.ReagentCode,
+                ["volumeUl"] = step.VolumeUl,
+                ["targetTemperatureDeciC"] = 420
+            });
+
+        if (IsDabStep(step))
+        {
+            return deviceAdapter.PrepareDabAsync(request, cancellationToken);
+        }
+
+        if (IsTemperatureStep(step))
+        {
+            return deviceAdapter.SetTemperatureAsync(request, cancellationToken);
+        }
+
+        var action = step.ActionType.ToLowerInvariant();
+        if (action.Contains("needle") && action.Contains("wash"))
+        {
+            return deviceAdapter.WashNeedlesAsync(request, cancellationToken);
+        }
+
+        if (action.Contains("wash"))
+        {
+            return deviceAdapter.RunPumpAsync(request, cancellationToken);
+        }
+
+        if (action.Contains("mix"))
+        {
+            return deviceAdapter.MixAsync(request, cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0)
+        {
+            return deviceAdapter.PipetteAsync(request, cancellationToken);
+        }
+
+        return deviceAdapter.ExecuteWorkflowActionAsync(request, cancellationToken);
+    }
+
+    private static string ResolveDeviceModule(WorkflowStepExecution step)
+    {
+        if (IsDabStep(step)) return DeviceModules.Dab;
+        if (IsTemperatureStep(step)) return DeviceModules.Temperature;
+        var action = step.ActionType.ToLowerInvariant();
+        if (action.Contains("needle")) return DeviceModules.NeedleWash;
+        if (action.Contains("wash")) return DeviceModules.Pump;
+        if (action.Contains("mix")) return DeviceModules.Mixer;
+        if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0) return DeviceModules.Pipette;
+        return DeviceModules.Workflow;
     }
 
     private async Task<bool> ConsumeReagentAsync(
@@ -697,7 +792,14 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         PublishMachineState(run, "Run stopped after current atomic action.");
     }
 
-    private async Task FaultRunAsync(StainerDbContext dbContext, string runId, string stepId, string message, CancellationToken cancellationToken)
+    private async Task FaultRunAsync(
+        StainerDbContext dbContext,
+        string runId,
+        string stepId,
+        string message,
+        CancellationToken cancellationToken,
+        string alarmCode = "mock_fault",
+        bool markUnknown = true)
     {
         var run = await LoadRunAsync(dbContext, runId, cancellationToken);
         if (run is null)
@@ -708,7 +810,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
         var step = run.WorkflowExecutions.SelectMany(x => x.StepExecutions).FirstOrDefault(x => x.Id == stepId);
         if (step is not null)
         {
-            step.Status = RuntimeLedgerStatus.Unknown;
+            step.Status = markUnknown ? RuntimeLedgerStatus.Unknown : RuntimeLedgerStatus.Failed;
         }
 
         run.Status = RuntimeLedgerStatus.Faulted;
@@ -718,7 +820,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher)
             batch.Status = RuntimeLedgerStatus.Faulted;
         }
 
-        await AddAlarmAsync(dbContext, runId, "mock_fault", "Critical", message, cancellationToken);
+        await AddAlarmAsync(dbContext, runId, alarmCode, "Critical", message, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         PublishMachineState(run, message);
     }

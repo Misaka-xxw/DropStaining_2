@@ -8,12 +8,20 @@ using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Application.Services;
 
-public sealed class PreflightValidationService(StainerDbContext dbContext)
+public sealed class PreflightValidationService(StainerDbContext dbContext, DeviceInitializationService deviceInitializationService)
 {
     public async Task<PreflightValidationReportResponse> ValidateAsync(CancellationToken cancellationToken = default)
     {
         var generatedAtUtc = DateTimeOffset.UtcNow;
         var issues = new List<PreflightValidationIssueResponse>();
+        var initialization = await deviceInitializationService.GetLatestAsync(cancellationToken);
+        if (!initialization.Ok)
+        {
+            issues.Add(new PreflightValidationIssueResponse(
+                "Device",
+                "device_initialization_required",
+                $"Device initialization is not ready for the current mode. Status={initialization.Status}."));
+        }
         var tasks = await dbContext.StainingTasks
             .AsNoTracking()
             .Where(x => x.Status == StainingTaskStatus.Confirmed)
@@ -314,8 +322,24 @@ public sealed class PreflightValidationService(StainerDbContext dbContext)
                 x.RemovedAtUtc
             })
             .ToListAsync(cancellationToken);
+        var initializationRows = await dbContext.DeviceInitializationRuns
+            .AsNoTracking()
+            .Select(x => new
+            {
+                x.Id,
+                x.Status,
+                x.DeviceMode,
+                x.AdapterName,
+                x.AttemptNo,
+                x.CreatedAtUtc,
+                x.CompletedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+        var initialization = initializationRows
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .FirstOrDefault();
 
-        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements });
+        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements, initialization });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
     }
 }

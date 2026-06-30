@@ -2,6 +2,8 @@ using Microsoft.EntityFrameworkCore;
 using Stainer.Web.Application.Repositories;
 using Stainer.Web.Application.Services;
 using Stainer.Web.Infrastructure.Data;
+using Stainer.Web.Application.Devices;
+using Stainer.Web.Infrastructure.Devices;
 using Stainer.Web.Infrastructure.Health;
 using Stainer.Web.Infrastructure.Repositories;
 using Stainer.Web.Infrastructure.Web;
@@ -49,12 +51,23 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MachineRunQueryService>();
         services.AddScoped<TraceabilityQueryService>();
         services.AddScoped<DeviceModeService>();
+        services.AddScoped<DeviceControlService>();
+        services.AddScoped<DeviceInitializationService>();
         services.AddScoped<StartupRecoveryService>();
         services.AddScoped<DatabaseMaintenanceService>();
         services.AddScoped<PreHardwareReadinessService>();
         services.AddScoped<RunControlService>();
         services.AddScoped<RuntimePageBridgeService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
+        services.AddSingleton<MockDeviceStateStore>();
+        if (DeviceModes.Normalize(configuration["Device:Mode"]) == DeviceModes.Real)
+        {
+            services.AddSingleton<IDeviceAdapter, UnavailableRealDeviceAdapter>();
+        }
+        else
+        {
+            services.AddSingleton<IDeviceAdapter, MockDeviceAdapter>();
+        }
         services.AddSingleton<InMemoryRuntimeEventPublisher>();
         services.AddSingleton<IRuntimeEventPublisher>(serviceProvider => serviceProvider.GetRequiredService<InMemoryRuntimeEventPublisher>());
         services.AddSingleton<MachineExecutor>();

@@ -13,7 +13,8 @@ public sealed class RuntimePageBridgeService(
     MachineRunService machineRunService,
     MachineRunQueryService machineRunQueryService,
     RunControlService runControlService,
-    DeviceModeService deviceModeService)
+    DeviceModeService deviceModeService,
+    DeviceInitializationService deviceInitializationService)
 {
     private static readonly string[] ActiveBatchStatuses =
     [
@@ -28,7 +29,7 @@ public sealed class RuntimePageBridgeService(
         var run = await machineRunQueryService.GetCurrentAsync(cancellationToken);
         var state = run is null ? store.GetState() : ToPageState(store.GetState(), run);
         state.DeviceMode = deviceModeService.CurrentMode;
-        return await OverlayDatabaseChannelsAsync(state, cancellationToken);
+        return await ApplyFormalStateAsync(state, cancellationToken);
     }
 
     public async Task<MockRuntimeState> RunActionAsync(string action, AuthenticatedUser actor, CancellationToken cancellationToken = default)
@@ -65,7 +66,7 @@ public sealed class RuntimePageBridgeService(
             var createdRun = await machineRunQueryService.GetAsync(created.RunId, cancellationToken);
             var state = createdRun is null ? store.RunAction("start") : ToPageState(store.GetState(), createdRun);
             state.DeviceMode = deviceModeService.CurrentMode;
-            return await OverlayDatabaseChannelsAsync(state, cancellationToken);
+            return await ApplyFormalStateAsync(state, cancellationToken);
         }
 
         _ = normalizedAction switch
@@ -80,7 +81,88 @@ public sealed class RuntimePageBridgeService(
         var updated = await machineRunQueryService.GetAsync(run.Id, cancellationToken);
         var updatedState = updated is null ? store.GetState() : ToPageState(store.GetState(), updated);
         updatedState.DeviceMode = deviceModeService.CurrentMode;
-        return await OverlayDatabaseChannelsAsync(updatedState, cancellationToken);
+        return await ApplyFormalStateAsync(updatedState, cancellationToken);
+    }
+
+    private async Task<MockRuntimeState> ApplyFormalStateAsync(MockRuntimeState state, CancellationToken cancellationToken)
+    {
+        state = await OverlayDatabaseChannelsAsync(state, cancellationToken);
+        var initialization = await deviceInitializationService.GetLatestAsync(cancellationToken);
+        state.Initialized = initialization.Ok;
+        if (initialization.Ok && state.Status == "idle")
+        {
+            state.Status = state.Channels.SelectMany(x => x.Slides).Any() ? "ready" : "initialized";
+        }
+
+        state.System = ToSystemCheck(initialization);
+        if (!string.IsNullOrWhiteSpace(initialization.Message))
+        {
+            state.Logs = new[] { $"[Initialization/{initialization.Status}] {initialization.Message}" }
+                .Concat(state.Logs)
+                .Take(80)
+                .ToList();
+        }
+
+        return state;
+    }
+
+    private static MockSystemCheck ToSystemCheck(DeviceInitializationResponse initialization)
+    {
+        var checks = initialization.Checks.ToDictionary(x => x.ModuleCode, StringComparer.OrdinalIgnoreCase);
+        var controller = checks.GetValueOrDefault("controller");
+        var cooling = checks.GetValueOrDefault("cooling");
+        var sampleScanner = checks.GetValueOrDefault("sample-scanner");
+        var reagentScanner = checks.GetValueOrDefault("reagent-scanner");
+        var robot = checks.GetValueOrDefault("robot-arm");
+        var liquid = checks.GetValueOrDefault("liquid-level");
+        var wash = checks.GetValueOrDefault("needle-wash");
+        return new MockSystemCheck
+        {
+            ControllerOnline = IsSucceeded(controller),
+            RoboticArmHome = IsSucceeded(robot) && ReadBool(robot, "homed", true),
+            ReagentCooling = IsSucceeded(cooling),
+            SampleScannerOnline = IsSucceeded(sampleScanner),
+            ReagentScannerOnline = IsSucceeded(reagentScanner),
+            ScannerOnline = IsSucceeded(sampleScanner) && IsSucceeded(reagentScanner),
+            LiquidSensor = IsSucceeded(liquid),
+            NeedleWash = IsSucceeded(wash),
+            PureWaterOk = IsSucceeded(liquid) && ReadBool(liquid, "pureWaterOk", true),
+            PbsOk = IsSucceeded(liquid) && ReadBool(liquid, "pbsOk", true),
+            WasteTankFull = ReadBool(liquid, "wasteTankFull", false),
+            ToxicTankFull = ReadBool(liquid, "toxicTankFull", false),
+            ReagentTemperatureC = ReadDecimal(cooling, "currentTemperatureC", 8m)
+        };
+    }
+
+    private static bool IsSucceeded(DeviceInitializationCheckResponse? check) =>
+        check?.Status == DeviceInitializationCheckStatus.Succeeded;
+
+    private static bool ReadBool(DeviceInitializationCheckResponse? check, string key, bool fallback)
+    {
+        if (check is null || !check.Result.TryGetValue(key, out var value) || value is null)
+        {
+            return fallback;
+        }
+
+        if (value is bool boolean) return boolean;
+        if (value is System.Text.Json.JsonElement element && element.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+        {
+            return element.GetBoolean();
+        }
+
+        return bool.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
+    }
+
+    private static decimal ReadDecimal(DeviceInitializationCheckResponse? check, string key, decimal fallback)
+    {
+        if (check is null || !check.Result.TryGetValue(key, out var value) || value is null)
+        {
+            return fallback;
+        }
+
+        if (value is decimal number) return number;
+        if (value is System.Text.Json.JsonElement element && element.TryGetDecimal(out var parsedElement)) return parsedElement;
+        return decimal.TryParse(value.ToString(), out var parsed) ? parsed : fallback;
     }
 
     private async Task<MockRuntimeState> OverlayDatabaseChannelsAsync(MockRuntimeState state, CancellationToken cancellationToken)

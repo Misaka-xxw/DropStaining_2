@@ -12,6 +12,7 @@ public sealed class RunControlService(
     CommandIdempotencyService idempotencyService,
     MachineExecutor executor,
     PreflightValidationService preflightValidationService,
+    DeviceInitializationService deviceInitializationService,
     DeviceModeService deviceModeService,
     MachineExecutorLeaseService leaseService,
     SafetyLogWriter safetyLogWriter)
@@ -27,6 +28,7 @@ public sealed class RunControlService(
             async () =>
             {
                 deviceModeService.EnsureRunStartAllowed();
+                await deviceInitializationService.EnsureReadyAsync(cancellationToken);
                 leaseService.EnsureOwner();
                 var preflight = string.IsNullOrWhiteSpace(request.PreflightStateHash)
                     ? null

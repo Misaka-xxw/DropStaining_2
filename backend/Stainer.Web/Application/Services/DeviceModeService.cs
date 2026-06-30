@@ -16,7 +16,7 @@ public sealed class DeviceModeService(
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public string CurrentMode => Normalize(configuration["Device:Mode"]);
+    public string CurrentMode => DeviceModes.Normalize(configuration["Device:Mode"]);
 
     public bool RealDeviceHealthCheckComplete => bool.TryParse(configuration["Device:RealHealthCheckComplete"], out var value) && value;
 
@@ -58,7 +58,7 @@ public sealed class DeviceModeService(
             actor,
             async () =>
             {
-                var requestedMode = Normalize(request.DeviceMode);
+                var requestedMode = DeviceModes.Normalize(request.DeviceMode);
                 if (requestedMode is not (DeviceModes.Mock or DeviceModes.Real))
                 {
                     throw new BusinessRuleException("device_mode_invalid", "DeviceMode must be Mock or Real.", StatusCodes.Status400BadRequest);
@@ -147,16 +147,15 @@ public sealed class DeviceModeService(
         }
     }
 
-    private static string Normalize(string? value)
-    {
-        return string.Equals(value, DeviceModes.Real, StringComparison.OrdinalIgnoreCase)
-            ? DeviceModes.Real
-            : DeviceModes.Mock;
-    }
 }
 
 public static class DeviceModes
 {
     public const string Mock = "Mock";
     public const string Real = "Real";
+
+    public static string Normalize(string? value)
+    {
+        return string.Equals(value, Real, StringComparison.OrdinalIgnoreCase) ? Real : Mock;
+    }
 }
