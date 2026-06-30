@@ -19,7 +19,8 @@ public sealed record WorkflowVersionSummaryResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? UpdatedAtUtc,
     int StepCount,
-    int ReagentRequirementCount);
+    int ReagentRequirementCount,
+    string? DefaultExperimentType = null);
 
 public sealed record WorkflowDetailResponse(
     string Id,
@@ -41,7 +42,8 @@ public sealed record WorkflowVersionDetailResponse(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? UpdatedAtUtc,
     IReadOnlyList<WorkflowStepResponse> Steps,
-    IReadOnlyList<WorkflowReagentRequirementResponse> ReagentRequirements);
+    IReadOnlyList<WorkflowReagentRequirementResponse> ReagentRequirements,
+    string? DefaultExperimentType = null);
 
 public sealed record WorkflowStepResponse(
     string Id,
@@ -77,7 +79,8 @@ public sealed record WorkflowVersionMaintenanceResponse(
     DateTimeOffset? PublishedAtUtc,
     DateTimeOffset? RetiredAtUtc,
     IReadOnlyList<WorkflowStepResponse> Steps,
-    IReadOnlyList<WorkflowReagentRequirementResponse> ReagentRequirements);
+    IReadOnlyList<WorkflowReagentRequirementResponse> ReagentRequirements,
+    string? DefaultExperimentType = null);
 
 public sealed record PublishValidationResponse(
     string WorkflowVersionId,

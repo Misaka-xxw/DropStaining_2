@@ -38,7 +38,8 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
                         v.CreatedAtUtc,
                         v.UpdatedAtUtc,
                         v.Steps.Count,
-                        v.ReagentRequirements.Count))
+                        v.ReagentRequirements.Count,
+                        v.DefaultExperimentType))
                     .ToList()))
             .ToList();
     }
@@ -99,7 +100,8 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
                             null,
                             requirement.RequiredVolumeUl,
                             requirement.IsRequired))
-                        .ToList()))
+                        .ToList(),
+                    x.DefaultExperimentType))
                 .ToList());
     }
 

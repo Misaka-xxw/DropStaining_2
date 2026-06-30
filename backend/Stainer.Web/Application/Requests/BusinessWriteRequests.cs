@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace Stainer.Web.Application.Requests;
 
 public sealed record CreateUserRequest(
@@ -85,6 +88,8 @@ public sealed record PublishWorkflowVersionRequest(string CommandId);
 
 public sealed record RetireWorkflowVersionRequest(string CommandId, string Reason);
 
+public sealed record SetDefaultWorkflowVersionRequest(string CommandId, string ExperimentType);
+
 public sealed record CreatePrimaryAntibodyMappingRequest(
     string CommandId,
     string PrimaryAntibodyCode,
@@ -104,6 +109,17 @@ public sealed record SelectChannelWorkflowRequest(
     string? DrawerCode,
     string ExperimentType,
     string WorkflowVersionId);
+
+public sealed record SelectChannelExperimentTypeRequest(
+    string CommandId,
+    string? ChannelBatchId,
+    string? DrawerCode,
+    string ExperimentType,
+    string? Reason)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
 
 public sealed record EnsureChannelBatchRequest(
     string CommandId,

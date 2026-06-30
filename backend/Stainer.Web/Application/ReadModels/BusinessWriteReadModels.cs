@@ -40,6 +40,20 @@ public sealed record ChannelBatchWorkflowResponse(
     string WorkflowVersionId,
     string WorkflowSelectionStatus,
     DateTimeOffset? WorkflowSelectedAtUtc,
+    string Message,
+    string? WorkflowName = null,
+    string? WorkflowVersionLabel = null);
+
+public sealed record DefaultWorkflowVersionResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string ExperimentType,
+    string WorkflowDefinitionId,
+    string WorkflowVersionId,
+    string WorkflowCode,
+    string WorkflowName,
+    string WorkflowVersionLabel,
     string Message);
 
 public sealed record ChannelBatchActivationResponse(

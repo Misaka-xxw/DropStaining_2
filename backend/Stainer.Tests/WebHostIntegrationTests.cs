@@ -61,7 +61,7 @@ public sealed class WebHostIntegrationTests
         var controlConsole = await client.GetStringAsync("/control-console");
         Assert.Contains("app-shell", controlConsole);
         Assert.Contains("controlConsoleFrame", controlConsole);
-        Assert.Contains("/static/control-console/index.html?v=20260626-r12", controlConsole);
+        Assert.Contains("/static/control-console/index.html?v=20260629-r13", controlConsole);
         Assert.DoesNotContain("top-panel", controlConsole);
 
         var mockTimeline = await client.GetStringAsync("/mock-timeline");
@@ -99,10 +99,13 @@ public sealed class WebHostIntegrationTests
         var html = await client.GetStringAsync("/samples");
         var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
 
-        Assert.Contains("选择通道实验脚本", html);
-        Assert.Contains("当前通道脚本", html);
+        Assert.Contains("选择实验类型", html);
+        Assert.Contains("使用当前默认 HE 流程", html);
+        Assert.Contains("使用当前默认 IHC 流程", html);
         Assert.Contains("确认创建任务", html);
         Assert.DoesNotContain("统一选择脚本", html);
+        Assert.DoesNotContain("channelScriptSelect", html);
+        Assert.DoesNotContain("WorkflowVersionId", html);
         Assert.DoesNotContain("confirmMockTask", html);
         Assert.DoesNotContain("localStorage", html);
 
@@ -110,13 +113,14 @@ public sealed class WebHostIntegrationTests
         Assert.DoesNotContain("channelWorkflowSelections", hostScript);
         Assert.DoesNotContain("/api/samples/scan", hostScript);
         Assert.Contains("/api/channel-batches/active", hostScript);
-        Assert.Contains("/api/channel-batches/workflow-selection", hostScript);
+        Assert.Contains("/api/channel-batches/experiment-type-selection", hostScript);
+        Assert.DoesNotContain("/api/channel-batches/workflow-selection", hostScript);
         Assert.Contains("/api/tasks/he", hostScript);
         Assert.Contains("/api/tasks/ihc", hostScript);
         Assert.Contains("channelBatch.changed", hostScript);
         Assert.Contains("slideTask.created", hostScript);
         Assert.Contains("继承通道脚本", hostScript);
-        Assert.Contains("未选脚本，禁止添加", hostScript);
+        Assert.Contains("未选实验类型，禁止添加", hostScript);
     }
 
     [Fact]
@@ -402,7 +406,7 @@ public sealed class WebHostIntegrationTests
         Assert.Equal(WorkflowSelectionStatus.Selected, channelA.WorkflowSelectionStatus);
         Assert.False(channelA.WorkflowLocked);
         Assert.False(channelA.CanSelectWorkflow);
-        Assert.False(channelA.CanChangeWorkflow);
+        Assert.True(channelA.CanChangeWorkflow);
 
         var projectedSlide = Assert.Single(channelA.Slides);
         Assert.Equal(1, projectedSlide.Slot);

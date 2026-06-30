@@ -172,7 +172,9 @@ public sealed class RuntimePageBridgeService(
                 && batch.WorkflowSelectionStatus == WorkflowSelectionStatus.Unselected
                 && string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId)
                 && slides.Count == 0,
-            CanChangeWorkflow = false,
+            CanChangeWorkflow = !locked
+                && batch.WorkflowSelectionStatus == WorkflowSelectionStatus.Selected
+                && !string.IsNullOrWhiteSpace(batch.SelectedWorkflowVersionId),
             Slides = slides
         };
     }

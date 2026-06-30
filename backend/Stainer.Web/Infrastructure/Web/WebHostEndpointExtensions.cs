@@ -221,6 +221,12 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireRoleAsync(context, "admin", cancellationToken);
                 return Results.Ok(await service.PublishAsync(workflowVersionId, request, actor, cancellationToken));
             }));
+        app.MapPost("/api/workflow-versions/{workflowVersionId}/set-default", async (HttpContext context, string workflowVersionId, SetDefaultWorkflowVersionRequest request, UserSessionService sessionService, WorkflowMaintenanceService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireRoleAsync(context, "admin", cancellationToken);
+                return Results.Ok(await service.SetDefaultAsync(workflowVersionId, request, actor, cancellationToken));
+            }));
         app.MapPost("/api/workflow-versions/{workflowVersionId}/retire", async (HttpContext context, string workflowVersionId, RetireWorkflowVersionRequest request, UserSessionService sessionService, WorkflowMaintenanceService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -254,6 +260,12 @@ public static class WebHostEndpointExtensions
             {
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.SelectWorkflowAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/channel-batches/experiment-type-selection", async (HttpContext context, SelectChannelExperimentTypeRequest request, UserSessionService sessionService, ChannelBatchWorkflowService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.SelectExperimentTypeAsync(request, actor, cancellationToken));
             }));
         app.MapPost("/api/channel-batches/active", async (HttpContext context, EnsureChannelBatchRequest request, UserSessionService sessionService, ChannelBatchWorkflowService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>

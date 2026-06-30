@@ -76,6 +76,10 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         {
             throw new BusinessRuleException("slot_not_idle", "Selected slot is not idle.", StatusCodes.Status409Conflict);
         }
+        catch (DbUpdateException ex) when (IsDefaultWorkflowConflict(ex))
+        {
+            throw new BusinessRuleException("default_workflow_conflict", "Another request changed the default workflow. Refresh and retry.", StatusCodes.Status409Conflict);
+        }
 
         return result.Response;
     }
@@ -111,6 +115,13 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             || message.Contains("ix_slide_tasks_physical_slot_id", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsDefaultWorkflowConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains("workflow_versions.default_experiment_type", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("ix_workflow_versions_default_experiment_type", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static T MarkReplay<T>(T response)
         where T : class
     {
@@ -118,6 +129,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         {
             UserMutationResponse x => x with { Replayed = true } as T ?? response,
             WorkflowDraftMutationResponse x => x with { Replayed = true } as T ?? response,
+            DefaultWorkflowVersionResponse x => x with { Replayed = true } as T ?? response,
             ChannelBatchWorkflowResponse x => x with { Replayed = true } as T ?? response,
             ChannelBatchActivationResponse x => x with { Replayed = true } as T ?? response,
             TaskCreationResponse x => x with { Replayed = true } as T ?? response,

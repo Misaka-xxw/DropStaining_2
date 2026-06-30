@@ -60,7 +60,9 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             ManualPrimaryAntibodyCode,
             mapping?.IsEnabled == true,
             mapping?.WorkflowVersionId,
-            reagentCodes);
+            reagentCodes,
+            he.DefaultExperimentType == StainingTaskType.He,
+            ihc.DefaultExperimentType == StainingTaskType.Ihc);
     }
 
     private async Task SeedRolesAsync(DateTimeOffset now, CancellationToken cancellationToken)
@@ -352,7 +354,24 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             now,
             cancellationToken);
 
+        await EnsureDefaultWorkflowAsync(StainingTaskType.He, heVersion, cancellationToken);
+        await EnsureDefaultWorkflowAsync(StainingTaskType.Ihc, ihcVersion, cancellationToken);
         await EnsurePrimaryAntibodyMappingAsync(ManualPrimaryAntibodyCode, ihcVersion.Id, now, cancellationToken);
+    }
+
+    private async Task EnsureDefaultWorkflowAsync(
+        string experimentType,
+        WorkflowVersion seedVersion,
+        CancellationToken cancellationToken)
+    {
+        if (dbContext.WorkflowVersions.Local.Any(x => x.DefaultExperimentType == experimentType)
+            || await dbContext.WorkflowVersions.AnyAsync(x => x.DefaultExperimentType == experimentType, cancellationToken))
+        {
+            return;
+        }
+
+        seedVersion.DefaultExperimentType = experimentType;
+        seedVersion.UpdatedAtUtc = DateTimeOffset.UtcNow;
     }
 
     private async Task SeedManualAcceptanceReagentsAsync(DateTimeOffset now, CancellationToken cancellationToken)
@@ -585,7 +604,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             .Include(x => x.Versions)
             .SingleAsync(x => x.Code == code, cancellationToken);
         var version = workflow.Versions.Single(x => x.VersionNo == 1);
-        return new SeedWorkflowSummary(workflow.Code, workflow.Name, version.Id);
+        return new SeedWorkflowSummary(workflow.Code, workflow.Name, version.Id, version.DefaultExperimentType);
     }
 
     private static IReadOnlyList<SeedReagentDefinition> ManualAcceptanceReagents()
@@ -637,7 +656,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         int? VolumeUl,
         int DurationSeconds);
 
-    private sealed record SeedWorkflowSummary(string Code, string Name, string WorkflowVersionId);
+    private sealed record SeedWorkflowSummary(string Code, string Name, string WorkflowVersionId, string? DefaultExperimentType);
 }
 
 public sealed record ManualAcceptanceSeedSummary(
@@ -650,4 +669,6 @@ public sealed record ManualAcceptanceSeedSummary(
     string PrimaryAntibodyCode,
     bool PrimaryAntibodyMappingEnabled,
     string? PrimaryAntibodyWorkflowVersionId,
-    IReadOnlyList<string> RequiredReagentCodes);
+    IReadOnlyList<string> RequiredReagentCodes,
+    bool HeIsDefault,
+    bool IhcIsDefault);

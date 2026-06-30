@@ -173,32 +173,46 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
             }
 
             var originalStatus = entry.Property(x => x.Status).OriginalValue;
-            if (originalStatus == WorkflowVersionStatus.Published && !IsAllowedPublishedRetireChange(entry))
+            if (originalStatus == WorkflowVersionStatus.Published && !IsAllowedPublishedLifecycleChange(entry))
             {
                 throw new InvalidOperationException("Published workflow versions cannot be modified in place. Create a new version for changes.");
             }
         }
     }
 
-    private static bool IsAllowedPublishedRetireChange(EntityEntry<WorkflowVersion> entry)
+    private static bool IsAllowedPublishedLifecycleChange(EntityEntry<WorkflowVersion> entry)
     {
         if (entry.State == EntityState.Deleted)
         {
             return false;
         }
 
-        var allowedProperties = new HashSet<string>(StringComparer.Ordinal)
+        var modifiedProperties = entry.Properties
+            .Where(x => x.IsModified)
+            .Select(x => x.Metadata.Name)
+            .ToList();
+        if (modifiedProperties.Count == 0)
+        {
+            return false;
+        }
+
+        if (entry.Property(x => x.Status).CurrentValue == WorkflowVersionStatus.Published)
+        {
+            var allowedDefaultProperties = new HashSet<string>(StringComparer.Ordinal)
+            {
+                nameof(WorkflowVersion.DefaultExperimentType),
+                nameof(WorkflowVersion.UpdatedAtUtc)
+            };
+            return modifiedProperties.All(allowedDefaultProperties.Contains);
+        }
+
+        var allowedRetireProperties = new HashSet<string>(StringComparer.Ordinal)
         {
             nameof(WorkflowVersion.Status),
             nameof(WorkflowVersion.RetiredAtUtc),
             nameof(WorkflowVersion.UpdatedAtUtc)
         };
-        var modifiedProperties = entry.Properties
-            .Where(x => x.IsModified)
-            .Select(x => x.Metadata.Name)
-            .ToList();
-        return modifiedProperties.Count > 0
-            && modifiedProperties.All(allowedProperties.Contains)
+        return modifiedProperties.All(allowedRetireProperties.Contains)
             && entry.Property(x => x.Status).CurrentValue == WorkflowVersionStatus.Retired
             && entry.Property(x => x.RetiredAtUtc).CurrentValue is not null;
     }
@@ -570,6 +584,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
             table.HasCheckConstraint(
                 "ck_workflow_versions_status",
                 $"status in ('{WorkflowVersionStatus.Draft}', '{WorkflowVersionStatus.Published}', '{WorkflowVersionStatus.Retired}')");
+            table.HasCheckConstraint(
+                "ck_workflow_versions_default_experiment_type",
+                $"default_experiment_type is null or (default_experiment_type in ('{StainingTaskType.He}', '{StainingTaskType.Ihc}') and status = '{WorkflowVersionStatus.Published}')");
         });
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
@@ -578,6 +595,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.VersionLabel).HasColumnName("version_label").HasMaxLength(64).IsRequired();
         entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         entity.Property(x => x.ChangeNote).HasColumnName("change_note").HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.DefaultExperimentType).HasColumnName("default_experiment_type").HasMaxLength(8);
         entity.Property(x => x.PublishedAtUtc).HasColumnName("published_at_utc");
         entity.Property(x => x.RetiredAtUtc).HasColumnName("retired_at_utc");
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
@@ -585,6 +603,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.HasIndex(x => new { x.WorkflowDefinitionId, x.VersionNo }).IsUnique();
         entity.HasIndex(x => new { x.WorkflowDefinitionId, x.VersionLabel }).IsUnique();
         entity.HasIndex(x => x.Status);
+        entity.HasIndex(x => x.DefaultExperimentType)
+            .IsUnique()
+            .HasFilter("default_experiment_type IS NOT NULL");
         entity.HasOne(x => x.WorkflowDefinition).WithMany(x => x.Versions).HasForeignKey(x => x.WorkflowDefinitionId).OnDelete(DeleteBehavior.Cascade);
     }
 

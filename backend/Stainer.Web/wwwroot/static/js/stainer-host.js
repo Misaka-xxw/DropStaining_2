@@ -12,7 +12,6 @@ function setText(id, value){
 }
 
 window.machineStateSnapshot = null;
-window.sampleWorkflowOptions = null;
 window.reagentScanSessionOverview = null;
 window.reagentScanGuide = null;
 let activeReagentScanPosition = null;
@@ -343,9 +342,21 @@ function renderWorkflowVersionTable(workflows){
     const versions = (workflow.versions || []).slice().sort((a, b) => (b.versionNo || 0) - (a.versionNo || 0));
     return versions.map(version => ({workflow, version}));
   });
+  const canManageDefaults = window.machineStateSnapshot?.activeUser?.role === 'admin';
   root.innerHTML = rows.map(({workflow, version}) => {
     const status = workflowStatusText(version.status);
-    return `<div class="protocol-version-row workflow-version-${escapeHtml(String(version.status || '').toLowerCase())}"><b>${escapeHtml(workflow.code)}</b><span>${escapeHtml(workflow.name)}<small>${escapeHtml(workflow.workflowType)} · 步骤 ${Number(version.stepCount || 0)} · 试剂 ${Number(version.reagentRequirementCount || 0)}</small></span><em>v${escapeHtml(version.versionLabel)} · ${escapeHtml(status)}</em><small>${escapeHtml(workflow.description || '--')}</small><div class="button-row"><button class="btn btn-soft" onclick="openWorkflowVersionDetail('${escapeHtml(version.id)}')">详情</button><button class="btn btn-soft" onclick="copyWorkflowVersionDraft('${escapeHtml(version.id)}')">复制 Draft</button>${version.status === 'Published' ? `<button class="btn btn-soft" onclick="retireWorkflowVersion('${escapeHtml(version.id)}')">停用</button>` : ''}</div></div>`;
+    const isDefault = version.defaultExperimentType === workflow.workflowType;
+    const defaultAction = isDefault
+      ? `<span class="badge-soft">默认 ${escapeHtml(workflow.workflowType)} 流程</span>`
+      : canManageDefaults && version.status === 'Published' && workflow.isEnabled
+        ? `<button class="btn btn-soft" onclick="setDefaultWorkflowVersion('${escapeHtml(version.id)}','${escapeHtml(workflow.workflowType)}')">设为默认 ${escapeHtml(workflow.workflowType)} 流程</button>`
+        : '';
+    const retireAction = version.status === 'Published'
+      ? isDefault
+        ? '<button class="btn btn-soft" disabled title="请先设置另一个默认流程">默认流程不可停用</button>'
+        : `<button class="btn btn-soft" onclick="retireWorkflowVersion('${escapeHtml(version.id)}')">停用</button>`
+      : '';
+    return `<div class="protocol-version-row workflow-version-${escapeHtml(String(version.status || '').toLowerCase())}"><b>${escapeHtml(workflow.code)}</b><span>${escapeHtml(workflow.name)}<small>${escapeHtml(workflow.workflowType)} · 步骤 ${Number(version.stepCount || 0)} · 试剂 ${Number(version.reagentRequirementCount || 0)}</small></span><em>v${escapeHtml(version.versionLabel)} · ${escapeHtml(status)}</em><small>${escapeHtml(workflow.description || '--')}</small><div class="button-row"><button class="btn btn-soft" onclick="openWorkflowVersionDetail('${escapeHtml(version.id)}')">详情</button><button class="btn btn-soft" onclick="copyWorkflowVersionDraft('${escapeHtml(version.id)}')">复制 Draft</button>${defaultAction}${retireAction}</div></div>`;
   }).join('') || '<div class="empty-state"><b>暂无流程版本</b><span>请先新建流程 Draft。</span></div>';
 }
 
@@ -359,8 +370,15 @@ function renderWorkflowVersionDetail(detail){
   const root = document.getElementById('workflowVersionDetail');
   if(!root) return;
   const editable = detail.status === 'Draft';
+  const isDefault = detail.defaultExperimentType === detail.workflowType;
+  const canManageDefaults = window.machineStateSnapshot?.activeUser?.role === 'admin';
+  const defaultAction = isDefault
+    ? `<span class="badge-soft">默认 ${escapeHtml(detail.workflowType)} 流程</span>`
+    : canManageDefaults && detail.status === 'Published' && detail.isEnabled
+      ? `<button class="btn btn-soft" onclick="setDefaultWorkflowVersion('${escapeHtml(detail.workflowVersionId)}','${escapeHtml(detail.workflowType)}')">设为默认 ${escapeHtml(detail.workflowType)} 流程</button>`
+      : '';
   const readonlyHint = editable ? '' : '<div class="notice-box">该版本不可以直接修改，请复制为 Draft 后编辑。</div>';
-  root.innerHTML = `<div class="section-title"><div><h2>${escapeHtml(detail.code)} v${escapeHtml(detail.versionLabel)}</h2><p>${escapeHtml(detail.name)} · ${escapeHtml(detail.workflowType)} · ${escapeHtml(workflowStatusText(detail.status))}</p></div><div class="button-row">${editable ? '<button class="btn btn-soft" onclick="updateWorkflowVersionMeta()">保存基本信息</button><button class="btn btn-primary" onclick="publishWorkflowVersion()">发布 Draft</button>' : ''}<button class="btn btn-soft" onclick="copyWorkflowVersionDraft(activeWorkflowVersionDetail.workflowVersionId)">复制 Draft</button></div></div>${readonlyHint}<div class="version-grid"><div><span>流程代码</span><b>${escapeHtml(detail.code)}</b></div><div><span>实验类型</span><b>${escapeHtml(detail.workflowType)}</b></div><div><span>版本状态</span><b>${escapeHtml(workflowStatusText(detail.status))}</b></div><div><span>发布时间</span><b>${escapeHtml(formatDateTime(detail.publishedAtUtc))}</b></div></div>${editable ? workflowMetaEditor(detail) : ''}<div class="section-title compact-title"><h2>步骤编辑</h2>${editable ? '<button class="btn btn-primary" onclick="addWorkflowStep()">新增步骤</button>' : ''}</div><div class="data-table workflow-step-table">${workflowStepRows(detail.steps || [], editable)}</div><div class="section-title compact-title"><h2>试剂需求</h2>${editable ? '<div class="button-row"><button class="btn btn-primary" onclick="addWorkflowRequirement()">新增需求</button><button class="btn btn-soft" onclick="recalculateWorkflowRequirements()">从步骤重算</button></div>' : ''}</div><div class="data-table workflow-requirement-table">${workflowRequirementRows(detail.reagentRequirements || [], editable)}</div><div class="section-title compact-title"><h2>发布前校验</h2><button class="btn btn-soft" onclick="validateWorkflowPublish()">运行校验</button></div><div class="validation-result" id="workflowPublishValidation"></div>`;
+  root.innerHTML = `<div class="section-title"><div><h2>${escapeHtml(detail.code)} v${escapeHtml(detail.versionLabel)}</h2><p>${escapeHtml(detail.name)} · ${escapeHtml(detail.workflowType)} · ${escapeHtml(workflowStatusText(detail.status))}</p></div><div class="button-row">${editable ? '<button class="btn btn-soft" onclick="updateWorkflowVersionMeta()">保存基本信息</button><button class="btn btn-primary" onclick="publishWorkflowVersion()">发布 Draft</button>' : ''}${defaultAction}<button class="btn btn-soft" onclick="copyWorkflowVersionDraft(activeWorkflowVersionDetail.workflowVersionId)">复制 Draft</button></div></div>${readonlyHint}<div class="version-grid"><div><span>流程代码</span><b>${escapeHtml(detail.code)}</b></div><div><span>实验类型</span><b>${escapeHtml(detail.workflowType)}</b></div><div><span>版本状态</span><b>${escapeHtml(workflowStatusText(detail.status))}</b></div><div><span>默认状态</span><b>${isDefault ? `默认 ${escapeHtml(detail.workflowType)} 流程` : '非默认'}</b></div></div>${editable ? workflowMetaEditor(detail) : ''}<div class="section-title compact-title"><h2>步骤编辑</h2>${editable ? '<button class="btn btn-primary" onclick="addWorkflowStep()">新增步骤</button>' : ''}</div><div class="data-table workflow-step-table">${workflowStepRows(detail.steps || [], editable)}</div><div class="section-title compact-title"><h2>试剂需求</h2>${editable ? '<div class="button-row"><button class="btn btn-primary" onclick="addWorkflowRequirement()">新增需求</button><button class="btn btn-soft" onclick="recalculateWorkflowRequirements()">从步骤重算</button></div>' : ''}</div><div class="data-table workflow-requirement-table">${workflowRequirementRows(detail.reagentRequirements || [], editable)}</div><div class="section-title compact-title"><h2>发布前校验</h2><button class="btn btn-soft" onclick="validateWorkflowPublish()">运行校验</button></div><div class="validation-result" id="workflowPublishValidation"></div>`;
 }
 
 function workflowMetaEditor(detail){
@@ -823,7 +841,7 @@ function channelWorkflowInfo(channel){
     return {
       selected: false,
       label: '未选择',
-      detail: '请先选择通道实验脚本',
+      detail: '请先选择实验类型',
       version: '--',
       status: channel?.workflowSelectionStatus || 'Unselected'
     };
@@ -850,7 +868,7 @@ function renderSampleSlot(channel, letter, slot){
   const code = slotCode(letter, slot);
   if(!slide){
     const disabled = !channel.workflowVersionId || channel.workflowLocked ? ' disabled' : '';
-    const hint = channel.workflowVersionId ? '空闲 / 可上样' : '未选脚本，禁止添加';
+    const hint = channel.workflowVersionId ? '空闲 / 可上样' : '未选实验类型，禁止添加';
     return `<div class="sample-slot empty"><div class="slot-no">${escapeHtml(code)}</div><div><b>空闲</b><span>${escapeHtml(hint)}</span><button class="btn btn-soft full"${disabled} onclick="openConfirmModalForSlot('${escapeHtml(letter)}', ${slot})">添加样本</button></div><em>--</em></div>`;
   }
   const inherited = [
@@ -865,16 +883,14 @@ function renderChannelWorkflowPicker(channel, letter, workflow){
   const canSelect = !workflow.selected && channel.canSelectWorkflow !== false && !locked;
   const canChange = workflow.selected && channel.canChangeWorkflow && !locked;
   const action = canSelect
-    ? `<button class="btn btn-soft full" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'select')">选择实验脚本</button>`
+    ? `<button class="btn btn-soft full" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'select')">选择实验类型</button>`
     : canChange
-      ? `<button class="btn btn-soft full" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'change')">更换实验脚本</button>`
+      ? `<button class="btn btn-soft full" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'change')">更换实验类型</button>`
       : locked
         ? '<button class="btn btn-soft full" disabled>已锁定</button>'
         : '';
-  const detail = workflow.selected
-    ? `实验类型：${channel.experimentType || '--'}；流程版本：${workflow.version}；脚本状态：${workflowStatusLabel(channel)}`
-    : '先选择通道脚本，再添加样本';
-  return `<div class="channel-script-picker ${workflow.selected ? 'selected' : 'unselected'}"><div><span>当前实验脚本</span><b>${escapeHtml(workflow.label)}</b><small>${escapeHtml(detail)}</small></div>${action}</div>`;
+  const detail = workflow.selected ? workflowStatusLabel(channel) : '先选择实验类型，再添加样本';
+  return `<div class="channel-script-picker ${workflow.selected ? 'selected' : 'unselected'}"><div><span>实验类型</span><b>${escapeHtml(channel.experimentType || '未选择')}</b><small>${escapeHtml(detail)}</small></div>${action}</div>`;
 }
 
 function refreshConfirmSlotOptions(){
@@ -934,69 +950,26 @@ async function ensureActiveChannelBatch(letter){
   return refreshed;
 }
 
-async function loadSampleWorkflowOptions(forceRefresh){
-  if(!forceRefresh && window.sampleWorkflowOptions) return window.sampleWorkflowOptions;
-  const workflows = await api('/api/workflows');
-  window.sampleWorkflowOptions = (workflows || []).flatMap(workflow => {
-    return (workflow.versions || [])
-      .filter(version => String(version.status || '').toLowerCase() === 'published')
-      .map(version => ({
-        workflowId: workflow.id,
-        workflowVersionId: version.id,
-        code: workflow.code,
-        name: workflow.name,
-        workflowType: String(workflow.workflowType || '').toUpperCase(),
-        versionNo: version.versionNo,
-        versionLabel: version.versionLabel
-      }));
-  }).sort((a, b) => `${a.workflowType}-${a.code}-${a.versionNo}`.localeCompare(`${b.workflowType}-${b.code}-${b.versionNo}`));
-  return window.sampleWorkflowOptions;
-}
-
-function refreshChannelScriptOptions(){
-  const type = document.getElementById('channelScriptExperimentType')?.value || 'HE';
-  const select = document.getElementById('channelScriptSelect');
-  if(!select) return;
-  const options = (window.sampleWorkflowOptions || []).filter(option => option.workflowType === type);
-  select.disabled = options.length === 0;
-  select.innerHTML = options.length
-    ? options.map(option => {
-      const label = `${option.workflowType} / ${option.code} v${option.versionLabel} / ${option.name}`;
-      return `<option value="${escapeHtml(option.workflowVersionId)}">${escapeHtml(label)}</option>`;
-    }).join('')
-    : '<option value="">暂无 Published 流程</option>';
-}
-
 async function openChannelScriptModal(letter, mode='select'){
   activeChannelScriptLetter = letter;
   const modal = document.getElementById('channelScriptModal');
   const title = document.getElementById('channelScriptTitle');
-  const select = document.getElementById('channelScriptSelect');
-  const typeSelect = document.getElementById('channelScriptExperimentType');
   const reasonLabel = document.getElementById('channelScriptReasonLabel');
   const reasonInput = document.getElementById('channelScriptReason');
-  if(!modal || !select || !typeSelect) return;
+  if(!modal) return;
   const isChange = mode === 'change';
-  if(title) title.textContent = `${letter} 通道${isChange ? '更换' : '选择'}实验脚本`;
+  if(title) title.textContent = `${letter} 通道${isChange ? '更换' : '选择'}实验类型`;
   if(reasonLabel) reasonLabel.classList.toggle('hidden', !isChange);
   if(reasonInput) reasonInput.value = '';
-  select.disabled = true;
-  select.innerHTML = '<option value="">正在加载已发布流程...</option>';
-  setText('channelScriptHint', isChange ? '将影响该通道全部未运行玻片；请填写变更原因。' : '该选择会保存到后端 ChannelBatch，并应用于该通道 1-4 号 Slot。');
+  setText('channelScriptHint', isChange
+    ? '将影响该通道全部未运行玻片。请输入变更原因，再选择 HE 或 IHC。'
+    : '只需选择 HE 或 IHC，后端会自动绑定当前默认已发布流程。');
   modal.classList.remove('hidden');
   try{
-    const channel = await ensureActiveChannelBatch(letter);
-    await loadSampleWorkflowOptions(true);
-    typeSelect.value = channel.experimentType || 'HE';
-    refreshChannelScriptOptions();
-    if(channel.workflowVersionId && !isChange){
-      select.disabled = true;
-      setText('channelScriptHint', '该通道已经选择脚本；本界面不会覆盖已选脚本。');
-    }
+    await ensureActiveChannelBatch(letter);
   }catch(e){
-    select.innerHTML = '<option value="">流程加载失败</option>';
-    setText('channelScriptHint', e.message || '请检查服务和流程配置接口。');
-    toast(e.message || '流程脚本加载失败', true);
+    setText('channelScriptHint', e.message || '请检查通道批次服务。');
+    toast(e.message || '通道加载失败', true);
   }
 }
 
@@ -1004,48 +977,44 @@ function closeChannelScriptModal(){
   document.getElementById('channelScriptModal')?.classList.add('hidden');
 }
 
-async function applyChannelScriptSelection(){
-  const type = document.getElementById('channelScriptExperimentType')?.value || 'HE';
-  const workflowVersionId = document.getElementById('channelScriptSelect')?.value;
+async function applyChannelExperimentTypeSelection(type){
+  const experimentType = String(type || '').trim().toUpperCase();
   const reason = document.getElementById('channelScriptReason')?.value?.trim();
   const channel = activeChannelScriptLetter ? channelByLetter(activeChannelScriptLetter) : null;
-  if(!activeChannelScriptLetter || !workflowVersionId){
-    toast('请选择已发布流程脚本', true);
-    return;
-  }
-  if(channel?.workflowVersionId){
-    toast('后端当前未开放覆盖已选脚本接口，请按预启动变更规则处理', true);
+  if(!activeChannelScriptLetter || !['HE','IHC'].includes(experimentType)){
+    toast('请选择 HE 或 IHC', true);
     return;
   }
   const reasonVisible = !document.getElementById('channelScriptReasonLabel')?.classList.contains('hidden');
   if(reasonVisible && !reason){
-    toast('更换脚本必须填写原因', true);
+    toast('更换实验类型必须填写原因', true);
     return;
   }
+  if(reasonVisible && !confirm(`确认将 ${activeChannelScriptLetter} 通道重新绑定为当前默认 ${experimentType} 流程？`)) return;
   try{
     const batch = await ensureActiveChannelBatch(activeChannelScriptLetter);
-    await api('/api/channel-batches/workflow-selection', {
+    const result = await api('/api/channel-batches/experiment-type-selection', {
       method: 'POST',
       body: JSON.stringify({
-        commandId: commandId('channel-workflow'),
+        commandId: commandId('channel-experiment-type'),
         channelBatchId: batch.channelBatchId,
         drawerCode: activeChannelScriptLetter,
-        experimentType: type,
-        workflowVersionId
+        experimentType,
+        reason: reason || null
       })
     });
     closeChannelScriptModal();
     await loadHostState();
-    toast(`${activeChannelScriptLetter} 通道实验脚本已保存`);
+    toast(`${activeChannelScriptLetter} 通道已选择 ${experimentType}，默认流程 ${result.workflowName || ''} v${result.workflowVersionLabel || ''} 已冻结`);
   }catch(e){
-    setText('channelScriptHint', e.message || '脚本选择失败');
-    toast(e.message || '脚本选择失败', true);
+    setText('channelScriptHint', e.message || '实验类型选择失败');
+    toast(e.message || '实验类型选择失败', true);
   }
 }
 
 function clearChannelScriptSelection(){
   closeChannelScriptModal();
-  toast('通道脚本以后端 ChannelBatch 为准，不能在浏览器本地清除', true);
+  toast('通道实验类型以后端 ChannelBatch 为准，不能在浏览器本地清除', true);
 }
 
 function showSampleTaskError(message){
@@ -1070,12 +1039,12 @@ function updateConfirmModalFromSlot(){
   if(primaryLabel) primaryLabel.classList.toggle('hidden', pendingPrimaryAntibodyCandidates.length === 0);
   if(rawCode && path === 'he') rawCode.value = '';
   setText('confirmChannelScript', workflow.selected
-    ? `当前通道脚本：${channel.experimentType} / ${workflow.label} / ${workflow.version}`
-    : '当前通道脚本：未选择。请先在通道卡片中选择实验脚本。');
+    ? `实验类型：${channel.experimentType}；系统绑定流程：${workflow.label} / ${workflow.version}`
+    : '实验类型：未选择。请先在通道卡片中选择 HE 或 IHC。');
   const expected = path === 'he' ? 'HE' : 'IHC';
   const valid = workflow.selected && !channel?.workflowLocked && channel?.experimentType === expected;
   if(button) button.disabled = !valid;
-  showSampleTaskError(valid ? '' : `该 Slot 所在通道需要先选择 ${expected} 脚本，且启动后不能追加样本。`);
+  showSampleTaskError(valid ? '' : `该 Slot 所在通道需要先选择 ${expected} 实验类型，且启动后不能追加样本。`);
 }
 
 function openConfirmModalForSlot(letter, slot){
@@ -1121,7 +1090,7 @@ async function confirmTask(){
   const parsed = parseSlotCode(slot);
   const channel = channelByLetter(parsed.letter);
   if(!channel?.workflowVersionId){
-    showSampleTaskError('未选择通道实验脚本，不能创建任务。');
+    showSampleTaskError('未选择通道实验类型，不能创建任务。');
     return;
   }
   try{
@@ -1480,6 +1449,21 @@ async function retireWorkflowVersion(workflowVersionId){
   if(currentWorkflowVersionId() === workflowVersionId) await openWorkflowVersionDetail(workflowVersionId);
 }
 
+async function setDefaultWorkflowVersion(workflowVersionId, experimentType){
+  if(!confirm(`确认将该版本设为默认 ${experimentType} 流程？现有通道不会自动切换。`)) return;
+  try{
+    await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/set-default`, {
+      method:'POST',
+      body: JSON.stringify({commandId: commandId('workflow-default'), experimentType})
+    });
+    toast(`默认 ${experimentType} 流程已更新`);
+    await renderConfigure();
+    if(currentWorkflowVersionId() === workflowVersionId) await openWorkflowVersionDetail(workflowVersionId);
+  }catch(e){
+    toast(e.message || '设置默认流程失败', true);
+  }
+}
+
 function renderPrimaryAntibodyMappings(mappings){
   const root = document.getElementById('primaryAntibodyMappingTable');
   if(!root) return;
@@ -1763,12 +1747,11 @@ function renderSampleSlot(channel, letter, slot){
   const safeLetter = escapeHtml(letter);
   if(!slide){
     const disabled = !channel.workflowVersionId || channel.workflowLocked ? ' disabled' : '';
-    const label = channel.workflowVersionId && !channel.workflowLocked ? '添加样本' : '请先选脚本';
+    const label = channel.workflowVersionId && !channel.workflowLocked ? '添加样本' : '请先选类型';
     return `<div class="sample-slot empty compact-slot"><div class="slot-no">${escapeHtml(code)}</div><div class="slot-main"><b>空闲</b><span>${channel.workflowLocked ? '已锁定' : '可用 Slot'}</span></div><button class="btn btn-soft"${disabled} onclick="openConfirmModalForSlot('${safeLetter}', ${slot})">${label}</button></div>`;
   }
-  const inherited = sampleWorkflowText(channel, slide);
   const status = statusText(slide.status || 'loaded');
-  return `<div class="sample-slot occupied compact-slot" onclick="showSampleDetail('${safeLetter}', ${slot})"><div class="slot-no">${escapeHtml(code)}</div><div class="slot-main"><b>${escapeHtml(sampleShortCode(slide))}</b><span>${escapeHtml(status)}${inherited ? ` / ${escapeHtml(inherited)}` : ''}</span></div><button class="btn btn-soft" onclick="event.stopPropagation();showSampleDetail('${safeLetter}', ${slot})">查看</button></div>`;
+  return `<div class="sample-slot occupied compact-slot" onclick="showSampleDetail('${safeLetter}', ${slot})"><div class="slot-no">${escapeHtml(code)}</div><div class="slot-main"><b>${escapeHtml(sampleShortCode(slide))}</b><span>${escapeHtml(status)}</span></div><button class="btn btn-soft" onclick="event.stopPropagation();showSampleDetail('${safeLetter}', ${slot})">查看</button></div>`;
 }
 
 function renderChannelWorkflowPicker(channel, letter, workflow){
@@ -1776,15 +1759,15 @@ function renderChannelWorkflowPicker(channel, letter, workflow){
   const canSelect = !workflow.selected && channel.canSelectWorkflow !== false && !locked;
   const canChange = workflow.selected && channel.canChangeWorkflow && !locked;
   const action = canSelect
-    ? `<button class="btn btn-soft" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'select')">选择实验脚本</button>`
+    ? `<button class="btn btn-soft" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'select')">选择实验类型</button>`
     : canChange
-      ? `<button class="btn btn-soft" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'change')">更换实验脚本</button>`
+      ? `<button class="btn btn-soft" onclick="openChannelScriptModal('${escapeHtml(letter)}', 'change')">更换实验类型</button>`
       : locked
         ? '<button class="btn btn-soft" disabled>已锁定</button>'
         : '';
-  const label = workflow.selected ? `${workflow.label} / ${workflow.version}` : '未选择';
-  const detail = workflow.selected ? `${channel.experimentType || '--'} · ${workflowStatusLabel(channel)}` : '先选脚本';
-  return `<div class="channel-script-line ${workflow.selected ? 'selected' : 'unselected'}"><span>脚本：<b>${escapeHtml(label)}</b><em>${escapeHtml(detail)}</em></span>${action}</div>`;
+  const label = workflow.selected ? channel.experimentType || '--' : '未选择';
+  const detail = workflow.selected ? workflowStatusLabel(channel) : '先选实验类型';
+  return `<div class="channel-script-line ${workflow.selected ? 'selected' : 'unselected'}"><span>实验类型：<b>${escapeHtml(label)}</b><em>${escapeHtml(detail)}</em></span>${action}</div>`;
 }
 
 function renderSamples(state){

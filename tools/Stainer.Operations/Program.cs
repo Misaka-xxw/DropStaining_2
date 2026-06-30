@@ -34,13 +34,24 @@ using var host = builder.Build();
 await using var scope = host.Services.CreateAsyncScope();
 var services = scope.ServiceProvider;
 var dbContext = services.GetRequiredService<StainerDbContext>();
+var actor = new AuthenticatedUser(string.Empty, "system", "System", "admin", ["admin", "engineer"]);
+
+if (command == "backup-database")
+{
+    var outputDirectory = GetOption(args, "--output");
+    var response = await services.GetRequiredService<DatabaseMaintenanceService>().BackupAsync(
+        new DatabaseBackupRequest($"ops-backup-{Guid.NewGuid():N}", outputDirectory),
+        actor);
+    Console.WriteLine($"Backup: {response.BackupPath}");
+    Console.WriteLine($"IntegrityBefore={response.IntegrityBeforeOk}; IntegrityAfter={response.IntegrityAfterOk}");
+    return response.Ok ? 0 : 2;
+}
+
 await DatabaseInitializer.InitializeAsync(dbContext);
 await dbContext.Database.MigrateAsync();
 await services.GetRequiredService<ChannelBatchWorkflowBackfillService>().BackfillAsync();
 await services.GetRequiredService<ReferenceDataSeeder>().SeedAsync();
 await services.GetRequiredService<StartupRecoveryService>().RecoverAsync();
-
-var actor = new AuthenticatedUser(string.Empty, "system", "System", "admin", ["admin", "engineer"]);
 
 switch (command)
 {
@@ -69,16 +80,6 @@ switch (command)
         }
 
         return readiness.Ok && backup.Ok ? 0 : 2;
-    }
-    case "backup-database":
-    {
-        var outputDirectory = GetOption(args, "--output");
-        var response = await services.GetRequiredService<DatabaseMaintenanceService>().BackupAsync(
-            new DatabaseBackupRequest($"ops-backup-{Guid.NewGuid():N}", outputDirectory),
-            actor);
-        Console.WriteLine($"Backup: {response.BackupPath}");
-        Console.WriteLine($"IntegrityBefore={response.IntegrityBeforeOk}; IntegrityAfter={response.IntegrityAfterOk}");
-        return response.Ok ? 0 : 2;
     }
     case "request-restore":
     {

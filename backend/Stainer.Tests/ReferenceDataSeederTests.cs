@@ -134,6 +134,7 @@ public sealed class ReferenceDataSeederTests
         Assert.Equal("测试 HE 流程", he.Name);
         Assert.Equal(StainingTaskType.He, he.WorkflowType);
         Assert.Equal(WorkflowVersionStatus.Published, heVersion.Status);
+        Assert.Equal(StainingTaskType.He, heVersion.DefaultExperimentType);
         Assert.Equal("1", heVersion.VersionLabel);
         Assert.NotNull(heVersion.PublishedAtUtc);
         Assert.True(heVersion.Steps.Count >= 2);
@@ -150,6 +151,7 @@ public sealed class ReferenceDataSeederTests
         Assert.Equal("测试 IHC 001-A", ihc.Name);
         Assert.Equal(StainingTaskType.Ihc, ihc.WorkflowType);
         Assert.Equal(WorkflowVersionStatus.Published, ihcVersion.Status);
+        Assert.Equal(StainingTaskType.Ihc, ihcVersion.DefaultExperimentType);
         Assert.Equal("1", ihcVersion.VersionLabel);
         Assert.Equal(9, ihcVersion.Steps.Count);
         Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "BLOCKING");
@@ -195,10 +197,14 @@ public sealed class ReferenceDataSeederTests
         Assert.Equal(firstSummary.IhcWorkflowVersionId, secondSummary.IhcWorkflowVersionId);
         Assert.Equal(firstSummary.PrimaryAntibodyWorkflowVersionId, secondSummary.PrimaryAntibodyWorkflowVersionId);
         Assert.Equal(firstSummary.RequiredReagentCodes, secondSummary.RequiredReagentCodes);
+        Assert.True(secondSummary.HeIsDefault);
+        Assert.True(secondSummary.IhcIsDefault);
         Assert.Equal(1, await dbContext.WorkflowDefinitions.CountAsync(x => x.Code == ReferenceDataSeeder.ManualHeWorkflowCode));
         Assert.Equal(1, await dbContext.WorkflowDefinitions.CountAsync(x => x.Code == ReferenceDataSeeder.ManualIhcWorkflowCode));
         Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.ManualHeWorkflowCode && x.VersionNo == 1));
         Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.ManualIhcWorkflowCode && x.VersionNo == 1));
+        Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.DefaultExperimentType == StainingTaskType.He));
+        Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.DefaultExperimentType == StainingTaskType.Ihc));
         Assert.Equal(2, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.HeWorkflowVersionId));
         Assert.Equal(9, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.IhcWorkflowVersionId));
         Assert.Equal(1, await dbContext.PrimaryAntibodyWorkflowMappings.CountAsync(x =>

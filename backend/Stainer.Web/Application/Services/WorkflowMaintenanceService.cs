@@ -219,6 +219,17 @@ public sealed class WorkflowMaintenanceService(
 
                 if (request.IsEnabled.HasValue)
                 {
+                    if (!request.IsEnabled.Value
+                        && await dbContext.WorkflowVersions.AnyAsync(
+                            x => x.WorkflowDefinitionId == workflow.Id && x.DefaultExperimentType != null,
+                            cancellationToken))
+                    {
+                        throw new BusinessRuleException(
+                            "default_workflow_disable_forbidden",
+                            "A workflow containing the current default version cannot be disabled. Set another default workflow first.",
+                            StatusCodes.Status409Conflict);
+                    }
+
                     workflow.IsEnabled = request.IsEnabled.Value;
                 }
 
@@ -569,6 +580,14 @@ public sealed class WorkflowMaintenanceService(
                     throw new BusinessRuleException("workflow_retire_requires_published", "Only Published workflow versions can be retired.", StatusCodes.Status409Conflict);
                 }
 
+                if (version.DefaultExperimentType is not null)
+                {
+                    throw new BusinessRuleException(
+                        "default_workflow_retire_forbidden",
+                        "The current default workflow cannot be retired. Set another Published default workflow first.",
+                        StatusCodes.Status409Conflict);
+                }
+
                 version.Status = WorkflowVersionStatus.Retired;
                 version.RetiredAtUtc = DateTimeOffset.UtcNow;
                 version.UpdatedAtUtc = DateTimeOffset.UtcNow;
@@ -576,6 +595,94 @@ public sealed class WorkflowMaintenanceService(
                 PublishWorkflowEvent(MachineEventTypes.WorkflowVersionChanged, version, "retired");
                 var response = new CommandResponse(true, request.CommandId, false, "Workflow version retired.");
                 return new CommandExecutionResult<CommandResponse>(response, "WorkflowVersion", version.Id);
+            },
+            cancellationToken);
+    }
+
+    public Task<DefaultWorkflowVersionResponse> SetDefaultAsync(
+        string workflowVersionId,
+        SetDefaultWorkflowVersionRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return idempotencyService.RunAsync(
+            request.CommandId,
+            "workflow.version.set_default",
+            new { workflowVersionId, request },
+            actor,
+            async () =>
+            {
+                var version = await LoadVersionQuery()
+                    .SingleOrDefaultAsync(x => x.Id == workflowVersionId, cancellationToken)
+                    ?? throw new BusinessRuleException("workflow_version_not_found", "Workflow version was not found.", StatusCodes.Status404NotFound);
+                var workflow = version.WorkflowDefinition
+                    ?? throw new BusinessRuleException("workflow_not_found", "Workflow definition was not found.", StatusCodes.Status404NotFound);
+                if (version.Status != WorkflowVersionStatus.Published)
+                {
+                    throw new BusinessRuleException("default_workflow_requires_published", "Only Published workflow versions can be set as default.", StatusCodes.Status409Conflict);
+                }
+
+                if (!workflow.IsEnabled)
+                {
+                    throw new BusinessRuleException("default_workflow_disabled", "A disabled workflow cannot be set as default.", StatusCodes.Status409Conflict);
+                }
+
+                if (workflow.WorkflowType is not (StainingTaskType.He or StainingTaskType.Ihc))
+                {
+                    throw new BusinessRuleException("default_workflow_type_invalid", "Only HE or IHC workflows can be set as default.", StatusCodes.Status409Conflict);
+                }
+
+                var experimentType = workflow.WorkflowType;
+                var requestedExperimentType = (request.ExperimentType ?? string.Empty).Trim().ToUpperInvariant();
+                if (requestedExperimentType is not (StainingTaskType.He or StainingTaskType.Ihc))
+                {
+                    throw new BusinessRuleException("experiment_type_invalid", "ExperimentType must be HE or IHC.", StatusCodes.Status400BadRequest);
+                }
+
+                if (requestedExperimentType != experimentType)
+                {
+                    throw new BusinessRuleException("default_workflow_type_mismatch", "Workflow type does not match the requested default experiment type.", StatusCodes.Status409Conflict);
+                }
+
+                var previousDefaults = await dbContext.WorkflowVersions
+                    .Include(x => x.WorkflowDefinition)
+                    .Where(x => x.DefaultExperimentType == experimentType)
+                    .ToListAsync(cancellationToken);
+                if (previousDefaults.Count == 1 && previousDefaults[0].Id == version.Id)
+                {
+                    return new CommandExecutionResult<DefaultWorkflowVersionResponse>(
+                        ToDefaultResponse(request.CommandId, version, "Workflow version is already the current default."),
+                        "WorkflowVersion",
+                        version.Id);
+                }
+
+                var now = DateTimeOffset.UtcNow;
+                foreach (var previous in previousDefaults.Where(x => x.Id != version.Id))
+                {
+                    previous.DefaultExperimentType = null;
+                    previous.UpdatedAtUtc = now;
+                    AddAudit(actor, "workflow.default.unset", "WorkflowVersion", previous.Id, new
+                    {
+                        experimentType,
+                        replacedByWorkflowVersionId = version.Id,
+                        commandId = request.CommandId
+                    });
+                    PublishWorkflowEvent(MachineEventTypes.WorkflowVersionChanged, previous, "defaultUnset");
+                }
+
+                version.DefaultExperimentType = experimentType;
+                version.UpdatedAtUtc = now;
+                AddAudit(actor, "workflow.default.set", "WorkflowVersion", version.Id, new
+                {
+                    experimentType,
+                    previousWorkflowVersionIds = previousDefaults.Where(x => x.Id != version.Id).Select(x => x.Id).ToArray(),
+                    commandId = request.CommandId
+                });
+                PublishWorkflowEvent(MachineEventTypes.WorkflowVersionChanged, version, "defaultSet");
+                return new CommandExecutionResult<DefaultWorkflowVersionResponse>(
+                    ToDefaultResponse(request.CommandId, version, $"Default {experimentType} workflow updated."),
+                    "WorkflowVersion",
+                    version.Id);
             },
             cancellationToken);
     }
@@ -984,7 +1091,24 @@ public sealed class WorkflowMaintenanceService(
             version.PublishedAtUtc,
             version.RetiredAtUtc,
             version.Steps.OrderBy(x => x.StepNo).Select(ToStepResponse).ToList(),
-            version.ReagentRequirements.OrderBy(x => x.ReagentCode).Select(x => new WorkflowReagentRequirementResponse(x.Id, x.ReagentCode, null, x.RequiredVolumeUl, x.IsRequired)).ToList());
+            version.ReagentRequirements.OrderBy(x => x.ReagentCode).Select(x => new WorkflowReagentRequirementResponse(x.Id, x.ReagentCode, null, x.RequiredVolumeUl, x.IsRequired)).ToList(),
+            version.DefaultExperimentType);
+    }
+
+    private static DefaultWorkflowVersionResponse ToDefaultResponse(string commandId, WorkflowVersion version, string message)
+    {
+        var workflow = version.WorkflowDefinition!;
+        return new DefaultWorkflowVersionResponse(
+            true,
+            commandId,
+            false,
+            workflow.WorkflowType,
+            workflow.Id,
+            version.Id,
+            workflow.Code,
+            workflow.Name,
+            version.VersionLabel,
+            message);
     }
 
     private static WorkflowStepResponse ToStepResponse(WorkflowStep step)
@@ -1049,6 +1173,7 @@ public sealed class WorkflowMaintenanceService(
                 ["workflowVersionId"] = version.Id,
                 ["workflowDefinitionId"] = version.WorkflowDefinitionId,
                 ["status"] = version.Status,
+                ["defaultExperimentType"] = version.DefaultExperimentType,
                 ["action"] = action
             }));
     }
