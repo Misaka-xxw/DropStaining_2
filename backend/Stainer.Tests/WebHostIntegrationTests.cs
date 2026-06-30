@@ -117,6 +117,7 @@ public sealed class WebHostIntegrationTests
         Assert.DoesNotContain("/api/channel-batches/workflow-selection", hostScript);
         Assert.Contains("/api/tasks/he", hostScript);
         Assert.Contains("/api/tasks/ihc", hostScript);
+        Assert.Contains("/api/lis/mock-query", hostScript);
         Assert.Contains("channelBatch.changed", hostScript);
         Assert.Contains("slideTask.created", hostScript);
         Assert.Contains("继承通道脚本", hostScript);
@@ -211,12 +212,20 @@ public sealed class WebHostIntegrationTests
 
         var samples = await client.PostAsync("/api/samples/scan?count=4", null);
         Assert.Equal(HttpStatusCode.OK, samples.StatusCode);
+        var scanSession = await samples.Content.ReadFromJsonAsync<SampleScanSessionResponse>();
+        Assert.NotNull(scanSession);
+        Assert.Equal(4, scanSession!.Items.Count);
 
         var state = await client.GetFromJsonAsync<RuntimeStateResponse>("/api/state");
         Assert.NotNull(state);
         Assert.True(state!.Initialized);
-        Assert.Equal("ready", state.Status);
-        Assert.Equal(4, state.Channels.SelectMany(x => x.Slides).Count());
+        Assert.Equal("initialized", state.Status);
+        Assert.Empty(state.Channels.SelectMany(x => x.Slides));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        Assert.Equal(4, await dbContext.SampleScanItems.CountAsync(x => x.SampleScanSessionId == scanSession.SessionId));
+        Assert.False(await dbContext.StainingTasks.AnyAsync());
     }
 
     [Fact]

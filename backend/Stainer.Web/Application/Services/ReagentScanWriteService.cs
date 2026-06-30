@@ -221,7 +221,9 @@ public sealed class ReagentScanWriteService(
                         if (rawScanResult == ReagentScanResult.Invalid || parsed is null || !parsed.IsValid)
                         {
                             scanResult = ReagentScanResult.Invalid;
-                            validationMessage = parsed?.ValidationMessage ?? "Invalid scan result.";
+                            validationMessage = string.IsNullOrWhiteSpace(input?.ErrorReason)
+                                ? parsed?.ValidationMessage ?? "Invalid scan result."
+                                : input.ErrorReason.Trim();
                         }
                         else
                         {
@@ -331,7 +333,21 @@ public sealed class ReagentScanWriteService(
                     Action = "reagent.scan_confirm",
                     EntityType = "ReagentScanSession",
                     EntityId = session.Id,
-                    Message = JsonSerializer.Serialize(new { emptyCount, validCount, invalidCount }, JsonOptions),
+                    Message = JsonSerializer.Serialize(new
+                    {
+                        emptyCount,
+                        validCount,
+                        invalidCount,
+                        items = session.Items.Select(x => new
+                        {
+                            position = x.LocatorCode,
+                            x.RawBarcode,
+                            normalizedCode = x.ParsedReagentCode,
+                            scannedAtUtc = x.CreatedAtUtc,
+                            scanStatus = x.ScanResult,
+                            errorReason = x.IsValidationPassed ? null : x.ValidationMessage
+                        })
+                    }, JsonOptions),
                     CreatedAtUtc = now
                 });
                 eventPublisher.Publish(MachineEventMessage.Create(
@@ -468,9 +484,11 @@ public sealed class ReagentScanWriteService(
                     {
                         position = position.Code,
                         positionId = position.Id,
-                        scan.Item.ScanResult,
-                        scan.Item.ValidationMessage,
-                        scan.Item.ParsedReagentCode,
+                        scan.Item.RawBarcode,
+                        normalizedCode = scan.Item.ParsedReagentCode,
+                        scannedAtUtc = scan.Item.CreatedAtUtc,
+                        scanStatus = scan.Item.ScanResult,
+                        errorReason = scan.Item.IsValidationPassed ? null : scan.Item.ValidationMessage,
                         isRescan
                     }, JsonOptions),
                     CreatedAtUtc = now
@@ -519,7 +537,9 @@ public sealed class ReagentScanWriteService(
             if (requestedResult == ReagentScanResult.Invalid || parsed is null || !parsed.IsValid)
             {
                 scanResult = ReagentScanResult.Invalid;
-                validationMessage = parsed?.ValidationMessage ?? "Invalid scan result.";
+                validationMessage = string.IsNullOrWhiteSpace(input.ErrorReason)
+                    ? parsed?.ValidationMessage ?? "Invalid scan result."
+                    : input.ErrorReason.Trim();
             }
             else
             {

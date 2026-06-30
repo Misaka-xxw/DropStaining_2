@@ -18,6 +18,8 @@ let activeReagentScanPosition = null;
 let activeChannelScriptLetter = null;
 let activeConfirmMode = null;
 let pendingPrimaryAntibodyCandidates = [];
+let pendingLisQueryLogId = null;
+let pendingLisRawCode = null;
 
 async function loadHostState(){
   try{
@@ -1059,6 +1061,8 @@ function openConfirmModalForSlot(letter, slot){
 function openConfirmModal(mode, preferredSlotCode){
   activeConfirmMode = mode || null;
   pendingPrimaryAntibodyCandidates = [];
+  pendingLisQueryLogId = null;
+  pendingLisRawCode = null;
   refreshConfirmSlotOptions();
   const modal = document.getElementById('sampleConfirmModal');
   const title = document.getElementById('confirmTitle');
@@ -1110,7 +1114,30 @@ async function confirmTask(){
         })
       });
     }else{
-      const selectedPrimaryAntibodyCode = document.getElementById('primaryAntibodySelect')?.value || null;
+      if(path === 'ihc-hospital' && (!pendingLisQueryLogId || pendingLisRawCode !== rawCode)){
+        const lisResult = await api('/api/lis/mock-query', {
+          method: 'POST',
+          body: JSON.stringify({
+            commandId: commandId('lis-query'),
+            rawCode: rawCode || ''
+          })
+        });
+        pendingLisQueryLogId = lisResult.lisQueryLogId;
+        pendingLisRawCode = rawCode;
+        const candidates = lisResult.candidatePrimaryAntibodyCodes || [];
+        populatePrimaryAntibodyCandidates(candidates);
+        if(lisResult.status === 'MultipleCandidates'){
+          showSampleTaskError(lisResult.message || 'Select the final primary antibody, then confirm again.');
+          return;
+        }
+        if(lisResult.status !== 'SingleCandidate'){
+          showSampleTaskError(lisResult.errorMessage || lisResult.message || 'LIS query did not return a usable candidate.');
+          return;
+        }
+      }
+      const selectedPrimaryAntibodyCode = document.getElementById('primaryAntibodySelect')?.value
+        || pendingPrimaryAntibodyCandidates[0]
+        || null;
       await api('/api/tasks/ihc', {
         method: 'POST',
         body: JSON.stringify({
@@ -1120,7 +1147,8 @@ async function confirmTask(){
           slotCode: slot,
           drawerCode: parsed.letter,
           channelBatchId: channel.channelBatchId,
-          selectedPrimaryAntibodyCode
+          selectedPrimaryAntibodyCode,
+          lisQueryLogId: path === 'ihc-hospital' ? pendingLisQueryLogId : null
         })
       });
     }
@@ -1869,6 +1897,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('confirmSlot')?.addEventListener('change', updateConfirmModalFromSlot);
   document.getElementById('confirmPath')?.addEventListener('change', () => {
     pendingPrimaryAntibodyCandidates = [];
+    pendingLisQueryLogId = null;
+    pendingLisRawCode = null;
+    updateConfirmModalFromSlot();
+  });
+  document.getElementById('rawCode')?.addEventListener('input', () => {
+    pendingPrimaryAntibodyCandidates = [];
+    pendingLisQueryLogId = null;
+    pendingLisRawCode = null;
     updateConfirmModalFromSlot();
   });
   document.getElementById('primaryAntibodySelect')?.addEventListener('change', updateConfirmModalFromSlot);

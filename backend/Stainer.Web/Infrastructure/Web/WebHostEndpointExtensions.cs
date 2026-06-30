@@ -454,6 +454,12 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.CreateIhcTaskAsync(request, actor, cancellationToken));
             }));
+        app.MapPost("/api/lis/mock-query", async (HttpContext context, MockLisQueryRequest request, UserSessionService sessionService, MockLisQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.QueryAsync(request, actor, cancellationToken));
+            }));
         app.MapPost("/api/reagents/scan-confirm", async (HttpContext context, ConfirmReagentScanRequest request, UserSessionService sessionService, ReagentScanWriteService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -562,8 +568,34 @@ public static class WebHostEndpointExtensions
         app.MapPost("/api/system/reset", () => Results.Json(
             new { code = "legacy_runtime_reset_disabled", message = "Legacy MockRuntimeStore reset is disabled." },
             statusCode: StatusCodes.Status410Gone));
-        app.MapPost("/api/samples/scan", (MockRuntimeStore store, int? count) => Results.Ok(store.ScanSamples(count ?? 8)));
-        app.MapPost("/api/reagents/scan", (MockRuntimeStore store) => Results.Ok(store.ScanReagents()));
+        app.MapPost("/api/samples/scan", async (HttpContext context, int? count, UserSessionService sessionService, SampleScanWriteService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                var body = await ReadOptionalJsonAsync<MockSampleScanRequest>(context, cancellationToken);
+                var request = body ?? new MockSampleScanRequest($"sample-scan-{Guid.NewGuid():N}", count ?? 8, "Mixed", null, null);
+                return Results.Ok(await service.ScanAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/reagents/scan", async (HttpContext context, UserSessionService sessionService, ReagentScannerMockService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                var request = await ReadOptionalJsonAsync<MockReagentScanRequest>(context, cancellationToken)
+                    ?? new MockReagentScanRequest($"reagent-scan-{Guid.NewGuid():N}", "all", null, null, "Mixed", null, null);
+                return Results.Ok(await service.ScanAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/mock-demo-data/seed", async (HttpContext context, RunCommandRequest request, UserSessionService sessionService, MockDemoDataSeeder seeder, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await seeder.SeedAsync(request.CommandId, actor, cancellationToken));
+            }));
+        app.MapPost("/api/mock-demo-data/reset", async (HttpContext context, ResetMockDemoDataRequest request, UserSessionService sessionService, MockDemoDataSeeder seeder, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await seeder.ResetAsync(request, actor, cancellationToken));
+            }));
         app.MapPost("/api/run/start", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -624,6 +656,21 @@ public static class WebHostEndpointExtensions
         {
             return Results.Json(new { code = ex.Code, detail = ex.Message }, statusCode: ex.StatusCode);
         }
+    }
+
+    private static async Task<T?> ReadOptionalJsonAsync<T>(HttpContext context, CancellationToken cancellationToken)
+    {
+        if (context.Request.ContentLength is null or 0)
+        {
+            return default;
+        }
+
+        if (context.Request.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) != true)
+        {
+            return default;
+        }
+
+        return await context.Request.ReadFromJsonAsync<T>(cancellationToken: cancellationToken);
     }
 
     private static IResult ToCsvFile(CsvExportResult export)

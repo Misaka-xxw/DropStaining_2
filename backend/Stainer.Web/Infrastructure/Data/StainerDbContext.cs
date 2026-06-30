@@ -36,6 +36,11 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<CommandReceipt> CommandReceipts => Set<CommandReceipt>();
     public DbSet<StainingTask> StainingTasks => Set<StainingTask>();
     public DbSet<HospitalBarcodeMapping> HospitalBarcodeMappings => Set<HospitalBarcodeMapping>();
+    public DbSet<SampleScanSession> SampleScanSessions => Set<SampleScanSession>();
+    public DbSet<SampleScanItem> SampleScanItems => Set<SampleScanItem>();
+    public DbSet<MockLisEntry> MockLisEntries => Set<MockLisEntry>();
+    public DbSet<LisQueryLog> LisQueryLogs => Set<LisQueryLog>();
+    public DbSet<MockDemoDataTag> MockDemoDataTags => Set<MockDemoDataTag>();
     public DbSet<ChannelBatch> ChannelBatches => Set<ChannelBatch>();
     public DbSet<WorkflowAssignmentHistory> WorkflowAssignmentHistory => Set<WorkflowAssignmentHistory>();
     public DbSet<SlideTask> SlideTasks => Set<SlideTask>();
@@ -85,6 +90,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureCommandReceipt(modelBuilder);
         ConfigureStainingTask(modelBuilder);
         ConfigureHospitalBarcodeMapping(modelBuilder);
+        ConfigureSampleScan(modelBuilder);
+        ConfigureLis(modelBuilder);
+        ConfigureMockDemoDataTag(modelBuilder);
         ConfigureRuntimeLedger(modelBuilder);
         ConfigureDeviceInitialization(modelBuilder);
     }
@@ -940,6 +948,97 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.HasIndex(x => new { x.HospitalCode, x.PrimaryAntibodyCode }).IsUnique();
         entity.HasIndex(x => x.PrimaryAntibodyCode);
+    }
+
+    private static void ConfigureSampleScan(ModelBuilder modelBuilder)
+    {
+        var sessions = modelBuilder.Entity<SampleScanSession>();
+        sessions.ToTable("sample_scan_sessions");
+        sessions.HasKey(x => x.Id);
+        sessions.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        sessions.Property(x => x.SessionCode).HasColumnName("session_code").HasMaxLength(128).IsRequired();
+        sessions.Property(x => x.Status).HasColumnName("status").HasMaxLength(64).IsRequired();
+        sessions.Property(x => x.StartedAtUtc).HasColumnName("started_at_utc").IsRequired();
+        sessions.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
+        sessions.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
+        sessions.HasIndex(x => x.SessionCode).IsUnique();
+        sessions.HasIndex(x => x.StartedAtUtc);
+        sessions.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+
+        var items = modelBuilder.Entity<SampleScanItem>();
+        items.ToTable("sample_scan_items");
+        items.HasKey(x => x.Id);
+        items.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        items.Property(x => x.SampleScanSessionId).HasColumnName("sample_scan_session_id").HasMaxLength(36).IsRequired();
+        items.Property(x => x.SlotCode).HasColumnName("slot_code").HasMaxLength(32);
+        items.Property(x => x.ScanKind).HasColumnName("scan_kind").HasMaxLength(64).IsRequired();
+        items.Property(x => x.ScanStatus).HasColumnName("scan_status").HasMaxLength(64).IsRequired();
+        items.Property(x => x.RawCode).HasColumnName("raw_code").HasMaxLength(512);
+        items.Property(x => x.NormalizedCode).HasColumnName("normalized_code").HasMaxLength(512);
+        items.Property(x => x.PrimaryAntibodyCode).HasColumnName("primary_antibody_code").HasMaxLength(64);
+        items.Property(x => x.ErrorReason).HasColumnName("error_reason").HasMaxLength(2000);
+        items.Property(x => x.DeviceStatus).HasColumnName("device_status").HasMaxLength(64).IsRequired();
+        items.Property(x => x.ScannedAtUtc).HasColumnName("scanned_at_utc").IsRequired();
+        items.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        items.HasIndex(x => x.SampleScanSessionId);
+        items.HasIndex(x => x.ScanStatus);
+        items.HasIndex(x => x.NormalizedCode);
+        items.HasOne(x => x.SampleScanSession).WithMany(x => x.Items).HasForeignKey(x => x.SampleScanSessionId).OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureLis(ModelBuilder modelBuilder)
+    {
+        var entries = modelBuilder.Entity<MockLisEntry>();
+        entries.ToTable("mock_lis_entries");
+        entries.HasKey(x => x.Id);
+        entries.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entries.Property(x => x.NormalizedCode).HasColumnName("normalized_code").HasMaxLength(512).IsRequired();
+        entries.Property(x => x.PrimaryAntibodyCode).HasColumnName("primary_antibody_code").HasMaxLength(64);
+        entries.Property(x => x.Scenario).HasColumnName("scenario").HasMaxLength(64).IsRequired();
+        entries.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
+        entries.Property(x => x.MetadataJson).HasColumnName("metadata_json").HasMaxLength(4000).IsRequired();
+        entries.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entries.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entries.HasIndex(x => new { x.NormalizedCode, x.PrimaryAntibodyCode, x.Scenario }).IsUnique();
+        entries.HasIndex(x => x.Scenario);
+
+        var logs = modelBuilder.Entity<LisQueryLog>();
+        logs.ToTable("lis_query_logs");
+        logs.HasKey(x => x.Id);
+        logs.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        logs.Property(x => x.Source).HasColumnName("source").HasMaxLength(64).IsRequired();
+        logs.Property(x => x.Status).HasColumnName("status").HasMaxLength(64).IsRequired();
+        logs.Property(x => x.RawCode).HasColumnName("raw_code").HasMaxLength(512).IsRequired();
+        logs.Property(x => x.NormalizedCode).HasColumnName("normalized_code").HasMaxLength(512).IsRequired();
+        logs.Property(x => x.CandidatePrimaryAntibodyCodesJson).HasColumnName("candidate_primary_antibody_codes_json").HasMaxLength(40000).IsRequired();
+        logs.Property(x => x.SelectedPrimaryAntibodyCode).HasColumnName("selected_primary_antibody_code").HasMaxLength(64);
+        logs.Property(x => x.SelectedAtUtc).HasColumnName("selected_at_utc");
+        logs.Property(x => x.SelectedByUserId).HasColumnName("selected_by_user_id").HasMaxLength(36);
+        logs.Property(x => x.ErrorCode).HasColumnName("error_code").HasMaxLength(128);
+        logs.Property(x => x.ErrorMessage).HasColumnName("error_message").HasMaxLength(2000);
+        logs.Property(x => x.ExceptionJson).HasColumnName("exception_json").HasMaxLength(8000).IsRequired();
+        logs.Property(x => x.StartedAtUtc).HasColumnName("started_at_utc").IsRequired();
+        logs.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
+        logs.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        logs.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        logs.HasIndex(x => x.NormalizedCode);
+        logs.HasIndex(x => x.Status);
+        logs.HasIndex(x => x.StartedAtUtc);
+        logs.HasOne(x => x.SelectedByUser).WithMany().HasForeignKey(x => x.SelectedByUserId).OnDelete(DeleteBehavior.SetNull);
+    }
+
+    private static void ConfigureMockDemoDataTag(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<MockDemoDataTag>();
+        entity.ToTable("mock_demo_data_tags");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.EntityType).HasColumnName("entity_type").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.EntityId).HasColumnName("entity_id").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.DemoKey).HasColumnName("demo_key").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.HasIndex(x => new { x.EntityType, x.EntityId }).IsUnique();
+        entity.HasIndex(x => x.DemoKey);
     }
 
     private static void ConfigureRuntimeLedger(ModelBuilder modelBuilder)

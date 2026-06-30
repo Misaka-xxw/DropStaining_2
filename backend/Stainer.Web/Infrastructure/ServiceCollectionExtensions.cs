@@ -45,6 +45,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ChannelBatchWorkflowBackfillService>();
         services.AddScoped<TaskCreationService>();
         services.AddScoped<ReagentScanWriteService>();
+        services.AddScoped<SampleScanWriteService>();
+        services.AddScoped<ReagentScannerMockService>();
+        services.AddScoped<HospitalBarcodeNormalizer>();
+        services.AddScoped<IMockLisAdapter, MockLisAdapter>();
+        services.AddScoped<MockLisQueryService>();
+        services.AddScoped<MockDemoDataSeeder>();
         services.AddScoped<EngineeringWriteService>();
         services.AddScoped<PreflightValidationService>();
         services.AddScoped<MachineRunService>();

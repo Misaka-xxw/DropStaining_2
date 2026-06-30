@@ -1,5 +1,6 @@
 using Stainer.Web.Infrastructure;
 using Stainer.Web.Application.Services;
+using Stainer.Web.Application.Requests;
 using Stainer.Web.Infrastructure.Data;
 using Stainer.Web.Infrastructure.Health;
 using Stainer.Web.Infrastructure.Web;
@@ -76,6 +77,34 @@ if (args.Contains("--seed-reference-data", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--seed-mock-demo-data", StringComparer.OrdinalIgnoreCase)
+    || args.Contains("--reset-mock-demo-data", StringComparer.OrdinalIgnoreCase))
+{
+    using var seedScope = app.Services.CreateScope();
+    var dbContext = seedScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+    await DatabaseInitializer.InitializeAsync(dbContext);
+    await dbContext.Database.MigrateAsync();
+    await seedScope.ServiceProvider.GetRequiredService<ReferenceDataSeeder>().SeedAsync();
+    var actor = new AuthenticatedUser(string.Empty, "system", "System", "admin", ["admin", "engineer"]);
+    if (args.Contains("--seed-mock-demo-data", StringComparer.OrdinalIgnoreCase))
+    {
+        var response = await seedScope.ServiceProvider.GetRequiredService<MockDemoDataSeeder>()
+            .SeedAsync($"program-seed-mock-demo-{Guid.NewGuid():N}", actor);
+        Console.WriteLine(response.Message);
+        Console.WriteLine($"Created={response.CreatedCount}; Updated={response.UpdatedCount}; Skipped={response.SkippedCount}");
+        Environment.ExitCode = response.Ok ? 0 : 2;
+        return;
+    }
+
+    var confirmation = GetOption(args, "--confirm") ?? string.Empty;
+    var reset = await seedScope.ServiceProvider.GetRequiredService<MockDemoDataSeeder>()
+        .ResetAsync(new ResetMockDemoDataRequest($"program-reset-mock-demo-{Guid.NewGuid():N}", confirmation), actor);
+    Console.WriteLine(reset.Message);
+    Console.WriteLine($"Deleted={reset.DeletedCount}; Updated={reset.UpdatedCount}; Skipped={reset.SkippedCount}");
+    Environment.ExitCode = reset.Ok ? 0 : 2;
+    return;
+}
+
 app.UseStaticFiles();
 
 app.MapGet("/health", () => Results.Ok(new { ok = true, app = "Stainer ASP.NET Core backend" }));
@@ -105,6 +134,19 @@ static string FormatDefaultWorkflow(WorkflowVersion? version)
     return version is null
         ? "missing"
         : $"{version.WorkflowDefinition!.Name} ({version.WorkflowDefinition.Code}) v{version.VersionLabel}, Id={version.Id}, Status={version.Status}";
+}
+
+static string? GetOption(string[] args, string name)
+{
+    for (var i = 0; i < args.Length - 1; i++)
+    {
+        if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+        {
+            return args[i + 1];
+        }
+    }
+
+    return null;
 }
 
 public partial class Program;

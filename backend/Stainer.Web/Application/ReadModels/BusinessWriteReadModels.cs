@@ -91,6 +91,65 @@ public sealed record TaskCreationResponse(
     string? CompatibilityValidationStatus = null,
     string? CompatibilityValidationMessage = null);
 
+public sealed record SampleScanItemResponse(
+    string Id,
+    string? SlotCode,
+    string ScanKind,
+    string ScanStatus,
+    string? RawCode,
+    string? NormalizedCode,
+    string? PrimaryAntibodyCode,
+    string? ErrorReason,
+    string DeviceStatus,
+    DateTimeOffset ScannedAtUtc);
+
+public sealed record SampleScanSessionResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string SessionId,
+    string SessionCode,
+    string Status,
+    int ValidCount,
+    int EmptyCount,
+    int InvalidCount,
+    int TimedOutCount,
+    int DeviceDisconnectedCount,
+    IReadOnlyList<SampleScanItemResponse> Items,
+    string Message);
+
+public sealed record MockLisQueryResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string LisQueryLogId,
+    string Status,
+    string RawCode,
+    string NormalizedCode,
+    IReadOnlyList<string> CandidatePrimaryAntibodyCodes,
+    string? ErrorCode,
+    string? ErrorMessage,
+    string Message);
+
+public sealed record MockDemoDataResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    int CreatedCount,
+    int UpdatedCount,
+    int DeletedCount,
+    int SkippedCount,
+    string Message);
+
+public sealed record MockReagentScanResponse(
+    bool Ok,
+    string CommandId,
+    string SessionId,
+    int PositionCount,
+    IReadOnlyList<ReagentScanConfirmationResponse> Results,
+    ReagentScanSessionSummaryResponse Session,
+    string Message);
+
 public sealed record ReagentScanConfirmationResponse(
     bool Ok,
     string CommandId,

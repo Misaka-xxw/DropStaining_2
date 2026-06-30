@@ -55,6 +55,23 @@ await services.GetRequiredService<StartupRecoveryService>().RecoverAsync();
 
 switch (command)
 {
+    case "seed-mock-demo-data":
+    {
+        var response = await services.GetRequiredService<MockDemoDataSeeder>()
+            .SeedAsync($"ops-seed-mock-demo-{Guid.NewGuid():N}", actor);
+        Console.WriteLine(response.Message);
+        Console.WriteLine($"Created={response.CreatedCount}; Updated={response.UpdatedCount}; Skipped={response.SkippedCount}");
+        return response.Ok ? 0 : 2;
+    }
+    case "reset-mock-demo-data":
+    {
+        var confirmation = GetOption(args, "--confirm") ?? string.Empty;
+        var response = await services.GetRequiredService<MockDemoDataSeeder>()
+            .ResetAsync(new ResetMockDemoDataRequest($"ops-reset-mock-demo-{Guid.NewGuid():N}", confirmation), actor);
+        Console.WriteLine(response.Message);
+        Console.WriteLine($"Deleted={response.DeletedCount}; Updated={response.UpdatedCount}; Skipped={response.SkippedCount}");
+        return response.Ok ? 0 : 2;
+    }
     case "verify-prehardware-readiness":
     {
         var readiness = await services.GetRequiredService<PreHardwareReadinessService>().VerifyAsync(createBackup: false);
@@ -122,6 +139,8 @@ static void PrintHelp()
     Console.WriteLine("Stainer operations");
     Console.WriteLine("Commands:");
     Console.WriteLine("  verify-prehardware-readiness");
+    Console.WriteLine("  seed-mock-demo-data (Development + Device:Mode=Mock only)");
+    Console.WriteLine("  reset-mock-demo-data --confirm \"RESET MOCK DEMO DATA\" (Development + Device:Mode=Mock only)");
     Console.WriteLine("  backup-database [--output <directory>]");
     Console.WriteLine("  request-restore --backup <path> [--reason <text>]");
 }

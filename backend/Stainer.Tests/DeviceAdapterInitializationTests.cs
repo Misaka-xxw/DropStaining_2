@@ -17,6 +17,67 @@ namespace Stainer.Tests;
 public sealed class DeviceAdapterInitializationTests
 {
     [Fact]
+    public async Task Mock_scanners_share_device_state_and_fault_plans()
+    {
+        var stateStore = new MockDeviceStateStore();
+        var adapter = new MockDeviceAdapter(stateStore);
+
+        var sample = await adapter.ScanSampleAsync(new DeviceOperationRequest(
+            new DeviceCommandContext("cmd-unit-sample", null, "test", nameof(DeviceAdapterInitializationTests)),
+            DeviceModules.SampleScanner,
+            "scan",
+            new Dictionary<string, object?> { ["rawCode"] = "001" }));
+        Assert.True(sample.Ok);
+        Assert.Equal("001", sample.Data["rawCode"]);
+
+        var reagent = await adapter.ScanReagentAsync(new DeviceOperationRequest(
+            new DeviceCommandContext("cmd-unit-reagent", null, "test", nameof(DeviceAdapterInitializationTests)),
+            DeviceModules.ReagentScanner,
+            "scan",
+            new Dictionary<string, object?> { ["rawBarcode"] = "HEM05020270101001" }));
+        Assert.True(reagent.Ok);
+        Assert.Equal("HEM05020270101001", reagent.Data["rawBarcode"]);
+
+        await adapter.ConfigureFaultAsync(new DeviceFaultCommand(
+            DeviceModules.SampleScanner,
+            DeviceFaultTypes.TimeoutNextCommand,
+            "sample_timeout",
+            "Sample timeout.",
+            "unit test",
+            "cmd-unit-sample-timeout-fault",
+            null,
+            "test"));
+        var timedOut = await adapter.ScanSampleAsync(new DeviceOperationRequest(
+            new DeviceCommandContext("cmd-unit-sample-timeout", null, "test", nameof(DeviceAdapterInitializationTests)),
+            DeviceModules.SampleScanner,
+            "scan",
+            new Dictionary<string, object?>()));
+        Assert.False(timedOut.Ok);
+        Assert.Equal(DeviceCommandStatuses.TimedOut, timedOut.Status);
+
+        await adapter.ConfigureFaultAsync(new DeviceFaultCommand(
+            DeviceModules.ReagentScanner,
+            DeviceFaultTypes.Disconnect,
+            "reagent_disconnected",
+            "Reagent scanner disconnected.",
+            "unit test",
+            "cmd-unit-reagent-disconnect-fault",
+            null,
+            "test"));
+        var disconnected = await adapter.ScanReagentAsync(new DeviceOperationRequest(
+            new DeviceCommandContext("cmd-unit-reagent-disconnect", null, "test", nameof(DeviceAdapterInitializationTests)),
+            DeviceModules.ReagentScanner,
+            "scan",
+            new Dictionary<string, object?>()));
+        Assert.False(disconnected.Ok);
+        var snapshot = await adapter.GetStatusAsync();
+        Assert.Equal(
+            DeviceConnectionStatuses.Disconnected,
+            snapshot.Modules.Single(x => x.ModuleCode == DeviceModules.ReagentScanner).ConnectionStatus);
+        Assert.Contains(snapshot.FaultPlans, x => x.ModuleCode == DeviceModules.ReagentScanner && x.Active);
+    }
+
+    [Fact]
     public async Task Dependency_injection_selects_mock_or_safe_unavailable_real_adapter()
     {
         var mockContext = CreateFactory();

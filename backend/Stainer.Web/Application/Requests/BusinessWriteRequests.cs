@@ -144,12 +144,37 @@ public sealed record CreateIhcTaskRequest(
     string? WorkflowVersionId = null,
     string? LisQueryLogId = null);
 
+public sealed record MockSampleScanRequest(
+    string CommandId,
+    int Count = 1,
+    string? Scenario = null,
+    string? RawCode = null,
+    string? SlotCode = null);
+
+public sealed record MockReagentScanRequest(
+    string CommandId,
+    string? Scope = null,
+    string? Position = null,
+    int? ColumnNo = null,
+    string? Scenario = null,
+    IReadOnlyDictionary<string, string?>? BarcodesByPosition = null,
+    string? ScanSessionId = null);
+
+public sealed record MockLisQueryRequest(
+    string CommandId,
+    string RawCode);
+
+public sealed record ResetMockDemoDataRequest(
+    string CommandId,
+    string Confirmation);
+
 public sealed record ReagentScanInputItem(
     string Position,
     string ScanResult,
     string? RawBarcode,
     string? LocatorCode,
-    DateOnly? ExpirationDate);
+    DateOnly? ExpirationDate,
+    string? ErrorReason = null);
 
 public sealed record ConfirmReagentScanRequest(
     string CommandId,
