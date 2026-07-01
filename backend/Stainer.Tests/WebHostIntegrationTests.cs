@@ -50,7 +50,9 @@ public sealed class WebHostIntegrationTests
         Assert.Contains("current-page-card", dashboard);
         Assert.Contains("currentPageLabel", dashboard);
         Assert.Contains("userMenu", dashboard);
+        Assert.Contains("id=\"logoutButton\"", dashboard);
         Assert.Contains("退出登录", dashboard);
+        Assert.DoesNotContain("onclick=\"toggleUserMenu", dashboard);
         Assert.Contains("<i>06</i><span>告警</span>", dashboard);
         Assert.Contains("<i>07</i><span>历史</span>", dashboard);
         Assert.DoesNotContain("top-panel", dashboard);
@@ -74,6 +76,9 @@ public sealed class WebHostIntegrationTests
 
         var js = await client.GetAsync("/static/js/api.js");
         Assert.Equal(HttpStatusCode.OK, js.StatusCode);
+        var apiScript = await js.Content.ReadAsStringAsync();
+        Assert.Contains("initializeUserMenu", apiScript);
+        Assert.Contains("logoutButton.addEventListener('click'", apiScript);
 
         var consoleCss = await client.GetAsync("/static/control-console/enhancement.css");
         Assert.Equal(HttpStatusCode.OK, consoleCss.StatusCode);
@@ -226,6 +231,34 @@ public sealed class WebHostIntegrationTests
         var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
         Assert.Equal(4, await dbContext.SampleScanItems.CountAsync(x => x.SampleScanSessionId == scanSession.SessionId));
         Assert.False(await dbContext.StainingTasks.AnyAsync());
+    }
+
+    [Fact]
+    public async Task Logout_invalidates_the_session_and_writes_an_audit_record()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var login = await client.PostAsJsonAsync("/api/login", new
+        {
+            username = "operator",
+            password = "123456",
+            role = "operator"
+        });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var logout = await client.PostAsync("/api/logout", null);
+        Assert.Equal(HttpStatusCode.OK, logout.StatusCode);
+
+        var protectedRequest = await client.PostAsJsonAsync("/api/device-initialization", new
+        {
+            commandId = "cmd-after-logout"
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, protectedRequest.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "auth.logout"));
     }
 
     [Fact]

@@ -26,6 +26,40 @@ async function logout(){
   try{ await api('/api/logout', {method:'POST'}); }catch(e){}
   location.href='/';
 }
+function initializeUserMenu(){
+  const card = document.getElementById('operatorCard');
+  const menu = document.getElementById('userMenu');
+  const logoutButton = document.getElementById('logoutButton');
+  if(!card || !menu || !logoutButton) return;
+
+  const setOpen = open => {
+    menu.classList.toggle('hidden', !open);
+    card.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
+  const toggle = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    setOpen(menu.classList.contains('hidden'));
+  };
+
+  card.addEventListener('click', event => {
+    if(event.target instanceof Element && event.target.closest('#logoutButton')) return;
+    toggle(event);
+  });
+  card.addEventListener('keydown', event => {
+    if(event.key === 'Enter' || event.key === ' ') toggle(event);
+  });
+  logoutButton.addEventListener('click', async event => {
+    event.preventDefault();
+    event.stopPropagation();
+    logoutButton.disabled = true;
+    await logout();
+  });
+  document.addEventListener('click', () => setOpen(false));
+  document.addEventListener('keydown', event => {
+    if(event.key === 'Escape') setOpen(false);
+  });
+}
 function statusText(s){
   const map = {idle:'空闲',initialized:'已初始化',ready:'就绪',running:'运行中',paused:'暂停',stopped:'已停止/待处理',completed:'完成',error:'故障',empty:'可上样',loaded:'待确认',configured:'待启动',waiting:'等待/待卸载',dispensing:'加液',incubating:'孵育',washing:'通道清洗',mixing:'通道混匀'};
   return map[s] || s;
@@ -46,4 +80,4 @@ function markActiveNav(){
   const path = location.pathname || '/control-console';
   document.querySelectorAll('.nav-item').forEach(a=>a.classList.toggle('active', a.dataset.href === path));
 }
-document.addEventListener('DOMContentLoaded',()=>{ syncStatusLabels(); updateClock(); setInterval(updateClock,1000); markActiveNav(); });
+document.addEventListener('DOMContentLoaded',()=>{ syncStatusLabels(); updateClock(); setInterval(updateClock,1000); markActiveNav(); initializeUserMenu(); });

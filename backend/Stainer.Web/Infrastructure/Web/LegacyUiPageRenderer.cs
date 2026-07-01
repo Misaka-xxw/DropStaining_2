@@ -123,14 +123,14 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                 <a href="/admin" class="nav-item admin-only" data-href="/admin"><i>A</i><span>管理</span><small>用户</small></a>
                 {{mockNavigation}}
               </nav>
-              <div class="operator-card" id="operatorCard" onclick="toggleUserMenu(event)" role="button" tabindex="0" aria-label="用户菜单">
+              <div class="operator-card" id="operatorCard" role="button" tabindex="0" aria-label="用户菜单" aria-controls="userMenu" aria-expanded="false">
                 <div class="avatar" id="operatorAvatar">访</div>
                 <div>
                   <strong id="operatorName">未登录</strong>
                   <span id="operatorRole">guest</span>
                 </div>
-                <div class="user-menu hidden" id="userMenu">
-                  <button type="button" onclick="event.stopPropagation(); logout()">退出登录</button>
+                <div class="user-menu hidden" id="userMenu" role="menu">
+                  <button type="button" id="logoutButton" role="menuitem">退出登录</button>
                 </div>
               </div>
             </aside>
@@ -147,26 +147,6 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
           <div id="toast" class="toast hidden"></div>
           <script src="{{VersionedAsset("/static/js/api.js")}}"></script>
           <script src="{{VersionedAsset("/static/js/stainer-host.js")}}"></script>
-          <script>
-            function toggleUserMenu(event){
-              event.stopPropagation();
-              const menu = document.getElementById('userMenu');
-              if(menu) menu.classList.toggle('hidden');
-            }
-            document.addEventListener('click', () => {
-              const menu = document.getElementById('userMenu');
-              if(menu) menu.classList.add('hidden');
-            });
-            document.addEventListener('keydown', event => {
-              if(event.key === 'Escape'){
-                const menu = document.getElementById('userMenu');
-                if(menu) menu.classList.add('hidden');
-              }
-              if((event.key === 'Enter' || event.key === ' ') && event.target?.id === 'operatorCard'){
-                toggleUserMenu(event);
-              }
-            });
-          </script>
           {{pageScript}}
           {{inlineScript}}
         </body>
