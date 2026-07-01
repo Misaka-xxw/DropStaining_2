@@ -11,6 +11,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Stainer.Web.Application.ReadModels;
+using Stainer.Web.Application.Requests;
+using Stainer.Web.Application.Services;
+using Stainer.Web.Application.Devices;
 using Stainer.Web.Domain.Entities;
 using Stainer.Web.Infrastructure.Data;
 
@@ -48,6 +51,15 @@ public sealed class RuntimeLedgerExecutorTests
             await AddBottleAsync(dbContext, "ABC", "ABC00320260101001", 300, "R1");
             await AddBottleAsync(dbContext, "ABC", "ABC00720260101002", 700, "R2");
             await AddBottleAsync(dbContext, "HEM", "HEM05020260101001", 5000, "R3");
+            var dabAId = await AddBottleAsync(dbContext, "DAB-A", "DABA20260101003", 100, "R4");
+            var dabBId = await AddBottleAsync(dbContext, "DAB-B", "DABB20260101003", 100, "R5");
+            var service = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
+            await service.CreateBatchAsync(new CreateDabBatchRequest(
+                "cmd-runtime-dab-create-001",
+                [ihcTaskId],
+                dabAId,
+                dabBId,
+                "M1"), await AdminActorAsync(dbContext));
         }
 
         var run = await PostJsonAsync<MachineRunResponse>(client, "/api/runs", new
@@ -69,6 +81,155 @@ public sealed class RuntimeLedgerExecutorTests
         Assert.Contains(dabBatches, x => x.PreparedAtUtc.HasValue && x.ExpiresAtUtc == x.PreparedAtUtc.Value.AddHours(3));
         Assert.True(await verifyContext.Alarms.AnyAsync(x => x.MachineRunId == run.RunId && x.Code == "reagent_depleted"));
         Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "run.reagent_consumption"));
+    }
+
+    [Fact]
+    public async Task Mock_dab_preparation_completed_converts_reservations_to_consumption_once()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin", "admin");
+        await InitializeDevicesAsync(client, "dab-success");
+
+        string taskId;
+        string dabBatchId;
+        string dabA1Id;
+        string dabA2Id;
+        string dabBId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            taskId = await CreateConfirmedTaskAsync(dbContext, "IHC-DAB-PREP-SUCCESS", StainingTaskType.Ihc, "A-01",
+                [
+                    ("DAB", "Dab", "DAB", 100)
+                ],
+                []);
+            dabA1Id = await AddBottleAsync(dbContext, "DAB-A", "DABA20260101001", 20, "R1");
+            dabA2Id = await AddBottleAsync(dbContext, "DAB-A", "DABA20260101002", 100, "R2");
+            dabBId = await AddBottleAsync(dbContext, "DAB-B", "DABB20260101001", 100, "R3");
+            var service = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
+            var actor = await AdminActorAsync(dbContext);
+            var created = await service.CreateBatchAsync(new CreateDabBatchRequest(
+                "cmd-dab-prep-success-create",
+                [taskId],
+                dabA1Id,
+                dabBId,
+                "M1"), actor);
+            dabBatchId = created.BatchId;
+        }
+
+        var run = await PostJsonAsync<MachineRunResponse>(client, "/api/runs", new
+        {
+            commandId = "cmd-dab-prep-success-run",
+            stainingTaskIds = new[] { taskId }
+        });
+        await PostJsonAsync<RunCommandResponse>(client, $"/api/runs/{run.RunId}/start", new { commandId = "cmd-dab-prep-success-start" });
+        await WaitForRunStatusAsync(client, run.RunId, RuntimeLedgerStatus.Completed);
+        await PostJsonAsync<RunCommandResponse>(client, $"/api/runs/{run.RunId}/start", new { commandId = "cmd-dab-prep-success-start-replay" });
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var batch = await verifyContext.DabBatches.SingleAsync(x => x.Id == dabBatchId);
+        Assert.Equal(DabBatchStatus.Available, batch.Status);
+        Assert.Equal(600, batch.ActualPreparedVolumeUl);
+        Assert.Equal(30, batch.DabAVolumeUl);
+        Assert.Equal(30, batch.DabBVolumeUl);
+        Assert.Equal(540, batch.WaterVolumeUl);
+        Assert.Equal(600, batch.RemainingVolumeUl);
+        Assert.Equal(4, await verifyContext.ReagentReservations.CountAsync(x => x.DabBatchId == dabBatchId && x.Status == ReagentReservationStatus.Consumed));
+        Assert.Equal(2, await verifyContext.ReagentConsumptions.CountAsync(x => x.DabBatchId == dabBatchId && x.ReagentCode == "DAB-A"));
+        Assert.Equal(30, await verifyContext.ReagentConsumptions.Where(x => x.DabBatchId == dabBatchId && x.ReagentCode == "DAB-A").SumAsync(x => x.VolumeUl));
+        Assert.Equal(30, await verifyContext.ReagentConsumptions.Where(x => x.DabBatchId == dabBatchId && x.ReagentCode == "DAB-B").SumAsync(x => x.VolumeUl));
+        Assert.Equal(0, (await verifyContext.ReagentBottles.SingleAsync(x => x.Id == dabA1Id)).RemainingVolumeUl);
+        Assert.Equal(90, (await verifyContext.ReagentBottles.SingleAsync(x => x.Id == dabA2Id)).RemainingVolumeUl);
+        Assert.Equal(70, (await verifyContext.ReagentBottles.SingleAsync(x => x.Id == dabBId)).RemainingVolumeUl);
+        var water = await verifyContext.SystemLiquidUsages.SingleAsync(x => x.DabBatchId == dabBatchId);
+        Assert.Equal(SystemLiquidSourceTypes.SystemWater, water.SourceType);
+        Assert.Equal(540, water.VolumeUl);
+        Assert.Contains("SystemWater", water.LevelSnapshotJson, StringComparison.Ordinal);
+        var dabCommand = await verifyContext.DeviceCommandExecutions.SingleAsync(x => x.Id == water.DeviceCommandExecutionId);
+        Assert.Equal(DeviceCommandStatus.Completed, dabCommand.Status);
+        Assert.NotNull(dabCommand.CommandSentAtUtc);
+        Assert.NotNull(dabCommand.AcknowledgedAtUtc);
+        Assert.NotNull(dabCommand.CompletedAtUtc);
+        Assert.Equal(2, await verifyContext.ReagentConsumptions.CountAsync(x => x.DabBatchId == dabBatchId && x.DeviceCommandExecutionId == dabCommand.Id && x.ReagentCode == "DAB-A"));
+    }
+
+    [Theory]
+    [InlineData(DeviceFaultTypes.FailNextCommand, RuntimeLedgerStatus.Failed, DabBatchStatus.Failed, ReagentReservationStatus.Released, false, "dab_preparation_failed")]
+    [InlineData(DeviceFaultTypes.TimeoutNextCommand, RuntimeLedgerStatus.Unknown, DabBatchStatus.Unknown, ReagentReservationStatus.Reserved, true, "dab_preparation_unknown")]
+    [InlineData(DeviceFaultTypes.Disconnect, RuntimeLedgerStatus.Unknown, DabBatchStatus.Unknown, ReagentReservationStatus.Reserved, true, "dab_preparation_unknown")]
+    [InlineData(DeviceFaultTypes.ReturnUnknown, RuntimeLedgerStatus.Unknown, DabBatchStatus.Unknown, ReagentReservationStatus.Reserved, true, "dab_preparation_unknown")]
+    public async Task Mock_dab_preparation_failure_and_unknown_follow_safe_reservation_rules(
+        string faultType,
+        string expectedStepStatus,
+        string expectedBatchStatus,
+        string expectedReservationStatus,
+        bool expectUnknownCommand,
+        string expectedAlarmCode)
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin", "admin");
+        await InitializeDevicesAsync(client, $"dab-{faultType}");
+
+        string taskId;
+        string dabBatchId;
+        string dabAId;
+        string dabBId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            taskId = await CreateConfirmedTaskAsync(dbContext, $"IHC-DAB-{faultType}", StainingTaskType.Ihc, "A-01",
+                [
+                    ("DAB", "Dab", "DAB", 100)
+                ],
+                []);
+            dabAId = await AddBottleAsync(dbContext, "DAB-A", $"DABA{Guid.NewGuid():N}"[..17], 100, "R1");
+            dabBId = await AddBottleAsync(dbContext, "DAB-B", $"DABB{Guid.NewGuid():N}"[..17], 100, "R2");
+            var service = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
+            var created = await service.CreateBatchAsync(new CreateDabBatchRequest(
+                $"cmd-dab-{faultType}-create",
+                [taskId],
+                dabAId,
+                dabBId,
+                "M1"), await AdminActorAsync(dbContext));
+            dabBatchId = created.BatchId;
+        }
+
+        _ = await PostJsonAsync<DeviceFaultMutationResponse>(client, "/api/device/mock-faults", new
+        {
+            commandId = $"cmd-dab-{faultType}-fault",
+            moduleCode = DeviceModules.Dab,
+            faultType,
+            reason = "DAB preparation test fault",
+            errorCode = $"dab_{faultType}",
+            message = $"Injected DAB {faultType}"
+        });
+        var run = await PostJsonAsync<MachineRunResponse>(client, "/api/runs", new
+        {
+            commandId = $"cmd-dab-{faultType}-run",
+            stainingTaskIds = new[] { taskId }
+        });
+        await PostJsonAsync<RunCommandResponse>(client, $"/api/runs/{run.RunId}/start", new { commandId = $"cmd-dab-{faultType}-start" });
+        _ = await WaitForRunAlarmAsync(client, run.RunId, expectedAlarmCode);
+        var faulted = await WaitForRunStatusAsync(client, run.RunId, RuntimeLedgerStatus.Faulted);
+        Assert.Equal(RuntimeLedgerStatus.Faulted, faulted.Status);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var step = await verifyContext.WorkflowStepExecutions.SingleAsync(x => x.WorkflowExecution!.MachineRunId == run.RunId);
+        Assert.Equal(expectedStepStatus, step.Status);
+        var batch = await verifyContext.DabBatches.Include(x => x.DabMixPosition).SingleAsync(x => x.Id == dabBatchId);
+        Assert.Equal(expectedBatchStatus, batch.Status);
+        Assert.Equal(DabMixPositionStatus.NeedsManualResolution, batch.DabMixPosition!.Status);
+        Assert.All(await verifyContext.ReagentReservations.Where(x => x.DabBatchId == dabBatchId).ToListAsync(), x => Assert.Equal(expectedReservationStatus, x.Status));
+        Assert.False(await verifyContext.ReagentConsumptions.AnyAsync(x => x.DabBatchId == dabBatchId));
+        Assert.False(await verifyContext.SystemLiquidUsages.AnyAsync(x => x.DabBatchId == dabBatchId));
+        Assert.Equal(100, (await verifyContext.ReagentBottles.SingleAsync(x => x.Id == dabAId)).RemainingVolumeUl);
+        Assert.Equal(100, (await verifyContext.ReagentBottles.SingleAsync(x => x.Id == dabBId)).RemainingVolumeUl);
+        var command = await verifyContext.DeviceCommandExecutions.SingleAsync(x => x.MachineRunId == run.RunId && x.CommandType == "Dab");
+        Assert.Equal(expectUnknownCommand ? DeviceCommandStatus.Unknown : DeviceCommandStatus.Failed, command.Status);
     }
 
     [Fact]
@@ -151,16 +312,27 @@ public sealed class RuntimeLedgerExecutorTests
                 ],
                 []);
             var m1 = await dbContext.DabMixPositions.SingleAsync(x => x.Code == "M1");
-            dbContext.DabBatches.Add(new DabBatch
+            var batch = new DabBatch
             {
                 DabMixPositionId = m1.Id,
+                DabMixPosition = m1,
                 PositionCode = "M1",
-                Status = RuntimeLedgerStatus.Available,
+                Status = DabBatchStatus.Available,
+                CleaningStatus = DabCleaningStatus.NotRequired,
                 RemainingVolumeUl = 500,
                 PreparedAtUtc = DateTimeOffset.UtcNow.AddHours(-4),
                 ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(-1),
                 CreatedAtUtc = DateTimeOffset.UtcNow.AddHours(-4)
+            };
+            batch.Tasks.Add(new DabBatchTask
+            {
+                StainingTaskId = taskId,
+                RequiredVolumeUl = DabFormula.VolumePerSlideUl,
+                CreatedAtUtc = DateTimeOffset.UtcNow
             });
+            m1.Status = DabMixPositionStatus.Occupied;
+            m1.ActiveDabBatchId = batch.Id;
+            dbContext.DabBatches.Add(batch);
             await dbContext.SaveChangesAsync();
         }
 
@@ -251,16 +423,27 @@ public sealed class RuntimeLedgerExecutorTests
                 ],
                 []);
             var m1 = await dbContext.DabMixPositions.SingleAsync(x => x.Code == "M1");
-            dbContext.DabBatches.Add(new DabBatch
+            var batch = new DabBatch
             {
                 DabMixPositionId = m1.Id,
+                DabMixPosition = m1,
                 PositionCode = "M1",
-                Status = RuntimeLedgerStatus.Available,
+                Status = DabBatchStatus.Available,
+                CleaningStatus = DabCleaningStatus.NotRequired,
                 RemainingVolumeUl = 500,
                 PreparedAtUtc = DateTimeOffset.UtcNow.AddHours(-4),
                 ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(-1),
                 CreatedAtUtc = DateTimeOffset.UtcNow.AddHours(-4)
+            };
+            batch.Tasks.Add(new DabBatchTask
+            {
+                StainingTaskId = taskId,
+                RequiredVolumeUl = DabFormula.VolumePerSlideUl,
+                CreatedAtUtc = DateTimeOffset.UtcNow
             });
+            m1.Status = DabMixPositionStatus.Occupied;
+            m1.ActiveDabBatchId = batch.Id;
+            dbContext.DabBatches.Add(batch);
             await dbContext.SaveChangesAsync();
         }
 
@@ -632,7 +815,13 @@ public sealed class RuntimeLedgerExecutorTests
         return task.Id;
     }
 
-    private static async Task AddBottleAsync(StainerDbContext dbContext, string reagentCode, string barcode, int volumeUl, string positionCode)
+    private static async Task<AuthenticatedUser> AdminActorAsync(StainerDbContext dbContext)
+    {
+        var admin = await dbContext.Users.SingleAsync(x => x.Username == "admin");
+        return new AuthenticatedUser(admin.Id, admin.Username, admin.DisplayName, "admin", ["admin"]);
+    }
+
+    private static async Task<string> AddBottleAsync(StainerDbContext dbContext, string reagentCode, string barcode, int volumeUl, string positionCode)
     {
         var definition = await dbContext.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == reagentCode);
         if (definition is null)
@@ -673,5 +862,6 @@ public sealed class RuntimeLedgerExecutorTests
             CreatedAtUtc = DateTimeOffset.UtcNow
         });
         await dbContext.SaveChangesAsync();
+        return bottle.Id;
     }
 }

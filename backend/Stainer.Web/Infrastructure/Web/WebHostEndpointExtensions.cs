@@ -346,18 +346,12 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.StartPreparationAsync(batchId, request, actor, cancellationToken));
             }));
-        app.MapPost("/api/dab/batches/{batchId}/preparation/complete", async (HttpContext context, string batchId, CompleteDabPreparationRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
-            await ExecuteBusinessAsync(async () =>
-            {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
-                return Results.Ok(await service.CompletePreparationAsync(batchId, request, actor, cancellationToken));
-            }));
-        app.MapPost("/api/dab/batches/{batchId}/consume", async (HttpContext context, string batchId, ConsumeDabBatchRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
-            await ExecuteBusinessAsync(async () =>
-            {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
-                return Results.Ok(await service.ConsumeAsync(batchId, request, actor, cancellationToken));
-            }));
+        app.MapPost("/api/dab/batches/{batchId}/preparation/complete", () => Results.Json(
+            new { code = "dab_preparation_requires_executor", message = "DAB preparation completion must be recorded by MachineExecutor after a completed device command." },
+            statusCode: StatusCodes.Status410Gone));
+        app.MapPost("/api/dab/batches/{batchId}/consume", () => Results.Json(
+            new { code = "dab_consumption_requires_executor", message = "DAB consumption must be recorded by MachineExecutor with run and step context." },
+            statusCode: StatusCodes.Status410Gone));
         app.MapPost("/api/dab/batches/{batchId}/expire", async (HttpContext context, string batchId, DabBatchCommandRequest request, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

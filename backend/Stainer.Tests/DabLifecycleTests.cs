@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Stainer.Web.Application.Devices;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Requests;
 using Stainer.Web.Application.Services;
@@ -26,6 +27,48 @@ public sealed class DabLifecycleTests
         Assert.Equal(720, formula.WaterVolumeUl);
         Assert.Throws<ArgumentOutOfRangeException>(() => DabFormula.CalculateRequired(0));
         Assert.Throws<ArgumentOutOfRangeException>(() => DabFormula.Calculate(801));
+    }
+
+    [Fact]
+    public async Task Device_completion_requires_matching_run_step_and_command_context()
+    {
+        await using var factory = CreateFactory();
+        var seed = await SeedDabInputsAsync(factory, 1);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var service = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var actor = new AuthenticatedUser(seed.OperatorUserId, "operator", "Operator", "operator", ["operator"]);
+        var created = await service.CreateBatchAsync(new CreateDabBatchRequest(
+            "cmd-dab-missing-context-create",
+            seed.TaskIds,
+            seed.DabABottleId,
+            seed.DabBBottleId,
+            "M1"), actor);
+        var now = DateTimeOffset.UtcNow;
+
+        var result = await service.CompletePreparationFromDeviceAsync(
+            created.BatchId,
+            new MachineRun { Id = "" },
+            new WorkflowStepExecution { Id = "" },
+            new DeviceCommandExecution { Id = "" },
+            new DeviceCommandResult(
+                true,
+                DeviceCommandStatuses.Succeeded,
+                DeviceModules.Dab,
+                "Dab",
+                null,
+                "completed",
+                now,
+                now,
+                true,
+                new Dictionary<string, object?>()),
+            CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Equal("dab_context_missing", result.ErrorCode);
+        Assert.False(await dbContext.ReagentConsumptions.AnyAsync(x => x.DabBatchId == created.BatchId));
+        Assert.False(await dbContext.SystemLiquidUsages.AnyAsync(x => x.DabBatchId == created.BatchId));
+        Assert.Equal(DabBatchStatus.PendingPreparation, (await dbContext.DabBatches.SingleAsync(x => x.Id == created.BatchId)).Status);
     }
 
     [Fact]
@@ -197,26 +240,21 @@ public sealed class DabLifecycleTests
         {
             commandId = "cmd-dab-api-start"
         });
-        var invalidPrepared = await client.PostAsJsonAsync($"/api/dab/batches/{first.BatchId}/preparation/complete", new
+        var directPrepared = await client.PostAsJsonAsync($"/api/dab/batches/{first.BatchId}/preparation/complete", new
         {
-            commandId = "cmd-dab-api-invalid-prepared",
-            actualPreparedVolumeUl = 599
-        });
-        Assert.Equal(HttpStatusCode.BadRequest, invalidPrepared.StatusCode);
-        Assert.Equal("dab_prepared_volume_mismatch", (await invalidPrepared.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
-
-        _ = await PostAsync<DabBatchResponse>(client, $"/api/dab/batches/{first.BatchId}/preparation/complete", new
-        {
-            commandId = "cmd-dab-api-complete",
+            commandId = "cmd-dab-api-direct-prepared",
             actualPreparedVolumeUl = 600
         });
-        var invalidUsage = await client.PostAsJsonAsync($"/api/dab/batches/{first.BatchId}/consume", new
+        Assert.Equal(HttpStatusCode.Gone, directPrepared.StatusCode);
+        Assert.Equal("dab_preparation_requires_executor", (await directPrepared.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
+
+        var directUsage = await client.PostAsJsonAsync($"/api/dab/batches/{first.BatchId}/consume", new
         {
-            commandId = "cmd-dab-api-invalid-use",
-            volumeUl = 601
+            commandId = "cmd-dab-api-direct-use",
+            volumeUl = 200
         });
-        Assert.Equal(HttpStatusCode.BadRequest, invalidUsage.StatusCode);
-        Assert.Equal("dab_usage_volume_invalid", (await invalidUsage.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
+        Assert.Equal(HttpStatusCode.Gone, directUsage.StatusCode);
+        Assert.Equal("dab_consumption_requires_executor", (await directUsage.Content.ReadFromJsonAsync<ErrorResponse>())!.Code);
 
         for (var index = 1; index < 8; index++)
         {
@@ -243,8 +281,8 @@ public sealed class DabLifecycleTests
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
         Assert.False(await dbContext.CommandReceipts.AnyAsync(x => x.CommandId == "cmd-dab-api-duplicate-position"));
-        Assert.False(await dbContext.CommandReceipts.AnyAsync(x => x.CommandId == "cmd-dab-api-invalid-prepared"));
-        Assert.False(await dbContext.CommandReceipts.AnyAsync(x => x.CommandId == "cmd-dab-api-invalid-use"));
+        Assert.False(await dbContext.CommandReceipts.AnyAsync(x => x.CommandId == "cmd-dab-api-direct-prepared"));
+        Assert.False(await dbContext.CommandReceipts.AnyAsync(x => x.CommandId == "cmd-dab-api-direct-use"));
         Assert.False(await dbContext.CommandReceipts.AnyAsync(x => x.CommandId == "cmd-dab-api-all-full"));
         Assert.Equal(8, await dbContext.DabBatches.CountAsync());
     }

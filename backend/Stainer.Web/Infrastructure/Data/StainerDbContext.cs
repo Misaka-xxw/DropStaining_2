@@ -52,6 +52,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<DeviceInitializationCheck> DeviceInitializationChecks => Set<DeviceInitializationCheck>();
     public DbSet<ReagentReservation> ReagentReservations => Set<ReagentReservation>();
     public DbSet<ReagentConsumption> ReagentConsumptions => Set<ReagentConsumption>();
+    public DbSet<SystemLiquidUsage> SystemLiquidUsages => Set<SystemLiquidUsage>();
     public DbSet<DispenseExecution> DispenseExecutions => Set<DispenseExecution>();
     public DbSet<DabBatch> DabBatches => Set<DabBatch>();
     public DbSet<DabBatchTask> DabBatchTasks => Set<DabBatchTask>();
@@ -1239,13 +1240,39 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         consumptions.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         consumptions.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36).IsRequired();
         consumptions.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36).IsRequired();
+        consumptions.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        consumptions.Property(x => x.DabBatchId).HasColumnName("dab_batch_id").HasMaxLength(36);
         consumptions.Property(x => x.ReagentBottleId).HasColumnName("reagent_bottle_id").HasMaxLength(36).IsRequired();
         consumptions.Property(x => x.ReagentCode).HasColumnName("reagent_code").HasMaxLength(64).IsRequired();
+        consumptions.Property(x => x.SourceRole).HasColumnName("source_role").HasMaxLength(32).HasDefaultValue(string.Empty).IsRequired();
         consumptions.Property(x => x.VolumeUl).HasColumnName("volume_ul").IsRequired();
         consumptions.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        consumptions.HasIndex(x => new { x.DabBatchId, x.DeviceCommandExecutionId });
+        consumptions.HasIndex(x => x.DeviceCommandExecutionId);
         consumptions.HasOne(x => x.MachineRun).WithMany().HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.Cascade);
         consumptions.HasOne(x => x.WorkflowStepExecution).WithMany().HasForeignKey(x => x.WorkflowStepExecutionId).OnDelete(DeleteBehavior.Cascade);
+        consumptions.HasOne(x => x.DeviceCommandExecution).WithMany().HasForeignKey(x => x.DeviceCommandExecutionId).OnDelete(DeleteBehavior.SetNull);
+        consumptions.HasOne(x => x.DabBatch).WithMany().HasForeignKey(x => x.DabBatchId).OnDelete(DeleteBehavior.SetNull);
         consumptions.HasOne(x => x.ReagentBottle).WithMany().HasForeignKey(x => x.ReagentBottleId).OnDelete(DeleteBehavior.Restrict);
+
+        var systemLiquidUsages = modelBuilder.Entity<SystemLiquidUsage>();
+        systemLiquidUsages.ToTable("system_liquid_usages");
+        systemLiquidUsages.HasKey(x => x.Id);
+        systemLiquidUsages.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        systemLiquidUsages.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36).IsRequired();
+        systemLiquidUsages.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36).IsRequired();
+        systemLiquidUsages.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36).IsRequired();
+        systemLiquidUsages.Property(x => x.DabBatchId).HasColumnName("dab_batch_id").HasMaxLength(36).IsRequired();
+        systemLiquidUsages.Property(x => x.SourceType).HasColumnName("source_type").HasMaxLength(64).HasDefaultValue(SystemLiquidSourceTypes.SystemWater).IsRequired();
+        systemLiquidUsages.Property(x => x.VolumeUl).HasColumnName("volume_ul").IsRequired();
+        systemLiquidUsages.Property(x => x.LevelSnapshotJson).HasColumnName("level_snapshot_json").HasMaxLength(4000).IsRequired();
+        systemLiquidUsages.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        systemLiquidUsages.HasIndex(x => new { x.DabBatchId, x.DeviceCommandExecutionId });
+        systemLiquidUsages.HasIndex(x => new { x.MachineRunId, x.SourceType });
+        systemLiquidUsages.HasOne(x => x.MachineRun).WithMany().HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.Cascade);
+        systemLiquidUsages.HasOne(x => x.WorkflowStepExecution).WithMany().HasForeignKey(x => x.WorkflowStepExecutionId).OnDelete(DeleteBehavior.Cascade);
+        systemLiquidUsages.HasOne(x => x.DeviceCommandExecution).WithMany().HasForeignKey(x => x.DeviceCommandExecutionId).OnDelete(DeleteBehavior.Cascade);
+        systemLiquidUsages.HasOne(x => x.DabBatch).WithMany().HasForeignKey(x => x.DabBatchId).OnDelete(DeleteBehavior.Cascade);
 
         var dispenses = modelBuilder.Entity<DispenseExecution>();
         dispenses.ToTable("dispense_executions");

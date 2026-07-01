@@ -169,14 +169,37 @@ public sealed class ReagentConsumption
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string MachineRunId { get; set; } = string.Empty;
     public string WorkflowStepExecutionId { get; set; } = string.Empty;
+    public string? DeviceCommandExecutionId { get; set; }
+    public string? DabBatchId { get; set; }
     public string ReagentBottleId { get; set; } = string.Empty;
     public string ReagentCode { get; set; } = string.Empty;
+    public string SourceRole { get; set; } = string.Empty;
     public int VolumeUl { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 
     public MachineRun? MachineRun { get; set; }
     public WorkflowStepExecution? WorkflowStepExecution { get; set; }
+    public DeviceCommandExecution? DeviceCommandExecution { get; set; }
+    public DabBatch? DabBatch { get; set; }
     public ReagentBottle? ReagentBottle { get; set; }
+}
+
+public sealed class SystemLiquidUsage
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string MachineRunId { get; set; } = string.Empty;
+    public string WorkflowStepExecutionId { get; set; } = string.Empty;
+    public string DeviceCommandExecutionId { get; set; } = string.Empty;
+    public string DabBatchId { get; set; } = string.Empty;
+    public string SourceType { get; set; } = SystemLiquidSourceTypes.SystemWater;
+    public int VolumeUl { get; set; }
+    public string LevelSnapshotJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+    public MachineRun? MachineRun { get; set; }
+    public WorkflowStepExecution? WorkflowStepExecution { get; set; }
+    public DeviceCommandExecution? DeviceCommandExecution { get; set; }
+    public DabBatch? DabBatch { get; set; }
 }
 
 public sealed class DispenseExecution
@@ -298,6 +321,11 @@ public static class ReagentReservationStatus
     public const string Consumed = "Consumed";
     public const string Released = "Released";
     public const string NeedsManualResolution = "NeedsManualResolution";
+}
+
+public static class SystemLiquidSourceTypes
+{
+    public const string SystemWater = "SystemWater";
 }
 
 public static class DabFormula

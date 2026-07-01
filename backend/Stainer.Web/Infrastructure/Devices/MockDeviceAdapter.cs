@@ -70,7 +70,19 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore) : IDevice
 
     public Task<DeviceCommandResult> WashNeedlesAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
 
-    public Task<DeviceCommandResult> PrepareDabAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
+    public Task<DeviceCommandResult> PrepareDabAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
+        ExecuteAsync(request, new Dictionary<string, object?>
+        {
+            ["source"] = "MockDabModule",
+            ["waterSourceType"] = "SystemWater",
+            ["waterLevelSnapshot"] = new Dictionary<string, object?>
+            {
+                ["sourceType"] = "SystemWater",
+                ["levelBeforeUl"] = 1_000_000,
+                ["levelAfterUl"] = 999_280,
+                ["unit"] = "uL"
+            }
+        }, cancellationToken);
 
     public Task<DeviceCommandResult> ExecuteWorkflowActionAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
 

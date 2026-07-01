@@ -66,7 +66,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             {
                 await using var scope = scopeFactory.CreateAsyncScope();
                 var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
-                await ProcessCommandAsync(dbContext, command, stoppingToken);
+                var dabLifecycleService = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
+                await ProcessCommandAsync(dbContext, dabLifecycleService, command, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -119,22 +120,30 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         }
     }
 
-    private async Task ProcessCommandAsync(StainerDbContext dbContext, MachineExecutorCommand command, CancellationToken cancellationToken)
+    private async Task ProcessCommandAsync(
+        StainerDbContext dbContext,
+        DabLifecycleService dabLifecycleService,
+        MachineExecutorCommand command,
+        CancellationToken cancellationToken)
     {
         switch (command.Type)
         {
             case MachineExecutorCommandType.Start:
             case MachineExecutorCommandType.Resume:
-                await ExecuteRunUntilBlockedAsync(dbContext, command.RunId, cancellationToken);
+                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, command.RunId, cancellationToken);
                 break;
             case MachineExecutorCommandType.Redo:
                 await RedoCurrentMajorStepAsync(dbContext, command.RunId, command.Payload ?? "Redo requested.", cancellationToken);
-                await ExecuteRunUntilBlockedAsync(dbContext, command.RunId, cancellationToken);
+                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, command.RunId, cancellationToken);
                 break;
         }
     }
 
-    private async Task ExecuteRunUntilBlockedAsync(StainerDbContext dbContext, string runId, CancellationToken cancellationToken)
+    private async Task ExecuteRunUntilBlockedAsync(
+        StainerDbContext dbContext,
+        DabLifecycleService dabLifecycleService,
+        string runId,
+        CancellationToken cancellationToken)
     {
         var control = flags.GetOrAdd(runId, _ => new ControlFlags());
         var run = await LoadRunAsync(dbContext, runId, cancellationToken);
@@ -201,7 +210,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 return;
             }
 
-            var stepCompleted = await ExecuteStepAsync(dbContext, run, step, cancellationToken);
+            var stepCompleted = await ExecuteStepAsync(dbContext, dabLifecycleService, run, step, cancellationToken);
             if (!stepCompleted)
             {
                 return;
@@ -229,7 +238,12 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         }
     }
 
-    private async Task<bool> ExecuteStepAsync(StainerDbContext dbContext, MachineRun run, WorkflowStepExecution step, CancellationToken cancellationToken)
+    private async Task<bool> ExecuteStepAsync(
+        StainerDbContext dbContext,
+        DabLifecycleService dabLifecycleService,
+        MachineRun run,
+        WorkflowStepExecution step,
+        CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
         run.CurrentMajorStepCode = step.MajorStepCode;
@@ -272,8 +286,34 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        var deviceOutcomeUnknown = deviceResult.Status is DeviceCommandStatuses.Unknown or DeviceCommandStatuses.TimedOut;
-        var ok = deviceResult.Ok && await ApplyBusinessEffectsAsync(dbContext, run, step, command, deviceResult, cancellationToken);
+        var deviceOutcomeUnknown = deviceResult.Status is DeviceCommandStatuses.Unknown or DeviceCommandStatuses.TimedOut
+            || (IsDabStep(step)
+                && deviceResult.Data.TryGetValue("faultType", out var faultType)
+                && string.Equals(Convert.ToString(faultType), DeviceFaultTypes.Disconnect, StringComparison.OrdinalIgnoreCase));
+        var businessOk = false;
+        if (deviceResult.Ok)
+        {
+            businessOk = await ApplyBusinessEffectsAsync(dbContext, dabLifecycleService, run, step, command, deviceResult, cancellationToken);
+        }
+        else if (IsDabStep(step))
+        {
+            var dabFailure = await dabLifecycleService.HandlePreparationNotCompletedFromDeviceAsync(
+                run,
+                step,
+                deviceResult,
+                deviceOutcomeUnknown,
+                cancellationToken);
+            if (!dabFailure.Ok)
+            {
+                await AddAlarmAsync(dbContext, run.Id, dabFailure.ErrorCode!, "Critical", dabFailure.Message, cancellationToken);
+                if (dabFailure.Batch is not null)
+                {
+                    PublishDabBatchChanged(run.Id, dabFailure.Batch, deviceOutcomeUnknown ? "unknown" : "failed");
+                }
+            }
+        }
+
+        var ok = deviceResult.Ok && businessOk;
         command.Status = ok
             ? DeviceCommandStatus.Completed
             : deviceOutcomeUnknown ? DeviceCommandStatus.Unknown : DeviceCommandStatus.Failed;
@@ -317,6 +357,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
 
     private async Task<bool> ApplyBusinessEffectsAsync(
         StainerDbContext dbContext,
+        DabLifecycleService dabLifecycleService,
         MachineRun run,
         WorkflowStepExecution step,
         DeviceCommandExecution command,
@@ -325,7 +366,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
     {
         if (IsDabStep(step))
         {
-            return await ApplyDabAsync(dbContext, run, step, command, cancellationToken);
+            return await ApplyDabAsync(dbContext, dabLifecycleService, run, step, command, deviceResult, cancellationToken);
         }
 
         if (IsTemperatureStep(step))
@@ -518,83 +559,118 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
 
     private async Task<bool> ApplyDabAsync(
         StainerDbContext dbContext,
+        DabLifecycleService dabLifecycleService,
         MachineRun run,
         WorkflowStepExecution step,
         DeviceCommandExecution command,
+        DeviceCommandResult deviceResult,
         CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var availableBatches = await dbContext.DabBatches
-            .Where(x => x.Status == RuntimeLedgerStatus.Available)
-            .ToListAsync(cancellationToken);
-        var expired = availableBatches
-            .Where(x => x.ExpiresAtUtc <= now)
-            .ToList();
-        if (expired.Count > 0)
+        var dabBatch = await FindDabBatchForStepAsync(dbContext, step, cancellationToken);
+        if (dabBatch is null)
         {
-            foreach (var batch in expired)
+            await AddAlarmAsync(dbContext, run.Id, "dab_batch_not_prepared", "Critical", "No formal DAB batch is assigned to this DAB workflow step.", cancellationToken);
+            return false;
+        }
+
+        if (dabBatch.Status is DabBatchStatus.PendingPreparation or DabBatchStatus.Preparing)
+        {
+            var preparation = await dabLifecycleService.CompletePreparationFromDeviceAsync(
+                dabBatch.Id,
+                run,
+                step,
+                command,
+                deviceResult,
+                cancellationToken);
+            if (!preparation.Ok)
             {
-                batch.Status = RuntimeLedgerStatus.Expired;
-                PublishDabBatchChanged(run.Id, batch, "expired");
+                await AddAlarmAsync(dbContext, run.Id, preparation.ErrorCode!, "Critical", preparation.Message, cancellationToken);
+                return false;
             }
 
+            PublishDabBatchChanged(run.Id, preparation.Batch!, "prepared");
+            return true;
+        }
+
+        if (dabBatch.Status == DabBatchStatus.Available)
+        {
+            return await ConsumeAvailableDabBatchAsync(dbContext, run, step, command, dabBatch, now, cancellationToken);
+        }
+
+        await AddAlarmAsync(dbContext, run.Id, "dab_batch_unavailable", "Critical", $"DAB batch {dabBatch.Id} is {dabBatch.Status} and cannot be used.", cancellationToken);
+        return false;
+    }
+
+    private async Task<DabBatch?> FindDabBatchForStepAsync(
+        StainerDbContext dbContext,
+        WorkflowStepExecution step,
+        CancellationToken cancellationToken)
+    {
+        var stainingTaskId = step.WorkflowExecution?.SlideTask?.StainingTaskId;
+        if (string.IsNullOrWhiteSpace(stainingTaskId))
+        {
+            return null;
+        }
+
+        var candidates = await dbContext.DabBatches
+            .Include(x => x.DabMixPosition)
+            .Include(x => x.Tasks)
+            .Include(x => x.ReagentReservations)
+            .ThenInclude(x => x.ReagentBottle)
+            .Where(x => x.Tasks.Any(task => task.StainingTaskId == stainingTaskId)
+                && x.Status != DabBatchStatus.Cleaned
+                && x.Status != DabBatchStatus.LegacyUnverified)
+            .ToListAsync(cancellationToken);
+        return candidates
+            .OrderByDescending(x => x.Status == DabBatchStatus.Preparing)
+            .ThenByDescending(x => x.Status == DabBatchStatus.PendingPreparation)
+            .ThenBy(x => x.CreatedAtUtc)
+            .FirstOrDefault();
+    }
+
+    private async Task<bool> ConsumeAvailableDabBatchAsync(
+        StainerDbContext dbContext,
+        MachineRun run,
+        WorkflowStepExecution step,
+        DeviceCommandExecution command,
+        DabBatch batch,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (batch.ExpiresAtUtc <= now)
+        {
+            batch.Status = DabBatchStatus.Expired;
+            batch.CleaningStatus = DabCleaningStatus.Required;
+            batch.DabMixPosition!.Status = DabMixPositionStatus.AwaitingCleaning;
+            batch.DabMixPosition.UpdatedAtUtc = now;
+            PublishDabBatchChanged(run.Id, batch, "expired");
             await AddAlarmAsync(dbContext, run.Id, "dab_expired", "Critical", "A DAB batch is expired. Clean DAB mix positions before continuing.", cancellationToken);
             return false;
         }
 
-        var volume = Math.Max(step.VolumeUl ?? 100, 100);
-        var dabBatch = availableBatches
-            .Where(x => x.ExpiresAtUtc > now && x.RemainingVolumeUl >= volume)
-            .OrderBy(x => x.ExpiresAtUtc)
-            .FirstOrDefault();
-
-        if (dabBatch is null)
+        var volume = Math.Max(step.VolumeUl ?? DabFormula.VolumePerSlideUl, DabFormula.VolumePerSlideUl);
+        if (batch.RemainingVolumeUl < volume)
         {
-            var occupiedCodes = await dbContext.DabBatches
-                .Where(x => x.Status == RuntimeLedgerStatus.Available)
-                .Select(x => x.PositionCode)
-                .ToListAsync(cancellationToken);
-            var position = await dbContext.DabMixPositions
-                .OrderBy(x => x.PositionNo)
-                .FirstOrDefaultAsync(x => !occupiedCodes.Contains(x.Code), cancellationToken);
-            if (position is null)
-            {
-                await AddAlarmAsync(dbContext, run.Id, "dab_positions_full", "Critical", "All DAB mix positions M1-M8 are occupied. Cleaning is required.", cancellationToken);
-                return false;
-            }
-
-            dabBatch = new DabBatch
-            {
-                DabMixPositionId = position.Id,
-                PositionCode = position.Code,
-                Status = RuntimeLedgerStatus.Available,
-                RemainingVolumeUl = 1000,
-                PreparedAtUtc = now,
-                ExpiresAtUtc = now.AddHours(3),
-                CreatedAtUtc = now
-            };
-            dbContext.DabBatches.Add(dabBatch);
-            PublishDabBatchChanged(run.Id, dabBatch, "prepared");
-            dbContext.DeviceCommandExecutions.Add(new DeviceCommandExecution
-            {
-                MachineRunId = run.Id,
-                WorkflowStepExecutionId = step.Id,
-                CommandType = "MockDabPrepare",
-                Status = DeviceCommandStatus.Completed,
-                PayloadJson = JsonSerializer.Serialize(new { position.Code, volumeUl = dabBatch.RemainingVolumeUl }),
-                ResultJson = "{\"ok\":true}",
-                CreatedAtUtc = now,
-                CommandSentAtUtc = now,
-                AcknowledgedAtUtc = now,
-                CompletedAtUtc = now
-            });
+            await AddAlarmAsync(dbContext, run.Id, "dab_batch_insufficient", "Critical", $"DAB batch {batch.Id} does not have enough remaining volume.", cancellationToken);
+            return false;
         }
 
-        dabBatch.RemainingVolumeUl -= volume;
-        PublishDabBatchChanged(run.Id, dabBatch, "consumed");
+        batch.RemainingVolumeUl -= volume;
+        batch.UsedVolumeUl += volume;
+        batch.UpdatedAtUtc = now;
+        if (batch.RemainingVolumeUl == 0)
+        {
+            batch.Status = DabBatchStatus.Depleted;
+            batch.CleaningStatus = DabCleaningStatus.Required;
+            batch.DabMixPosition!.Status = DabMixPositionStatus.AwaitingCleaning;
+            batch.DabMixPosition.UpdatedAtUtc = now;
+        }
+
+        PublishDabBatchChanged(run.Id, batch, "consumed");
         dbContext.DabBatchUsages.Add(new DabBatchUsage
         {
-            DabBatch = dabBatch,
+            DabBatch = batch,
             MachineRunId = run.Id,
             WorkflowStepExecutionId = step.Id,
             VolumeUl = volume,
@@ -605,7 +681,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             DeviceCommandExecutionId = command.Id,
             ReagentCode = "DAB",
             VolumeUl = volume,
-            SourcePositionCode = dabBatch.PositionCode,
+            SourcePositionCode = batch.PositionCode,
             TargetSlotCode = step.WorkflowExecution!.SlideTask!.SlotCode,
             Status = DeviceCommandStatus.Completed,
             CreatedAtUtc = now
@@ -614,8 +690,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         {
             Action = "run.dab_consumption",
             EntityType = "DabBatch",
-            EntityId = dabBatch.Id,
-            Message = JsonSerializer.Serialize(new { runId = run.Id, volumeUl = volume, remainingUl = dabBatch.RemainingVolumeUl }),
+            EntityId = batch.Id,
+            Message = JsonSerializer.Serialize(new { runId = run.Id, volumeUl = volume, remainingUl = batch.RemainingVolumeUl }),
             CreatedAtUtc = now
         });
         return true;

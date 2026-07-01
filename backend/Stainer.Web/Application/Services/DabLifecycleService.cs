@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Stainer.Web.Application.Devices;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Requests;
 using Stainer.Web.Domain.Entities;
@@ -439,6 +440,211 @@ public sealed class DabLifecycleService(
             }, cancellationToken);
     }
 
+    public async Task<DabExecutorMutationResult> CompletePreparationFromDeviceAsync(
+        string batchId,
+        MachineRun run,
+        WorkflowStepExecution step,
+        DeviceCommandExecution command,
+        DeviceCommandResult deviceResult,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(run.Id)
+            || string.IsNullOrWhiteSpace(step.Id)
+            || string.IsNullOrWhiteSpace(command.Id)
+            || command.MachineRunId != run.Id
+            || command.WorkflowStepExecutionId != step.Id)
+        {
+            return DabExecutorMutationResult.Failure("dab_context_missing", "DAB preparation requires matching machine run, workflow step and device command context.");
+        }
+
+        if (!deviceResult.Ok || deviceResult.Status != DeviceCommandStatuses.Succeeded)
+        {
+            return DabExecutorMutationResult.Failure("dab_device_not_completed", "DAB source consumption is only allowed after the device reports successful completion.");
+        }
+
+        var batch = await BatchQuery(asTracking: true)
+            .SingleOrDefaultAsync(x => x.Id == batchId, cancellationToken);
+        if (batch is null)
+        {
+            return DabExecutorMutationResult.Failure("dab_batch_not_found", "DAB batch was not found.");
+        }
+
+        if (await dbContext.ReagentConsumptions.AnyAsync(x => x.DabBatchId == batch.Id && x.DeviceCommandExecutionId == command.Id, cancellationToken)
+            || await dbContext.SystemLiquidUsages.AnyAsync(x => x.DabBatchId == batch.Id && x.DeviceCommandExecutionId == command.Id, cancellationToken))
+        {
+            return DabExecutorMutationResult.Success(batch, "DAB preparation result was already applied.");
+        }
+
+        if (batch.Status is not (DabBatchStatus.PendingPreparation or DabBatchStatus.Preparing))
+        {
+            return DabExecutorMutationResult.Failure("dab_status_transition_invalid", $"DAB batch cannot complete preparation from {batch.Status}.", batch);
+        }
+
+        DabFormulaVolumes actual;
+        try
+        {
+            actual = DabFormula.Calculate(batch.TotalRequiredVolumeUl);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return DabExecutorMutationResult.Failure("dab_volume_invalid", $"DAB batch has invalid total volume {batch.TotalRequiredVolumeUl} uL.", batch);
+        }
+
+        var reserved = batch.ReagentReservations
+            .Where(x => x.Status == ReagentReservationStatus.Reserved)
+            .ToList();
+        if (reserved.Where(x => x.SourceRole == "DabA").Sum(x => x.ReservedVolumeUl) != actual.DabAVolumeUl
+            || reserved.Where(x => x.SourceRole == "DabB").Sum(x => x.ReservedVolumeUl) != actual.DabBVolumeUl
+            || reserved.Where(x => x.SourceRole == "Water").Sum(x => x.ReservedVolumeUl) != actual.WaterVolumeUl)
+        {
+            return DabExecutorMutationResult.Failure("dab_source_reservation_mismatch", "DAB source reservations do not match the formula.", batch);
+        }
+
+        var bottleReservations = reserved.Where(x => x.SourceRole is "DabA" or "DabB").ToList();
+        if (bottleReservations.Any(x => x.ReagentBottle is null || x.ReagentBottle.RemainingVolumeUl < x.ReservedVolumeUl))
+        {
+            return DabExecutorMutationResult.Failure("dab_source_volume_insufficient", "DAB source bottle volume is insufficient.", batch);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var reservation in bottleReservations)
+        {
+            var bottle = reservation.ReagentBottle!;
+            bottle.RemainingVolumeUl -= reservation.ReservedVolumeUl;
+            bottle.UpdatedAtUtc = now;
+            reservation.Status = ReagentReservationStatus.Consumed;
+            reservation.UpdatedAtUtc = now;
+            dbContext.ReagentConsumptions.Add(new ReagentConsumption
+            {
+                MachineRunId = run.Id,
+                WorkflowStepExecutionId = step.Id,
+                DeviceCommandExecutionId = command.Id,
+                DabBatchId = batch.Id,
+                ReagentBottleId = bottle.Id,
+                ReagentCode = reservation.ReagentCode,
+                SourceRole = reservation.SourceRole,
+                VolumeUl = reservation.ReservedVolumeUl,
+                CreatedAtUtc = now
+            });
+            dbContext.DispenseExecutions.Add(new DispenseExecution
+            {
+                DeviceCommandExecutionId = command.Id,
+                ReagentBottleId = bottle.Id,
+                ReagentCode = reservation.ReagentCode,
+                VolumeUl = reservation.ReservedVolumeUl,
+                SourcePositionCode = reservation.SourceRole,
+                TargetSlotCode = batch.PositionCode,
+                Status = DeviceCommandStatus.Completed,
+                CreatedAtUtc = now
+            });
+        }
+
+        var waterReservation = reserved.Single(x => x.SourceRole == "Water");
+        waterReservation.Status = ReagentReservationStatus.Consumed;
+        waterReservation.UpdatedAtUtc = now;
+        dbContext.SystemLiquidUsages.Add(new SystemLiquidUsage
+        {
+            MachineRunId = run.Id,
+            WorkflowStepExecutionId = step.Id,
+            DeviceCommandExecutionId = command.Id,
+            DabBatchId = batch.Id,
+            SourceType = SystemLiquidSourceTypes.SystemWater,
+            VolumeUl = waterReservation.ReservedVolumeUl,
+            LevelSnapshotJson = JsonSerializer.Serialize(deviceResult.Data.GetValueOrDefault("waterLevelSnapshot") ?? new
+            {
+                sourceType = SystemLiquidSourceTypes.SystemWater,
+                capturedAtUtc = now
+            }),
+            CreatedAtUtc = now
+        });
+
+        batch.Status = DabBatchStatus.Available;
+        batch.CleaningStatus = DabCleaningStatus.NotRequired;
+        batch.ActualPreparedVolumeUl = actual.TotalVolumeUl;
+        batch.DabAVolumeUl = actual.DabAVolumeUl;
+        batch.DabBVolumeUl = actual.DabBVolumeUl;
+        batch.WaterVolumeUl = actual.WaterVolumeUl;
+        batch.UsedVolumeUl = 0;
+        batch.RemainingVolumeUl = actual.TotalVolumeUl;
+        batch.PreparedAtUtc = now;
+        batch.ExpiresAtUtc = now.AddHours(DabFormula.ValidityHours);
+        batch.UpdatedAtUtc = now;
+        batch.DabMixPosition!.Status = DabMixPositionStatus.Occupied;
+        batch.DabMixPosition.ActiveDabBatchId = batch.Id;
+        batch.DabMixPosition.UpdatedAtUtc = now;
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            Action = "run.dab_preparation_completed",
+            EntityType = "DabBatch",
+            EntityId = batch.Id,
+            Message = JsonSerializer.Serialize(new
+            {
+                runId = run.Id,
+                workflowStepExecutionId = step.Id,
+                deviceCommandExecutionId = command.Id,
+                batch.ActualPreparedVolumeUl,
+                batch.DabAVolumeUl,
+                batch.DabBVolumeUl,
+                batch.WaterVolumeUl
+            }),
+            CreatedAtUtc = now
+        });
+        ValidateStateInvariants(batch);
+        return DabExecutorMutationResult.Success(batch, "DAB preparation completed and reservations converted to consumption.");
+    }
+
+    public async Task<DabExecutorMutationResult> HandlePreparationNotCompletedFromDeviceAsync(
+        MachineRun run,
+        WorkflowStepExecution step,
+        DeviceCommandResult deviceResult,
+        bool deviceOutcomeUnknown,
+        CancellationToken cancellationToken = default)
+    {
+        var stainingTaskId = step.WorkflowExecution?.SlideTask?.StainingTaskId;
+        if (string.IsNullOrWhiteSpace(run.Id) || string.IsNullOrWhiteSpace(step.Id) || string.IsNullOrWhiteSpace(stainingTaskId))
+        {
+            return DabExecutorMutationResult.Failure("dab_context_missing", "DAB failure handling requires machine run and workflow step context.");
+        }
+
+        var candidates = await BatchQuery(asTracking: true)
+            .Where(x => x.Tasks.Any(task => task.StainingTaskId == stainingTaskId)
+                && (x.Status == DabBatchStatus.PendingPreparation || x.Status == DabBatchStatus.Preparing))
+            .ToListAsync(cancellationToken);
+        var batch = candidates.OrderBy(x => x.CreatedAtUtc).FirstOrDefault();
+        if (batch is null)
+        {
+            return DabExecutorMutationResult.Failure("dab_batch_not_prepared", "No formal DAB batch is assigned to this DAB workflow step.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (deviceOutcomeUnknown)
+        {
+            batch.Status = DabBatchStatus.Unknown;
+            batch.CleaningStatus = DabCleaningStatus.NeedsManualResolution;
+            batch.UpdatedAtUtc = now;
+            batch.DabMixPosition!.Status = DabMixPositionStatus.NeedsManualResolution;
+            batch.DabMixPosition.UpdatedAtUtc = now;
+            AddExecutorAudit(run.Id, step.Id, "run.dab_preparation_unknown", batch, deviceResult, now);
+            ValidateStateInvariants(batch);
+            return DabExecutorMutationResult.Failure("dab_preparation_unknown", deviceResult.Message, batch);
+        }
+
+        batch.Status = DabBatchStatus.Failed;
+        batch.CleaningStatus = DabCleaningStatus.NeedsManualResolution;
+        batch.UpdatedAtUtc = now;
+        batch.DabMixPosition!.Status = DabMixPositionStatus.NeedsManualResolution;
+        batch.DabMixPosition.UpdatedAtUtc = now;
+        foreach (var reservation in batch.ReagentReservations.Where(x => x.Status == ReagentReservationStatus.Reserved))
+        {
+            reservation.Status = ReagentReservationStatus.Released;
+            reservation.UpdatedAtUtc = now;
+        }
+
+        AddExecutorAudit(run.Id, step.Id, "run.dab_preparation_failed", batch, deviceResult, now);
+        ValidateStateInvariants(batch);
+        return DabExecutorMutationResult.Failure("dab_preparation_failed", deviceResult.Message, batch);
+    }
+
     private Task<DabBatchResponse> MutateAsync<TRequest>(
         string batchId,
         string commandId,
@@ -678,6 +884,31 @@ public sealed class DabLifecycleService(
         });
     }
 
+    private void AddExecutorAudit(
+        string runId,
+        string stepId,
+        string action,
+        DabBatch batch,
+        DeviceCommandResult deviceResult,
+        DateTimeOffset now)
+    {
+        dbContext.AuditLogs.Add(new AuditLog
+        {
+            Action = action,
+            EntityType = "DabBatch",
+            EntityId = batch.Id,
+            Message = JsonSerializer.Serialize(new
+            {
+                runId,
+                workflowStepExecutionId = stepId,
+                deviceResult.Status,
+                deviceResult.ErrorCode,
+                deviceResult.Message
+            }),
+            CreatedAtUtc = now
+        });
+    }
+
     private static CommandExecutionResult<DabBatchResponse> Result(DabBatch batch, string commandId, string message)
     {
         ValidateStateInvariants(batch);
@@ -785,4 +1016,17 @@ public sealed class DabLifecycleService(
                 .ToList(),
             message);
     }
+}
+
+public sealed record DabExecutorMutationResult(
+    bool Ok,
+    string? ErrorCode,
+    string Message,
+    DabBatch? Batch)
+{
+    public static DabExecutorMutationResult Success(DabBatch batch, string message) =>
+        new(true, null, message, batch);
+
+    public static DabExecutorMutationResult Failure(string errorCode, string message, DabBatch? batch = null) =>
+        new(false, errorCode, message, batch);
 }
