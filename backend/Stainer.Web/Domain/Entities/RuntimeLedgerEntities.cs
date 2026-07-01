@@ -254,6 +254,31 @@ public sealed class DabBatch
     public ICollection<DabBatchTask> Tasks { get; } = new List<DabBatchTask>();
     public ICollection<DabBatchUsage> Usages { get; } = new List<DabBatchUsage>();
     public ICollection<ReagentReservation> ReagentReservations { get; } = new List<ReagentReservation>();
+    public ICollection<DabRepreparationPlan> ExpiryRepreparationPlans { get; } = new List<DabRepreparationPlan>();
+    public ICollection<DabRepreparationPlan> ReplacementForPlans { get; } = new List<DabRepreparationPlan>();
+}
+
+public sealed class DabRepreparationPlan
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string ExpiredDabBatchId { get; set; } = string.Empty;
+    public string? ReplacementDabBatchId { get; set; }
+    public string MachineRunId { get; set; } = string.Empty;
+    public string Status { get; set; } = DabRepreparationPlanStatus.AwaitingMixPosition;
+    public string Reason { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? UpdatedAtUtc { get; set; }
+
+    public DabBatch? ExpiredDabBatch { get; set; }
+    public DabBatch? ReplacementDabBatch { get; set; }
+    public MachineRun? MachineRun { get; set; }
+}
+
+public static class DabRepreparationPlanStatus
+{
+    public const string AwaitingMixPosition = "AwaitingMixPosition";
+    public const string Planned = "Planned";
+    public const string NeedsManualResolution = "NeedsManualResolution";
 }
 
 public sealed class DabBatchTask

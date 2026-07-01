@@ -403,7 +403,7 @@ public sealed class DabLifecycleService(
         return MutateAsync(batchId, request.CommandId, "dab.batch.cleaning.start", request, actor,
             (batch, now) =>
             {
-                if (batch.Status is not (DabBatchStatus.Depleted or DabBatchStatus.Expired or DabBatchStatus.Failed or DabBatchStatus.Unknown))
+                if (batch.Status is not (DabBatchStatus.Depleted or DabBatchStatus.Expired))
                 {
                     throw InvalidTransition(batch.Status, DabBatchStatus.AwaitingCleaning);
                 }
@@ -675,6 +675,191 @@ public sealed class DabLifecycleService(
             cancellationToken);
     }
 
+    public async Task<DabExpiryProcessingResult> ProcessExpirationsAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var batches = (await BatchQuery(asTracking: true)
+                .Where(x => x.Status == DabBatchStatus.Available || x.Status == DabBatchStatus.Expired)
+                .ToListAsync(cancellationToken))
+            .Where(x => x.Status == DabBatchStatus.Expired || (x.ExpiresAtUtc is not null && x.ExpiresAtUtc <= now))
+            .OrderBy(x => x.ExpiresAtUtc)
+            .ToList();
+
+        var newlyExpired = 0;
+        var plansCreated = 0;
+        var replacementsCreated = 0;
+        foreach (var batch in batches)
+        {
+            if (batch.Status == DabBatchStatus.Available)
+            {
+                batch.Status = DabBatchStatus.Expired;
+                batch.UpdatedAtUtc = now;
+                RequireCleaning(batch, now);
+                AddSystemAudit("dab.batch.expired.automatic", batch.Id, new { batch.ExpiresAtUtc, processedAtUtc = now }, now);
+                newlyExpired++;
+            }
+
+            var unfinishedSteps = (await dbContext.WorkflowStepExecutions
+                    .Include(x => x.WorkflowExecution)
+                    .ThenInclude(x => x!.SlideTask)
+                    .Include(x => x.WorkflowExecution)
+                    .ThenInclude(x => x!.MachineRun)
+                    .Where(x => x.WorkflowExecution != null
+                        && x.WorkflowExecution.SlideTask != null
+                        && batch.Tasks.Select(task => task.StainingTaskId).Contains(x.WorkflowExecution.SlideTask.StainingTaskId)
+                        && x.WorkflowExecution.MachineRun != null
+                        && x.WorkflowExecution.MachineRun.Status != RuntimeLedgerStatus.Completed
+                        && x.WorkflowExecution.MachineRun.Status != RuntimeLedgerStatus.Stopped
+                        && (x.Status == RuntimeLedgerStatus.Pending
+                            || x.Status == RuntimeLedgerStatus.Running
+                            || x.Status == RuntimeLedgerStatus.Failed
+                            || x.Status == RuntimeLedgerStatus.Unknown))
+                    .ToListAsync(cancellationToken))
+                .Where(IsDabWorkflowStep)
+                .ToList();
+
+            foreach (var runGroup in unfinishedSteps.GroupBy(x => x.WorkflowExecution!.MachineRunId))
+            {
+                var plan = await dbContext.DabRepreparationPlans
+                    .Include(x => x.ExpiredDabBatch)
+                    .SingleOrDefaultAsync(x => x.ExpiredDabBatchId == batch.Id && x.MachineRunId == runGroup.Key, cancellationToken);
+                if (plan is null)
+                {
+                    plan = new DabRepreparationPlan
+                    {
+                        ExpiredDabBatch = batch,
+                        ExpiredDabBatchId = batch.Id,
+                        MachineRunId = runGroup.Key,
+                        Status = DabRepreparationPlanStatus.AwaitingMixPosition,
+                        Reason = "The assigned DAB batch expired while the run still had unfinished DAB operations.",
+                        CreatedAtUtc = now,
+                        UpdatedAtUtc = now
+                    };
+                    dbContext.DabRepreparationPlans.Add(plan);
+                    AddRunAlarm(runGroup.Key, "dab_expired_repreparation_required", "Critical", "DAB 已到期，运行存在未完成的 DAB 操作，已创建重配计划。", now);
+                    AddSystemAudit("run.dab_repreparation_planned", plan.Id, new { runId = runGroup.Key, expiredDabBatchId = batch.Id }, now, "DabRepreparationPlan");
+                    plansCreated++;
+                }
+
+                if (plan.ReplacementDabBatchId is not null || plan.Status == DabRepreparationPlanStatus.NeedsManualResolution)
+                {
+                    continue;
+                }
+
+                var taskIds = runGroup
+                    .Select(x => x.WorkflowExecution!.SlideTask!.StainingTaskId)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                try
+                {
+                    var replacement = await CreateReplacementBatchAsync(batch, taskIds, plan, now, cancellationToken);
+                    plan.ReplacementDabBatch = replacement;
+                    plan.ReplacementDabBatchId = replacement.Id;
+                    plan.Status = DabRepreparationPlanStatus.Planned;
+                    plan.UpdatedAtUtc = now;
+                    replacementsCreated++;
+                }
+                catch (BusinessRuleException exception) when (exception.Code == "dab_positions_unavailable")
+                {
+                    plan.Status = DabRepreparationPlanStatus.AwaitingMixPosition;
+                    plan.UpdatedAtUtc = now;
+                    AddRunAlarm(runGroup.Key, "dab_mix_area_cleaning_required", "Critical", "DAB 配液区需清洗：M1–M8 当前均不可用于重配。", now);
+                }
+                catch (BusinessRuleException exception)
+                {
+                    plan.Status = DabRepreparationPlanStatus.NeedsManualResolution;
+                    plan.Reason = exception.Message;
+                    plan.UpdatedAtUtc = now;
+                    AddRunAlarm(runGroup.Key, exception.Code, "Critical", exception.Message, now);
+                }
+            }
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new DabExpiryProcessingResult(newlyExpired, plansCreated, replacementsCreated);
+    }
+
+    private async Task<DabBatch> CreateReplacementBatchAsync(
+        DabBatch expiredBatch,
+        IReadOnlyList<string> taskIds,
+        DabRepreparationPlan plan,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (taskIds.Count == 0 || expiredBatch.DabAReagentBottleId is null || expiredBatch.DabBReagentBottleId is null)
+        {
+            throw new BusinessRuleException("dab_repreparation_source_invalid", "DAB re-preparation requires unfinished tasks and verified source bottles.", StatusCodes.Status409Conflict);
+        }
+
+        var position = await SelectPositionAsync(null, cancellationToken);
+        var required = DabFormula.CalculateRequired(taskIds.Count);
+        var commandId = $"dab-reprepare-{plan.Id}";
+        var systemActor = new AuthenticatedUser(string.Empty, "system", "System", "system", ["engineer"]);
+        var batch = new DabBatch
+        {
+            DabMixPosition = position,
+            DabMixPositionId = position.Id,
+            PositionCode = position.Code,
+            DabAReagentBottleId = expiredBatch.DabAReagentBottleId,
+            DabBReagentBottleId = expiredBatch.DabBReagentBottleId,
+            Status = DabBatchStatus.PendingPreparation,
+            CleaningStatus = DabCleaningStatus.NotRequired,
+            SlideCount = taskIds.Count,
+            TotalRequiredVolumeUl = required.TotalVolumeUl,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+        await ReserveBottleSourceAsync(batch, "DabA", expiredBatch.DabAReagentBottle!.ReagentCode, expiredBatch.DabAReagentBottleId, required.DabAVolumeUl, commandId, systemActor, now, cancellationToken);
+        await ReserveBottleSourceAsync(batch, "DabB", expiredBatch.DabBReagentBottle!.ReagentCode, expiredBatch.DabBReagentBottleId, required.DabBVolumeUl, commandId, systemActor, now, cancellationToken);
+        batch.ReagentReservations.Add(new ReagentReservation
+        {
+            ReagentCode = "WATER",
+            ReservationKind = ReagentReservationKind.DabBatch,
+            SourceRole = "Water",
+            Status = ReagentReservationStatus.Reserved,
+            CommandId = commandId,
+            RequiredVolumeUl = required.WaterVolumeUl,
+            ReservedVolumeUl = required.WaterVolumeUl,
+            CreatedAtUtc = now
+        });
+        foreach (var taskId in taskIds)
+        {
+            batch.Tasks.Add(new DabBatchTask { StainingTaskId = taskId, RequiredVolumeUl = DabFormula.VolumePerSlideUl, CreatedAtUtc = now });
+        }
+
+        position.Status = DabMixPositionStatus.Occupied;
+        position.ActiveDabBatchId = batch.Id;
+        position.UpdatedAtUtc = now;
+        dbContext.DabBatches.Add(batch);
+        AddSystemAudit("run.dab_repreparation_batch_created", batch.Id, new { planId = plan.Id, expiredDabBatchId = expiredBatch.Id, runId = plan.MachineRunId, position = position.Code, taskIds }, now);
+        ValidateStateInvariants(batch);
+        return batch;
+    }
+
+    private static bool IsDabWorkflowStep(WorkflowStepExecution step) =>
+        step.MajorStepCode.Contains("DAB", StringComparison.OrdinalIgnoreCase)
+        || step.ActionType.Contains("DAB", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(step.ReagentCode, "DAB", StringComparison.OrdinalIgnoreCase);
+
+    private void AddRunAlarm(string runId, string code, string severity, string message, DateTimeOffset now)
+    {
+        if (dbContext.Alarms.Local.Any(x => x.MachineRunId == runId && x.Code == code && x.Status == "Active")
+            || dbContext.Alarms.Any(x => x.MachineRunId == runId && x.Code == code && x.Status == "Active"))
+        {
+            return;
+        }
+
+        dbContext.Alarms.Add(new Alarm { MachineRunId = runId, Code = code, Severity = severity, Message = message, Status = "Active", CreatedAtUtc = now });
+    }
+
+    private void AddSystemAudit(string action, string entityId, object details, DateTimeOffset now, string entityType = "DabBatch")
+    {
+        dbContext.AuditLogs.Add(new AuditLog { Action = action, EntityType = entityType, EntityId = entityId, Message = JsonSerializer.Serialize(details, JsonOptions), CreatedAtUtc = now });
+    }
+
     private async Task<DabMixPosition> SelectPositionAsync(string? requestedCode, CancellationToken cancellationToken)
     {
         var positions = await dbContext.DabMixPositions
@@ -706,7 +891,7 @@ public sealed class DabLifecycleService(
             }
         }
 
-        throw new BusinessRuleException("dab_positions_unavailable", "All DAB mix positions M1-M8 are unavailable or awaiting cleaning.", StatusCodes.Status409Conflict);
+        throw new BusinessRuleException("dab_positions_unavailable", "DAB 配液区需清洗：M1–M8 均不可分配。", StatusCodes.Status409Conflict);
     }
 
     private async Task<bool> IsPositionFreeAsync(DabMixPosition position, CancellationToken cancellationToken)
@@ -780,7 +965,7 @@ public sealed class DabLifecycleService(
                 SourceRole = sourceRole,
                 Status = ReagentReservationStatus.Reserved,
                 CommandId = commandId,
-                CreatedByUserId = actor.UserId,
+                CreatedByUserId = string.IsNullOrWhiteSpace(actor.UserId) ? null : actor.UserId,
                 RequiredVolumeUl = reservedVolumeUl,
                 ReservedVolumeUl = reservedVolumeUl,
                 CreatedAtUtc = now
@@ -1030,3 +1215,8 @@ public sealed record DabExecutorMutationResult(
     public static DabExecutorMutationResult Failure(string errorCode, string message, DabBatch? batch = null) =>
         new(false, errorCode, message, batch);
 }
+
+public sealed record DabExpiryProcessingResult(
+    int NewlyExpiredCount,
+    int RepreparationPlanCount,
+    int ReplacementBatchCount);

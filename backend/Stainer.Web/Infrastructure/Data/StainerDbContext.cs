@@ -57,6 +57,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<DabBatch> DabBatches => Set<DabBatch>();
     public DbSet<DabBatchTask> DabBatchTasks => Set<DabBatchTask>();
     public DbSet<DabBatchUsage> DabBatchUsages => Set<DabBatchUsage>();
+    public DbSet<DabRepreparationPlan> DabRepreparationPlans => Set<DabRepreparationPlan>();
     public DbSet<Alarm> Alarms => Set<Alarm>();
     public DbSet<AlarmAction> AlarmActions => Set<AlarmAction>();
 
@@ -1337,6 +1338,23 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         dabTasks.HasIndex(x => x.StainingTaskId);
         dabTasks.HasOne(x => x.DabBatch).WithMany(x => x.Tasks).HasForeignKey(x => x.DabBatchId).OnDelete(DeleteBehavior.Cascade);
         dabTasks.HasOne(x => x.StainingTask).WithMany().HasForeignKey(x => x.StainingTaskId).OnDelete(DeleteBehavior.Restrict);
+
+        var repreparationPlans = modelBuilder.Entity<DabRepreparationPlan>();
+        repreparationPlans.ToTable("dab_repreparation_plans");
+        repreparationPlans.HasKey(x => x.Id);
+        repreparationPlans.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        repreparationPlans.Property(x => x.ExpiredDabBatchId).HasColumnName("expired_dab_batch_id").HasMaxLength(36).IsRequired();
+        repreparationPlans.Property(x => x.ReplacementDabBatchId).HasColumnName("replacement_dab_batch_id").HasMaxLength(36);
+        repreparationPlans.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36).IsRequired();
+        repreparationPlans.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        repreparationPlans.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(1000).IsRequired();
+        repreparationPlans.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        repreparationPlans.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        repreparationPlans.HasIndex(x => new { x.ExpiredDabBatchId, x.MachineRunId }).IsUnique();
+        repreparationPlans.HasIndex(x => x.ReplacementDabBatchId).IsUnique();
+        repreparationPlans.HasOne(x => x.ExpiredDabBatch).WithMany(x => x.ExpiryRepreparationPlans).HasForeignKey(x => x.ExpiredDabBatchId).OnDelete(DeleteBehavior.Restrict);
+        repreparationPlans.HasOne(x => x.ReplacementDabBatch).WithMany(x => x.ReplacementForPlans).HasForeignKey(x => x.ReplacementDabBatchId).OnDelete(DeleteBehavior.Restrict);
+        repreparationPlans.HasOne(x => x.MachineRun).WithMany().HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.Restrict);
 
         var dabUsages = modelBuilder.Entity<DabBatchUsage>();
         dabUsages.ToTable("dab_batch_usages");

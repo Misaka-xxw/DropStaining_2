@@ -79,6 +79,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRuntimeEventPublisher>(serviceProvider => serviceProvider.GetRequiredService<InMemoryRuntimeEventPublisher>());
         services.AddSingleton<MachineExecutor>();
         services.AddHostedService<MachineExecutorHostedService>();
+        services.AddHostedService<DabExpiryHostedService>();
         services.AddHostedService<MachineEventSignalRDispatcher>();
         services.AddSignalR();
 

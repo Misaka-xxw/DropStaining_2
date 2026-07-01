@@ -348,6 +348,117 @@ public sealed class RuntimeLedgerExecutorTests
     }
 
     [Fact]
+    public async Task Expiry_processing_creates_alarm_and_repreparation_on_a_new_position_once()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin", "admin");
+
+        string taskId;
+        string batchId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            taskId = await CreateConfirmedTaskAsync(dbContext, "IHC-DAB-REPREPARE", StainingTaskType.Ihc, "C-02", [("DAB", "Dab", "DAB", 200)], []);
+            var dabAId = await AddBottleAsync(dbContext, "DAB-A", "DABA20260101991", 1000, "R1");
+            var dabBId = await AddBottleAsync(dbContext, "DAB-B", "DABB20260101991", 1000, "R2");
+            var created = await scope.ServiceProvider.GetRequiredService<DabLifecycleService>().CreateBatchAsync(
+                new CreateDabBatchRequest("cmd-dab-reprepare-original", [taskId], dabAId, dabBId, "M1"),
+                await AdminActorAsync(dbContext));
+            batchId = created.BatchId;
+        }
+
+        var run = await PostJsonAsync<MachineRunResponse>(client, "/api/runs", new
+        {
+            commandId = "cmd-dab-reprepare-run",
+            stainingTaskIds = new[] { taskId }
+        });
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var batch = await dbContext.DabBatches.Include(x => x.ReagentReservations).SingleAsync(x => x.Id == batchId);
+            batch.Status = DabBatchStatus.Available;
+            batch.ActualPreparedVolumeUl = 600;
+            batch.RemainingVolumeUl = 600;
+            batch.PreparedAtUtc = DateTimeOffset.UtcNow.AddHours(-4);
+            batch.ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1);
+            foreach (var reservation in batch.ReagentReservations) reservation.Status = ReagentReservationStatus.Consumed;
+            await dbContext.SaveChangesAsync();
+
+            var service = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
+            var first = await service.ProcessExpirationsAsync(DateTimeOffset.UtcNow);
+            var replay = await service.ProcessExpirationsAsync(DateTimeOffset.UtcNow.AddSeconds(1));
+            Assert.Equal(1, first.NewlyExpiredCount);
+            Assert.Equal(1, first.RepreparationPlanCount);
+            Assert.Equal(1, first.ReplacementBatchCount);
+            Assert.Equal(0, replay.NewlyExpiredCount);
+            Assert.Equal(0, replay.RepreparationPlanCount);
+            Assert.Equal(0, replay.ReplacementBatchCount);
+        }
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verify = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var original = await verify.DabBatches.Include(x => x.DabMixPosition).SingleAsync(x => x.Id == batchId);
+        Assert.Equal(DabBatchStatus.Expired, original.Status);
+        Assert.Equal(DabMixPositionStatus.AwaitingCleaning, original.DabMixPosition!.Status);
+        var plan = await verify.DabRepreparationPlans.Include(x => x.ReplacementDabBatch).ThenInclude(x => x!.DabMixPosition).SingleAsync();
+        Assert.Equal(DabRepreparationPlanStatus.Planned, plan.Status);
+        Assert.Equal(run.RunId, plan.MachineRunId);
+        Assert.NotNull(plan.ReplacementDabBatch);
+        Assert.Equal(DabBatchStatus.PendingPreparation, plan.ReplacementDabBatch!.Status);
+        Assert.NotEqual("M1", plan.ReplacementDabBatch.PositionCode);
+        Assert.Equal(DabMixPositionStatus.Occupied, plan.ReplacementDabBatch.DabMixPosition!.Status);
+        Assert.True(await verify.Alarms.AnyAsync(x => x.MachineRunId == run.RunId && x.Code == "dab_expired_repreparation_required"));
+        Assert.Equal(1, await verify.DabRepreparationPlans.CountAsync());
+    }
+
+    [Fact]
+    public async Task Expiry_repreparation_waits_when_all_mix_positions_require_cleaning()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin", "admin");
+
+        string taskId;
+        string batchId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            taskId = await CreateConfirmedTaskAsync(dbContext, "IHC-DAB-REPREPARE-BLOCKED", StainingTaskType.Ihc, "C-03", [("DAB", "Dab", "DAB", 200)], []);
+            var dabAId = await AddBottleAsync(dbContext, "DAB-A", "DABA20260101992", 1000, "R1");
+            var dabBId = await AddBottleAsync(dbContext, "DAB-B", "DABB20260101992", 1000, "R2");
+            var created = await scope.ServiceProvider.GetRequiredService<DabLifecycleService>().CreateBatchAsync(
+                new CreateDabBatchRequest("cmd-dab-reprepare-blocked-original", [taskId], dabAId, dabBId, "M1"),
+                await AdminActorAsync(dbContext));
+            batchId = created.BatchId;
+        }
+        var run = await PostJsonAsync<MachineRunResponse>(client, "/api/runs", new { commandId = "cmd-dab-reprepare-blocked-run", stainingTaskIds = new[] { taskId } });
+
+        await using var processScope = factory.Services.CreateAsyncScope();
+        var context = processScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var batch = await context.DabBatches.Include(x => x.ReagentReservations).SingleAsync(x => x.Id == batchId);
+        batch.Status = DabBatchStatus.Available;
+        batch.PreparedAtUtc = DateTimeOffset.UtcNow.AddHours(-4);
+        batch.ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1);
+        foreach (var reservation in batch.ReagentReservations) reservation.Status = ReagentReservationStatus.Consumed;
+        foreach (var position in await context.DabMixPositions.Where(x => x.Code != "M1").ToListAsync())
+        {
+            position.Status = DabMixPositionStatus.AwaitingCleaning;
+            position.ActiveDabBatchId = Guid.NewGuid().ToString();
+        }
+        await context.SaveChangesAsync();
+
+        var result = await processScope.ServiceProvider.GetRequiredService<DabLifecycleService>().ProcessExpirationsAsync(DateTimeOffset.UtcNow);
+        Assert.Equal(1, result.NewlyExpiredCount);
+        Assert.Equal(0, result.ReplacementBatchCount);
+        var plan = await context.DabRepreparationPlans.SingleAsync();
+        Assert.Equal(DabRepreparationPlanStatus.AwaitingMixPosition, plan.Status);
+        Assert.Null(plan.ReplacementDabBatchId);
+        Assert.True(await context.Alarms.AnyAsync(x => x.MachineRunId == run.RunId && x.Code == "dab_mix_area_cleaning_required"));
+    }
+
+    [Fact]
     public async Task Redo_requires_mock_device_state_to_be_ready()
     {
         await using var factory = CreateFactory();

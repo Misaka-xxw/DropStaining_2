@@ -163,6 +163,12 @@ public sealed class DabLifecycleTests
         var released = (await service.ListPositionsAsync()).Single(x => x.Code == "M1");
         Assert.Equal(DabMixPositionStatus.Available, released.Status);
         Assert.Null(released.ActiveDabBatchId);
+        var cleaningReplay = await service.ConfirmCleaningAsync(
+            created.BatchId,
+            new DabBatchCommandRequest("cmd-dab-service-clean-confirm"),
+            actor);
+        Assert.True(cleaningReplay.Replayed);
+        Assert.Equal(DabBatchStatus.Cleaned, cleaningReplay.Status);
 
         var persisted = await dbContext.DabBatches
             .AsNoTracking()
@@ -338,6 +344,22 @@ public sealed class DabLifecycleTests
         Assert.Equal(DabCleaningStatus.NeedsManualResolution, failed.CleaningStatus);
         Assert.Equal(DabMixPositionStatus.NeedsManualResolution, (await service.ListPositionsAsync()).Single(x => x.Code == "M2").Status);
         Assert.All(failed.Reservations, x => Assert.Equal(ReagentReservationStatus.Released, x.Status));
+
+        var failedCleaning = await Assert.ThrowsAsync<BusinessRuleException>(() => service.StartCleaningAsync(
+            failed.BatchId,
+            new DabBatchCommandRequest("cmd-dab-failed-cleaning-bypass"),
+            actor));
+        Assert.Equal("dab_status_transition_invalid", failedCleaning.Code);
+
+        dbContext.ChangeTracker.Clear();
+        var unknownBatch = await dbContext.DabBatches.Include(x => x.DabMixPosition).SingleAsync(x => x.Id == failed.BatchId);
+        unknownBatch.Status = DabBatchStatus.Unknown;
+        await dbContext.SaveChangesAsync();
+        var unknownCleaning = await Assert.ThrowsAsync<BusinessRuleException>(() => service.StartCleaningAsync(
+            failed.BatchId,
+            new DabBatchCommandRequest("cmd-dab-unknown-cleaning-bypass"),
+            actor));
+        Assert.Equal("dab_status_transition_invalid", unknownCleaning.Code);
     }
 
     private static WebApplicationFactory<Program> CreateFactory()
