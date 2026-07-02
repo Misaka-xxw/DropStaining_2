@@ -130,7 +130,7 @@ public sealed class RuntimePageBridgeService(
             PbsOk = IsSucceeded(liquid) && ReadBool(liquid, "pbsOk", true),
             WasteTankFull = ReadBool(liquid, "wasteTankFull", false),
             ToxicTankFull = ReadBool(liquid, "toxicTankFull", false),
-            ReagentTemperatureC = ReadDecimal(cooling, "currentTemperatureC", 8m)
+            ReagentTemperatureC = ReadDecimal(cooling, "currentTemperatureDeciC", 80m) / 10m
         };
     }
 

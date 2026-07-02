@@ -14,13 +14,15 @@ public sealed class DeviceInitializationService(
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
     IRuntimeEventPublisher eventPublisher,
-    SafetyLogWriter safetyLogWriter)
+    SafetyLogWriter safetyLogWriter,
+    ThermalControlService thermalControlService)
 {
     private static readonly SemaphoreSlim InitializationGate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly IReadOnlyList<(string ModuleCode, string Action)> Steps =
     [
         (DeviceModules.Controller, "check-connection"),
+        (DeviceModules.Temperature, "check-16-points"),
         (DeviceModules.Cooling, "check-connection"),
         (DeviceModules.SampleScanner, "check-connection"),
         (DeviceModules.ReagentScanner, "check-connection"),
@@ -100,6 +102,9 @@ public sealed class DeviceInitializationService(
                 "A successful device initialization for the current DeviceMode is required before run start.",
                 StatusCodes.Status409Conflict);
         }
+
+
+        await thermalControlService.EnsureReadyForRunAsync(cancellationToken);
     }
 
     private async Task<DeviceInitializationResponse> ExecuteSerializedAsync(
@@ -150,13 +155,37 @@ public sealed class DeviceInitializationService(
                         check.Status = DeviceInitializationCheckStatus.Running;
                         check.StartedAtUtc = DateTimeOffset.UtcNow;
                         PublishProgress(run, check, commandId);
-                        var result = await deviceAdapter.InitializeModuleAsync(
-                            new DeviceOperationRequest(
-                                new DeviceCommandContext($"{commandId}:{check.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),
+                        var parameters = new Dictionary<string, object?>();
+                        ThermalDeviceResult? thermalResult = null;
+                        if (check.ModuleCode is DeviceModules.Temperature or DeviceModules.Cooling)
+                        {
+                            thermalResult = await thermalControlService.InitializeModuleAsync(check.ModuleCode, cancellationToken);
+                            foreach (var pair in thermalResult.Data)
+                            {
+                                parameters[pair.Key] = pair.Value;
+                            }
+                            parameters["thermalStateValidated"] = thermalResult.Ok;
+                        }
+
+                        var result = thermalResult is { Ok: false }
+                            ? new DeviceCommandResult(
+                                false,
+                                thermalResult.Status,
                                 check.ModuleCode,
                                 step.Action,
-                                new Dictionary<string, object?>()),
-                            cancellationToken);
+                                thermalResult.ErrorCode,
+                                thermalResult.Message,
+                                check.StartedAtUtc.Value,
+                                DateTimeOffset.UtcNow,
+                                thermalResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
+                                thermalResult.Data)
+                            : await deviceAdapter.InitializeModuleAsync(
+                                new DeviceOperationRequest(
+                                    new DeviceCommandContext($"{commandId}:{check.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),
+                                    check.ModuleCode,
+                                    step.Action,
+                                    parameters),
+                                cancellationToken);
                         check.Status = MapCheckStatus(result.Status);
                         check.ErrorCode = result.ErrorCode;
                         check.Message = result.Message;

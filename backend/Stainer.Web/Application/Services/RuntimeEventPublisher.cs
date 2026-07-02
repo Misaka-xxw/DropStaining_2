@@ -75,6 +75,7 @@ public static class MachineEventTypes
     public const string WorkflowReagentRequirementChanged = "workflowReagentRequirement.changed";
     public const string PrimaryAntibodyMappingChanged = "primaryAntibodyMapping.changed";
     public const string TemperatureChanged = "temperature.changed";
+    public const string CoolingChanged = "cooling.changed";
     public const string ReagentChanged = "reagent.changed";
     public const string ReagentBottleChanged = "reagentBottle.changed";
     public const string ReagentBottleDepleted = "reagent.bottleDepleted";

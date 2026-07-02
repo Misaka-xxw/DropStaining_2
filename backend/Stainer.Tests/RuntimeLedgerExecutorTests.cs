@@ -583,6 +583,15 @@ public sealed class RuntimeLedgerExecutorTests
         Assert.Contains("temperature.changed", receivedTypes);
         Assert.Contains("workflowStep.completed", receivedTypes);
         Assert.Contains("alarm.raised", receivedTypes);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var point = await verifyContext.ThermalPointStates.SingleAsync(x => x.DrawerCode == "B" && x.SlotNo == 2);
+        Assert.Equal(ThermalStatuses.Stable, point.Status);
+        Assert.Equal(250, point.TargetTemperatureDeciC);
+        Assert.True(await verifyContext.TemperatureTelemetry.AnyAsync(x => x.SourceId == point.Id && x.Status == ThermalStatuses.Stable));
+        var command = await verifyContext.DeviceCommandExecutions.SingleAsync(x => x.MachineRunId == run.RunId && x.CommandType == "Heat");
+        Assert.Contains("TargetTemperatureDeciC", command.PayloadJson);
     }
 
     [Fact]

@@ -264,6 +264,7 @@ public sealed class MachineRunService(
             ActionType = x.ActionType,
             ReagentCode = x.ReagentCode,
             VolumeUl = x.VolumeUl,
+            TargetTemperatureDeciC = x.TargetTemperatureDeciC,
             Status = RuntimeLedgerStatus.Pending,
             CreatedAtUtc = DateTimeOffset.UtcNow
         }).ToList();

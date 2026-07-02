@@ -280,6 +280,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 step.MajorStepCode,
                 step.ReagentCode,
                 step.VolumeUl,
+                step.TargetTemperatureDeciC,
                 liquidClassVersionId = liquidClass?.LiquidClassVersionId,
                 liquidClassVersionNo = liquidClass?.VersionNo,
                 liquidClassParameters = liquidClass?.Parameters,
@@ -410,7 +411,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                     ["slideTaskId"] = step.WorkflowExecution?.SlideTaskId,
                     ["majorStepCode"] = step.MajorStepCode,
                     ["currentTemperatureDeciC"] = deviceResult.Data.GetValueOrDefault("currentTemperatureDeciC") ?? 420,
-                    ["targetTemperatureDeciC"] = deviceResult.Data.GetValueOrDefault("currentTemperatureDeciC") ?? 420,
+                    ["targetTemperatureDeciC"] = deviceResult.Data.GetValueOrDefault("targetTemperatureDeciC") ?? step.TargetTemperatureDeciC ?? 420,
+                    ["thermalStatus"] = deviceResult.Data.GetValueOrDefault("status"),
                     ["adapter"] = deviceAdapter.Name,
                     ["message"] = deviceResult.Message
                 }));
@@ -448,7 +450,9 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 ["liquidClassVersionId"] = command.LiquidClassVersionId,
                 ["liquidClassVersionNo"] = command.LiquidClassVersionNo,
                 ["liquidClassParametersJson"] = command.LiquidClassParametersJson,
-                ["targetTemperatureDeciC"] = 420
+                ["drawerCode"] = step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode,
+                ["slotNo"] = ParseSlotNo(step.WorkflowExecution?.SlideTask?.SlotCode),
+                ["targetTemperatureDeciC"] = step.TargetTemperatureDeciC ?? 420
             });
 
         if (IsDabStep(step))
@@ -1100,6 +1104,12 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             || step.MajorStepCode.Contains("TEMP", StringComparison.OrdinalIgnoreCase)
             || step.ActionType.Contains("HEAT", StringComparison.OrdinalIgnoreCase)
             || step.ActionType.Contains("TEMP", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int ParseSlotNo(string? slotCode)
+    {
+        var value = slotCode?.Split('-', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+        return int.TryParse(value, out var slotNo) ? slotNo : 0;
     }
 
     private sealed record MachineExecutorCommand(string RunId, string Type, string? Payload);

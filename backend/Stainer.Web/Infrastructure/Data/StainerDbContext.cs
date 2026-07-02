@@ -54,6 +54,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<DeviceCommandExecution> DeviceCommandExecutions => Set<DeviceCommandExecution>();
     public DbSet<DeviceInitializationRun> DeviceInitializationRuns => Set<DeviceInitializationRun>();
     public DbSet<DeviceInitializationCheck> DeviceInitializationChecks => Set<DeviceInitializationCheck>();
+    public DbSet<ThermalPointState> ThermalPointStates => Set<ThermalPointState>();
+    public DbSet<CoolingUnitState> CoolingUnitStates => Set<CoolingUnitState>();
+    public DbSet<TemperatureTelemetry> TemperatureTelemetry => Set<TemperatureTelemetry>();
     public DbSet<ReagentReservation> ReagentReservations => Set<ReagentReservation>();
     public DbSet<ReagentConsumption> ReagentConsumptions => Set<ReagentConsumption>();
     public DbSet<SystemLiquidUsage> SystemLiquidUsages => Set<SystemLiquidUsage>();
@@ -104,6 +107,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureMockDemoDataTag(modelBuilder);
         ConfigureRuntimeLedger(modelBuilder);
         ConfigureDeviceInitialization(modelBuilder);
+        ConfigureThermalState(modelBuilder);
     }
 
     public override int SaveChanges()
@@ -1580,6 +1584,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         steps.Property(x => x.ActionType).HasColumnName("action_type").HasMaxLength(128).IsRequired();
         steps.Property(x => x.ReagentCode).HasColumnName("reagent_code").HasMaxLength(64);
         steps.Property(x => x.VolumeUl).HasColumnName("volume_ul");
+        steps.Property(x => x.TargetTemperatureDeciC).HasColumnName("target_temperature_deci_c");
         steps.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         steps.Property(x => x.RedoCount).HasColumnName("redo_count").IsRequired();
         steps.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
@@ -1863,5 +1868,60 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         checks.HasIndex(x => new { x.DeviceInitializationRunId, x.StepNo }).IsUnique();
         checks.HasIndex(x => new { x.ModuleCode, x.Status });
         checks.HasOne(x => x.DeviceInitializationRun).WithMany(x => x.Checks).HasForeignKey(x => x.DeviceInitializationRunId).OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureThermalState(ModelBuilder modelBuilder)
+    {
+        var points = modelBuilder.Entity<ThermalPointState>();
+        points.ToTable("thermal_point_states");
+        points.HasKey(x => x.Id);
+        points.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        points.Property(x => x.DrawerCode).HasColumnName("drawer_code").HasMaxLength(1).IsRequired();
+        points.Property(x => x.BoardNo).HasColumnName("board_no").IsRequired();
+        points.Property(x => x.SlotNo).HasColumnName("slot_no").IsRequired();
+        points.Property(x => x.PointNo).HasColumnName("point_no").IsRequired();
+        points.Property(x => x.CurrentTemperatureDeciC).HasColumnName("current_temperature_deci_c").IsRequired();
+        points.Property(x => x.TargetTemperatureDeciC).HasColumnName("target_temperature_deci_c").IsRequired();
+        points.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
+        points.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        points.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        points.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        points.Property(x => x.FaultMessage).HasColumnName("fault_message").HasMaxLength(2000);
+        points.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
+        points.HasIndex(x => new { x.DrawerCode, x.SlotNo }).IsUnique();
+        points.HasIndex(x => new { x.BoardNo, x.PointNo }).IsUnique();
+
+        var cooling = modelBuilder.Entity<CoolingUnitState>();
+        cooling.ToTable("cooling_unit_states");
+        cooling.HasKey(x => x.Id);
+        cooling.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        cooling.Property(x => x.CurrentTemperatureDeciC).HasColumnName("current_temperature_deci_c").IsRequired();
+        cooling.Property(x => x.TargetTemperatureDeciC).HasColumnName("target_temperature_deci_c").IsRequired();
+        cooling.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
+        cooling.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        cooling.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        cooling.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        cooling.Property(x => x.FaultMessage).HasColumnName("fault_message").HasMaxLength(2000);
+        cooling.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
+
+        var telemetry = modelBuilder.Entity<TemperatureTelemetry>();
+        telemetry.ToTable("temperature_telemetry");
+        telemetry.HasKey(x => x.Id);
+        telemetry.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        telemetry.Property(x => x.SourceType).HasColumnName("source_type").HasMaxLength(32).IsRequired();
+        telemetry.Property(x => x.SourceId).HasColumnName("source_id").HasMaxLength(36).IsRequired();
+        telemetry.Property(x => x.DrawerCode).HasColumnName("drawer_code").HasMaxLength(1);
+        telemetry.Property(x => x.BoardNo).HasColumnName("board_no");
+        telemetry.Property(x => x.SlotNo).HasColumnName("slot_no");
+        telemetry.Property(x => x.PointNo).HasColumnName("point_no");
+        telemetry.Property(x => x.CurrentTemperatureDeciC).HasColumnName("current_temperature_deci_c").IsRequired();
+        telemetry.Property(x => x.TargetTemperatureDeciC).HasColumnName("target_temperature_deci_c").IsRequired();
+        telemetry.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
+        telemetry.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        telemetry.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        telemetry.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        telemetry.Property(x => x.RecordedAtUtc).HasColumnName("recorded_at_utc").IsRequired();
+        telemetry.HasIndex(x => new { x.SourceType, x.SourceId, x.RecordedAtUtc });
+        telemetry.HasIndex(x => x.RecordedAtUtc);
     }
 }

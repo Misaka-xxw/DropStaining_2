@@ -125,6 +125,7 @@ public sealed class WorkflowStepExecution
     public string ActionType { get; set; } = string.Empty;
     public string? ReagentCode { get; set; }
     public int? VolumeUl { get; set; }
+    public int? TargetTemperatureDeciC { get; set; }
     public string Status { get; set; } = RuntimeLedgerStatus.Pending;
     public int RedoCount { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;

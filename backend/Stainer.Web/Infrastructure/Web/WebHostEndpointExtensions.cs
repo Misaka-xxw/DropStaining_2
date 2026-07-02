@@ -63,6 +63,48 @@ public static class WebHostEndpointExtensions
                 _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.GetStateAsync(cancellationToken));
             }));
+        app.MapGet("/api/thermal/state", async (HttpContext context, UserSessionService sessionService, ThermalControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.GetStateAsync(true, cancellationToken));
+            }));
+        app.MapGet("/api/thermal/telemetry", async (HttpContext context, int? take, UserSessionService sessionService, ThermalControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListTelemetryAsync(take ?? 200, cancellationToken));
+            }));
+        app.MapPost("/api/thermal/points/{drawerCode}/{slotNo:int}", async (HttpContext context, string drawerCode, int slotNo, SetThermalPointRequest request, UserSessionService sessionService, ThermalControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.SetPointAsync(drawerCode, slotNo, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/thermal/boards/{drawerCode}", async (HttpContext context, string drawerCode, SetThermalBoardRequest request, UserSessionService sessionService, ThermalControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.SetBoardAsync(drawerCode, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/thermal/cooling", async (HttpContext context, SetCoolingRequest request, UserSessionService sessionService, ThermalControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.SetCoolingAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/thermal/faults", async (HttpContext context, ConfigureThermalFaultRequest request, UserSessionService sessionService, ThermalControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ConfigureFaultAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/thermal/faults/clear", async (HttpContext context, ClearThermalFaultRequest request, UserSessionService sessionService, ThermalControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ClearFaultAsync(request, actor, cancellationToken));
+            }));
         app.MapPost("/api/device/mock-faults", async (HttpContext context, ConfigureMockDeviceFaultRequest request, UserSessionService sessionService, DeviceControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

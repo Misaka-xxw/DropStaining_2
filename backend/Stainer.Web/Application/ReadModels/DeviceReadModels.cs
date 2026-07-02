@@ -34,3 +34,58 @@ public sealed record DeviceFaultMutationResponse(
     bool Replayed,
     string Message,
     DeviceStatusSnapshot State);
+
+public sealed record ThermalStateResponse(
+    bool Ready,
+    IReadOnlyList<ThermalPointResponse> Points,
+    CoolingStateResponse Cooling,
+    DateTimeOffset GeneratedAtUtc);
+
+public sealed record ThermalPointResponse(
+    string Id,
+    string DrawerCode,
+    int BoardNo,
+    int SlotNo,
+    int PointNo,
+    int CurrentTemperatureDeciC,
+    int TargetTemperatureDeciC,
+    bool IsEnabled,
+    bool IsConnected,
+    string Status,
+    string? FaultCode,
+    string? FaultMessage,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record CoolingStateResponse(
+    string Id,
+    int CurrentTemperatureDeciC,
+    int TargetTemperatureDeciC,
+    bool IsEnabled,
+    bool IsConnected,
+    string Status,
+    string? FaultCode,
+    string? FaultMessage,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record ThermalMutationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string Message,
+    ThermalStateResponse State);
+
+public sealed record TemperatureTelemetryResponse(
+    string Id,
+    string SourceType,
+    string SourceId,
+    string? DrawerCode,
+    int? BoardNo,
+    int? SlotNo,
+    int? PointNo,
+    int CurrentTemperatureDeciC,
+    int TargetTemperatureDeciC,
+    bool IsEnabled,
+    bool IsConnected,
+    string Status,
+    string? FaultCode,
+    DateTimeOffset RecordedAtUtc);

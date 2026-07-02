@@ -569,6 +569,7 @@ public sealed class TraceabilityQueryService(
                 x.ActionType,
                 x.ReagentCode,
                 x.VolumeUl,
+                x.TargetTemperatureDeciC,
                 x.Status,
                 x.RedoCount,
                 x.CreatedAtUtc,

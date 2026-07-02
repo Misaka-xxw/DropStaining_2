@@ -70,6 +70,7 @@ public sealed class MachineRunQueryService(StainerDbContext dbContext)
                             s.ActionType,
                             s.ReagentCode,
                             s.VolumeUl,
+                            s.TargetTemperatureDeciC,
                             s.Status,
                             s.RedoCount))
                         .ToList()))

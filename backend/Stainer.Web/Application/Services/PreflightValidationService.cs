@@ -8,7 +8,10 @@ using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Application.Services;
 
-public sealed class PreflightValidationService(StainerDbContext dbContext, DeviceInitializationService deviceInitializationService)
+public sealed class PreflightValidationService(
+    StainerDbContext dbContext,
+    DeviceInitializationService deviceInitializationService,
+    ThermalControlService thermalControlService)
 {
     public async Task<PreflightValidationReportResponse> ValidateAsync(CancellationToken cancellationToken = default)
     {
@@ -21,6 +24,11 @@ public sealed class PreflightValidationService(StainerDbContext dbContext, Devic
                 "Device",
                 "device_initialization_required",
                 $"Device initialization is not ready for the current mode. Status={initialization.Status}."));
+        }
+        var thermalReadiness = await thermalControlService.GetReadinessAsync(cancellationToken);
+        if (!thermalReadiness.Ok)
+        {
+            issues.Add(new PreflightValidationIssueResponse("Thermal", thermalReadiness.ErrorCode!, thermalReadiness.Message));
         }
         var tasks = await dbContext.StainingTasks
             .AsNoTracking()
@@ -338,8 +346,17 @@ public sealed class PreflightValidationService(StainerDbContext dbContext, Devic
         var initialization = initializationRows
             .OrderByDescending(x => x.CreatedAtUtc)
             .FirstOrDefault();
+        var thermalPoints = await dbContext.ThermalPointStates
+            .AsNoTracking()
+            .OrderBy(x => x.BoardNo).ThenBy(x => x.PointNo)
+            .Select(x => new { x.Id, x.CurrentTemperatureDeciC, x.TargetTemperatureDeciC, x.IsEnabled, x.IsConnected, x.Status, x.FaultCode, x.UpdatedAtUtc })
+            .ToListAsync(cancellationToken);
+        var cooling = await dbContext.CoolingUnitStates
+            .AsNoTracking()
+            .Select(x => new { x.Id, x.CurrentTemperatureDeciC, x.TargetTemperatureDeciC, x.IsEnabled, x.IsConnected, x.Status, x.FaultCode, x.UpdatedAtUtc })
+            .SingleOrDefaultAsync(cancellationToken);
 
-        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements, initialization });
+        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements, initialization, thermalPoints, cooling });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
     }
 }

@@ -64,6 +64,7 @@ public sealed record WorkflowStepExecutionResponse(
     string ActionType,
     string? ReagentCode,
     int? VolumeUl,
+    int? TargetTemperatureDeciC,
     string Status,
     int RedoCount);
 

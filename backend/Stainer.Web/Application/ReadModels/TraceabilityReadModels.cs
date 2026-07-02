@@ -96,6 +96,7 @@ public sealed record HistoryWorkflowStepExecutionResponse(
     string ActionType,
     string? ReagentCode,
     int? VolumeUl,
+    int? TargetTemperatureDeciC,
     string Status,
     int RedoCount,
     DateTimeOffset CreatedAtUtc,

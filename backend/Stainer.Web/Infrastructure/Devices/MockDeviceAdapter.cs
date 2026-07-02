@@ -1,10 +1,11 @@
 using System.Text.Json;
 using Stainer.Web.Application.Devices;
 using Stainer.Web.Application.Services;
+using Stainer.Web.Domain.Entities;
 
 namespace Stainer.Web.Infrastructure.Devices;
 
-public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore) : IDeviceAdapter
+public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceScopeFactory? scopeFactory = null) : IDeviceAdapter
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan CommandDelay = TimeSpan.FromMilliseconds(5);
@@ -37,6 +38,16 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore) : IDevice
 
     public Task<DeviceCommandResult> InitializeModuleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
     {
+        if (request.ModuleCode is DeviceModules.Temperature or DeviceModules.Cooling)
+        {
+            if (request.Parameters.TryGetValue("thermalStateValidated", out var validated) && Convert.ToBoolean(validated))
+            {
+                return ExecuteAsync(request, request.Parameters, cancellationToken);
+            }
+
+            return ExecuteThermalAsync(request, async service => await service.InitializeModuleAsync(request.ModuleCode, cancellationToken), cancellationToken);
+        }
+
         return ExecuteAsync(request, InitializationData(request.ModuleCode), cancellationToken);
     }
 
@@ -50,10 +61,23 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore) : IDevice
         ExecuteAsync(request, new Dictionary<string, object?> { ["source"] = "MockLIS", ["readOnly"] = true }, cancellationToken);
 
     public Task<DeviceCommandResult> SetTemperatureAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
-        ExecuteAsync(request, new Dictionary<string, object?> { ["currentTemperatureDeciC"] = request.Parameters.GetValueOrDefault("targetTemperatureDeciC") ?? 420 }, cancellationToken);
+        ExecuteThermalAsync(
+            request,
+            service => service.SetPointFromDeviceAsync(
+                Convert.ToString(request.Parameters.GetValueOrDefault("drawerCode")) ?? string.Empty,
+                Convert.ToInt32(request.Parameters.GetValueOrDefault("slotNo") ?? 0),
+                Convert.ToInt32(request.Parameters.GetValueOrDefault("targetTemperatureDeciC") ?? 420),
+                cancellationToken),
+            cancellationToken);
 
     public Task<DeviceCommandResult> SetCoolingAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
-        ExecuteAsync(request, new Dictionary<string, object?> { ["currentTemperatureC"] = request.Parameters.GetValueOrDefault("targetTemperatureC") ?? 8 }, cancellationToken);
+        ExecuteThermalAsync(
+            request,
+            service => service.SetCoolingFromDeviceAsync(
+                Convert.ToInt32(request.Parameters.GetValueOrDefault("targetTemperatureDeciC") ?? 80),
+                Convert.ToBoolean(request.Parameters.GetValueOrDefault("isEnabled") ?? true),
+                cancellationToken),
+            cancellationToken);
 
     public Task<DeviceCommandResult> RunPumpAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) => ExecuteAsync(request, null, cancellationToken);
 
@@ -150,12 +174,65 @@ public sealed class MockDeviceAdapter(MockDeviceStateStore stateStore) : IDevice
             data);
     }
 
+    private async Task<DeviceCommandResult> ExecuteThermalAsync(
+        DeviceOperationRequest request,
+        Func<ThermalControlService, Task<ThermalDeviceResult>> execute,
+        CancellationToken cancellationToken)
+    {
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var targetJson = JsonSerializer.Serialize(request.Parameters, JsonOptions);
+        stateStore.BeginOperation(request.ModuleCode, request.Action, targetJson);
+        var genericFault = stateStore.ConsumeFault(request.ModuleCode);
+        if (genericFault is not null)
+        {
+            var status = genericFault.FaultType switch
+            {
+                DeviceFaultTypes.TimeoutNextCommand => DeviceCommandStatuses.TimedOut,
+                DeviceFaultTypes.ReturnUnknown => DeviceCommandStatuses.Unknown,
+                _ => DeviceCommandStatuses.Failed
+            };
+            stateStore.CompleteOperation(
+                request.ModuleCode,
+                genericFault.FaultType == DeviceFaultTypes.Disconnect ? DeviceConnectionStatuses.Disconnected : DeviceConnectionStatuses.Faulted,
+                null,
+                genericFault.ErrorCode ?? "mock_fault",
+                genericFault.Message);
+            return new DeviceCommandResult(false, status, request.ModuleCode, request.Action, genericFault.ErrorCode ?? "mock_fault", genericFault.Message, startedAtUtc, DateTimeOffset.UtcNow, status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown, new Dictionary<string, object?>());
+        }
+
+        if (scopeFactory is null)
+        {
+            stateStore.CompleteOperation(request.ModuleCode, DeviceConnectionStatuses.Faulted, null, "thermal_service_unavailable", "Thermal service is unavailable.");
+            return new DeviceCommandResult(false, DeviceCommandStatuses.NotSupported, request.ModuleCode, request.Action, "thermal_service_unavailable", "Thermal service is unavailable.", startedAtUtc, DateTimeOffset.UtcNow, true, new Dictionary<string, object?>());
+        }
+
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var result = await execute(scope.ServiceProvider.GetRequiredService<ThermalControlService>());
+        var currentJson = JsonSerializer.Serialize(result.Data, JsonOptions);
+        stateStore.CompleteOperation(
+            request.ModuleCode,
+            result.Ok ? DeviceConnectionStatuses.Connected : result.ErrorCode == ThermalFaultTypes.Disconnected ? DeviceConnectionStatuses.Disconnected : DeviceConnectionStatuses.Faulted,
+            currentJson,
+            result.ErrorCode,
+            result.Ok ? null : result.Message);
+        return new DeviceCommandResult(
+            result.Ok,
+            result.Status,
+            request.ModuleCode,
+            request.Action,
+            result.ErrorCode,
+            result.Message,
+            startedAtUtc,
+            DateTimeOffset.UtcNow,
+            result.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
+            result.Data);
+    }
+
     private static IReadOnlyDictionary<string, object?> InitializationData(string moduleCode)
     {
         return moduleCode switch
         {
             DeviceModules.Controller => new Dictionary<string, object?> { ["connected"] = true },
-            DeviceModules.Cooling => new Dictionary<string, object?> { ["connected"] = true, ["currentTemperatureC"] = 8m },
             DeviceModules.SampleScanner or DeviceModules.ReagentScanner => new Dictionary<string, object?> { ["connected"] = true, ["online"] = true },
             DeviceModules.RobotArm => new Dictionary<string, object?> { ["connected"] = true, ["homed"] = true },
             DeviceModules.LiquidLevel => new Dictionary<string, object?>
