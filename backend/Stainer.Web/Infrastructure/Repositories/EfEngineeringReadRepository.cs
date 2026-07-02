@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Repositories;
+using Stainer.Web.Domain.Entities;
 using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Infrastructure.Repositories;
@@ -71,6 +72,8 @@ public sealed class EfEngineeringReadRepository(StainerDbContext dbContext) : IE
         var profiles = await dbContext.CoordinateProfiles
             .AsNoTracking()
             .Include(x => x.CoordinatePoints)
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.TargetPoints)
             .OrderByDescending(x => x.IsActive)
             .ThenBy(x => x.Code)
             .ToListAsync(cancellationToken);
@@ -83,22 +86,17 @@ public sealed class EfEngineeringReadRepository(StainerDbContext dbContext) : IE
                 x.Status,
                 x.OriginDefinition,
                 x.IsActive,
+                x.ActiveVersionId,
+                x.Versions
+                    .OrderByDescending(version => version.IsActive)
+                    .ThenByDescending(version => version.VersionNo)
+                    .Select(ToVersionResponse)
+                    .ToList(),
                 x.CoordinatePoints
+                    .Where(point => x.ActiveVersionId == null || point.CoordinateProfileVersionId == x.ActiveVersionId)
                     .OrderBy(point => point.PointType)
                     .ThenBy(point => point.PointCode)
-                    .Select(point => new CoordinatePointResponse(
-                        point.Id,
-                        point.PointCode,
-                        point.PointType,
-                        point.PresetXUm,
-                        point.PresetYUm,
-                        point.CalibratedXUm,
-                        point.CalibratedYUm,
-                        point.SafeZUm,
-                        point.AspirateZUm,
-                        point.DispenseZUm,
-                        point.RequiresCalibration,
-                        point.IsEnabled))
+                    .Select(ToPointResponse)
                     .ToList()))
             .ToList();
     }
@@ -121,5 +119,53 @@ public sealed class EfEngineeringReadRepository(StainerDbContext dbContext) : IE
                 x.MixCycles,
                 x.IsEnabled))
             .ToListAsync(cancellationToken);
+    }
+
+    private static CoordinateProfileVersionResponse ToVersionResponse(CoordinateProfileVersion version)
+    {
+        return new CoordinateProfileVersionResponse(
+            version.Id,
+            version.CoordinateProfileId,
+            version.VersionNo,
+            version.VersionLabel,
+            version.Status,
+            version.IsActive,
+            version.UsageScope,
+            version.VerificationStatus,
+            version.SourceVersionId,
+            version.ChangeReason,
+            version.ChangeSummaryJson,
+            version.ValidationResultJson,
+            version.CreatedAtUtc,
+            version.PublishedAtUtc,
+            version.ActivatedAtUtc,
+            version.TargetPoints
+                .OrderBy(point => point.PointType)
+                .ThenBy(point => point.PointCode)
+                .Select(ToPointResponse)
+                .ToList());
+    }
+
+    private static CoordinatePointResponse ToPointResponse(CoordinatePoint point)
+    {
+        return new CoordinatePointResponse(
+            point.Id,
+            point.PointCode,
+            point.PointType,
+            point.PresetXUm,
+            point.PresetYUm,
+            point.CalibratedXUm,
+            point.CalibratedYUm,
+            point.CalibratedZUm,
+            point.SafeZUm,
+            point.AspirateZUm,
+            point.DispenseZUm,
+            point.ActionOffsetXUm,
+            point.ActionOffsetYUm,
+            point.ActionOffsetZUm,
+            point.ValidationStatus,
+            point.ValidationMessage,
+            point.RequiresCalibration,
+            point.IsEnabled);
     }
 }

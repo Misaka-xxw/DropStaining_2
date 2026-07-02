@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Stainer.Web.Infrastructure.Data;
 
@@ -10,9 +11,11 @@ using Stainer.Web.Infrastructure.Data;
 namespace Stainer.Web.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(StainerDbContext))]
-    partial class StainerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260701214757_CoordinateProfileVersioningAndRunSnapshots")]
+    partial class CoordinateProfileVersioningAndRunSnapshots
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
@@ -177,18 +180,14 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
 
                     b.Property<string>("CoordinateSelectionStatus")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasMaxLength(32)
                         .HasColumnType("TEXT")
-                        .HasDefaultValue("Unselected")
                         .HasColumnName("coordinate_selection_status");
 
                     b.Property<string>("CoordinateSnapshotJson")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasMaxLength(40000)
                         .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
                         .HasColumnName("coordinate_snapshot_json");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
@@ -565,18 +564,14 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
 
                     b.Property<string>("ValidationMessage")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT")
-                        .HasDefaultValue("")
                         .HasColumnName("validation_message");
 
                     b.Property<string>("ValidationStatus")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasMaxLength(64)
                         .HasColumnType("TEXT")
-                        .HasDefaultValue("Unverified")
                         .HasColumnName("validation_status");
 
                     b.HasKey("Id");
@@ -714,27 +709,11 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("status");
 
-                    b.Property<string>("UsageScope")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("MockOnly")
-                        .HasColumnName("usage_scope");
-
                     b.Property<string>("ValidationResultJson")
                         .IsRequired()
                         .HasMaxLength(40000)
                         .HasColumnType("TEXT")
                         .HasColumnName("validation_result_json");
-
-                    b.Property<string>("VerificationStatus")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT")
-                        .HasDefaultValue("Unverified")
-                        .HasColumnName("verification_status");
 
                     b.Property<string>("VersionLabel")
                         .IsRequired()
@@ -750,12 +729,11 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
 
                     b.HasIndex("ActivatedByUserId");
 
-                    b.HasIndex("CoordinateProfileId")
-                        .IsUnique()
-                        .HasDatabaseName("UX_coordinate_profile_versions_profile_active")
-                        .HasFilter("is_active = 1");
-
                     b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("IsActive")
+                        .IsUnique()
+                        .HasFilter("is_active = 1");
 
                     b.HasIndex("PublishedByUserId");
 
@@ -1876,10 +1854,8 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
 
                     b.Property<string>("CoordinateSnapshotJson")
                         .IsRequired()
-                        .ValueGeneratedOnAdd()
                         .HasMaxLength(40000)
                         .HasColumnType("TEXT")
-                        .HasDefaultValue("{}")
                         .HasColumnName("coordinate_snapshot_json");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")

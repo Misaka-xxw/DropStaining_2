@@ -89,13 +89,27 @@ public sealed class MachineRunService(
                     .Where(x => batchIds.Contains(x.Id))
                     .ToListAsync(cancellationToken);
                 ValidateBatchesForRun(request.StainingTaskIds, batches);
+                var coordinateVersionIds = batches
+                    .Select(x => x.CoordinateProfileVersionId)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                if (coordinateVersionIds.Count != 1)
+                {
+                    throw new BusinessRuleException("coordinate_version_mismatch", "All channel batches in one run must use the same frozen coordinate version.", StatusCodes.Status409Conflict);
+                }
 
                 var now = DateTimeOffset.UtcNow;
+                var coordinateSnapshotJson = batches
+                    .Select(x => x.CoordinateSnapshotJson)
+                    .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && x != "{}") ?? "{}";
                 var run = new MachineRun
                 {
                     RunCode = $"RUN-{now:yyyyMMddHHmmss}-{Guid.NewGuid():N}"[..30],
                     Status = RuntimeLedgerStatus.Created,
                     RequestedByUserId = actor.UserId,
+                    CoordinateProfileVersionId = coordinateVersionIds[0],
+                    CoordinateSnapshotJson = coordinateSnapshotJson,
                     CreatedAtUtc = now
                 };
                 dbContext.MachineRuns.Add(run);
@@ -130,7 +144,7 @@ public sealed class MachineRunService(
                 }
 
                 await AddReservationsAsync(run, cancellationToken);
-                AddAudit(actor, "run.create", run.Id, new { run.RunCode, taskIds = tasks.Select(x => x.Id).ToArray() });
+                AddAudit(actor, "run.create", run.Id, new { run.RunCode, taskIds = tasks.Select(x => x.Id).ToArray(), coordinateProfileVersionId = run.CoordinateProfileVersionId });
 
                 return new CommandExecutionResult<MachineRunResponse>(
                     new MachineRunResponse(true, request.CommandId, false, run.Id, run.RunCode, run.Status, "Run created."),
@@ -156,6 +170,19 @@ public sealed class MachineRunService(
                 || batch.WorkflowSnapshotJson == "{}")
             {
                 throw new BusinessRuleException("channel_workflow_required", "Each channel batch must have a selected workflow before creating a run.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.CoordinateSelectionStatus == CoordinateSelectionStatus.NeedsManualResolution)
+            {
+                throw new BusinessRuleException("channel_coordinate_needs_manual_resolution", "Channel batch needs manual coordinate resolution before creating a run.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.CoordinateSelectionStatus != CoordinateSelectionStatus.Frozen
+                || string.IsNullOrWhiteSpace(batch.CoordinateProfileVersionId)
+                || string.IsNullOrWhiteSpace(batch.CoordinateSnapshotJson)
+                || batch.CoordinateSnapshotJson == "{}")
+            {
+                throw new BusinessRuleException("channel_coordinate_required", "Each channel batch must have a frozen coordinate version before creating a run.", StatusCodes.Status409Conflict);
             }
 
             if (batch.WorkflowLockedAtUtc is not null || batch.StartedAtUtc is not null || !string.IsNullOrWhiteSpace(batch.MachineRunId))

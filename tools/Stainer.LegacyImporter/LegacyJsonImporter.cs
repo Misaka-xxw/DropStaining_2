@@ -740,14 +740,16 @@ public sealed class LegacyJsonImporter(StainerDbContext dbContext, IReagentBarco
 
         var sourceHash = ComputeSha256(file);
         var profileCode = $"LegacyJson-{sourceHash[..12]}";
-        var profile = await dbContext.CoordinateProfiles.SingleOrDefaultAsync(x => x.Code == profileCode, cancellationToken);
+        var profile = await dbContext.CoordinateProfiles
+            .Include(x => x.Versions)
+            .SingleOrDefaultAsync(x => x.Code == profileCode, cancellationToken);
         if (profile is null)
         {
             profile = new CoordinateProfile
             {
                 Code = profileCode,
                 Name = "Legacy JSON coordinate profile",
-                Status = "Imported",
+                Status = CoordinateProfileStatus.NeedsManualResolution,
                 OriginDefinition = "Imported from legacy positions.json; source coordinate units and origin require manual verification.",
                 IsActive = false,
                 CreatedAtUtc = DateTimeOffset.UtcNow
@@ -758,6 +760,26 @@ public sealed class LegacyJsonImporter(StainerDbContext dbContext, IReagentBarco
         else
         {
             report.Statistics.IncrementSkipped("coordinate_profiles:exists");
+        }
+
+        var version = profile.Versions.SingleOrDefault(x => x.VersionLabel == "legacy-import");
+        if (version is null)
+        {
+            version = new CoordinateProfileVersion
+            {
+                CoordinateProfile = profile,
+                VersionNo = profile.Versions.Count == 0 ? 1 : profile.Versions.Max(x => x.VersionNo) + 1,
+                VersionLabel = "legacy-import",
+                Status = CoordinateProfileVersionStatus.NeedsManualResolution,
+                IsActive = false,
+                UsageScope = CoordinateVersionUsageScope.MockOnly,
+                VerificationStatus = CoordinateVersionVerificationStatus.Unverified,
+                ChangeReason = "Imported from legacy positions.json; coordinates require manual verification before use.",
+                ChangeSummaryJson = "{\"source\":\"legacy-json\",\"requiresManualResolution\":true}",
+                ValidationResultJson = "{\"status\":\"NeedsManualResolution\"}",
+                CreatedAtUtc = DateTimeOffset.UtcNow
+            };
+            dbContext.CoordinateProfileVersions.Add(version);
         }
 
         foreach (var group in document.RootElement.EnumerateObject())
@@ -784,7 +806,7 @@ public sealed class LegacyJsonImporter(StainerDbContext dbContext, IReagentBarco
                     report.AddIssue(relativeFile, pointCode, null, "ManualConfirmationRequired", "Legacy coordinate has non-zero values but source unit/origin is not verified; values are preserved in issue raw fragment and not activated.", Truncate(values.GetRawText()));
                 }
 
-                var exists = await dbContext.CoordinatePoints.AnyAsync(x => x.CoordinateProfileId == profile.Id && x.PointCode == pointCode, cancellationToken);
+                var exists = await dbContext.CoordinatePoints.AnyAsync(x => x.CoordinateProfileVersionId == version.Id && x.PointCode == pointCode, cancellationToken);
                 if (exists)
                 {
                     report.Statistics.IncrementSkipped("coordinate_points:exists");
@@ -794,9 +816,12 @@ public sealed class LegacyJsonImporter(StainerDbContext dbContext, IReagentBarco
                 dbContext.CoordinatePoints.Add(new CoordinatePoint
                 {
                     CoordinateProfile = profile,
+                    CoordinateProfileVersion = version,
                     PointCode = pointCode,
                     PointType = pointType,
                     RequiresCalibration = true,
+                    ValidationStatus = CoordinateTargetPointValidationStatus.NeedsCalibration,
+                    ValidationMessage = "Legacy JSON coordinate requires manual verification before activation.",
                     IsEnabled = false,
                     CreatedAtUtc = DateTimeOffset.UtcNow
                 });

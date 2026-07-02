@@ -874,6 +874,11 @@ public sealed class RuntimeLedgerExecutorTests
 
         var slot = await dbContext.PhysicalSlots.Include(x => x.Drawer).SingleAsync(x => x.Code == slotCode);
         var snapshot = $$"""{"workflowVersionId":"{{workflowVersion.Id}}","workflowType":"{{workflowType}}","source":"runtime-test"}""";
+        var coordinateVersionId = await dbContext.CoordinateProfileVersions
+            .Where(x => x.IsActive && x.Status == CoordinateProfileVersionStatus.Active)
+            .Select(x => x.Id)
+            .SingleAsync();
+        var coordinateSnapshot = $$"""{"coordinateProfileVersionId":"{{coordinateVersionId}}","source":"runtime-test"}""";
         var task = new StainingTask
         {
             TaskCode = $"TASK-{workflowCode}",
@@ -900,6 +905,9 @@ public sealed class RuntimeLedgerExecutorTests
                 ExperimentType = workflowType,
                 SelectedWorkflowVersion = workflowVersion,
                 WorkflowSnapshotJson = snapshot,
+                CoordinateProfileVersionId = coordinateVersionId,
+                CoordinateSnapshotJson = coordinateSnapshot,
+                CoordinateSelectionStatus = CoordinateSelectionStatus.Frozen,
                 WorkflowSelectionStatus = WorkflowSelectionStatus.Selected,
                 WorkflowSelectedAtUtc = DateTimeOffset.UtcNow,
                 CreatedAtUtc = DateTimeOffset.UtcNow
@@ -910,6 +918,8 @@ public sealed class RuntimeLedgerExecutorTests
         {
             Assert.Equal(workflowType, batch.ExperimentType);
             Assert.Equal(workflowVersion.Id, batch.SelectedWorkflowVersionId);
+            Assert.Equal(CoordinateSelectionStatus.Frozen, batch.CoordinateSelectionStatus);
+            Assert.Equal(coordinateVersionId, batch.CoordinateProfileVersionId);
         }
 
         dbContext.SlideTasks.Add(new SlideTask

@@ -11,7 +11,8 @@ namespace Stainer.Web.Application.Services;
 public sealed class ChannelBatchWorkflowService(
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
-    IRuntimeEventPublisher eventPublisher)
+    IRuntimeEventPublisher eventPublisher,
+    CoordinateProfileLifecycleService coordinateProfileLifecycleService)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly string[] ActiveBatchStatuses =
@@ -38,6 +39,7 @@ public sealed class ChannelBatchWorkflowService(
                 var experimentType = NormalizeExperimentType(request.ExperimentType);
                 var version = await LoadPublishedWorkflowVersionAsync(request.WorkflowVersionId, experimentType, cancellationToken);
                 var snapshot = JsonSerializer.Serialize(WorkflowSnapshotFactory.Create(version), JsonOptions);
+                var coordinate = await coordinateProfileLifecycleService.FreezeCurrentActiveVersionAsync(cancellationToken);
 
                 var batch = await LoadTargetBatchAsync(request, cancellationToken);
                 EnsureBatchCanInitialSelect(batch);
@@ -46,6 +48,9 @@ public sealed class ChannelBatchWorkflowService(
                 batch.ExperimentType = experimentType;
                 batch.SelectedWorkflowVersionId = version.Id;
                 batch.WorkflowSnapshotJson = snapshot;
+                batch.CoordinateProfileVersionId = coordinate.VersionId;
+                batch.CoordinateSnapshotJson = coordinate.SnapshotJson;
+                batch.CoordinateSelectionStatus = CoordinateSelectionStatus.Frozen;
                 batch.WorkflowSelectionStatus = WorkflowSelectionStatus.Selected;
                 batch.WorkflowSelectedAtUtc = now;
                 batch.WorkflowSelectedByUserId = actor.UserId;
@@ -55,6 +60,7 @@ public sealed class ChannelBatchWorkflowService(
                     batch.DrawerCode,
                     batch.ExperimentType,
                     workflowVersionId = version.Id,
+                    coordinateProfileVersionId = coordinate.VersionId,
                     commandId = request.CommandId,
                     correlationId = request.CommandId
                 });
@@ -104,6 +110,9 @@ public sealed class ChannelBatchWorkflowService(
                 var snapshot = JsonSerializer.Serialize(WorkflowSnapshotFactory.Create(version), JsonOptions);
                 var batch = await LoadTargetBatchAsync(request.ChannelBatchId, request.DrawerCode, cancellationToken);
                 var isInitialSelection = IsUnselected(batch);
+                var coordinate = isInitialSelection
+                    ? await coordinateProfileLifecycleService.FreezeCurrentActiveVersionAsync(cancellationToken)
+                    : (VersionId: batch.CoordinateProfileVersionId ?? string.Empty, SnapshotJson: batch.CoordinateSnapshotJson);
 
                 if (isInitialSelection)
                 {
@@ -140,6 +149,12 @@ public sealed class ChannelBatchWorkflowService(
                 batch.ExperimentType = experimentType;
                 batch.SelectedWorkflowVersionId = version.Id;
                 batch.WorkflowSnapshotJson = snapshot;
+                if (isInitialSelection)
+                {
+                    batch.CoordinateProfileVersionId = coordinate.VersionId;
+                    batch.CoordinateSnapshotJson = coordinate.SnapshotJson;
+                    batch.CoordinateSelectionStatus = CoordinateSelectionStatus.Frozen;
+                }
                 batch.WorkflowSelectionStatus = WorkflowSelectionStatus.Selected;
                 batch.WorkflowSelectedAtUtc = now;
                 batch.WorkflowSelectedByUserId = actor.UserId;
@@ -151,6 +166,7 @@ public sealed class ChannelBatchWorkflowService(
                     oldWorkflowVersionId,
                     experimentType,
                     workflowVersionId = version.Id,
+                    coordinateProfileVersionId = batch.CoordinateProfileVersionId,
                     workflowName = version.WorkflowDefinition!.Name,
                     reason = isInitialSelection ? null : request.Reason?.Trim(),
                     preflightInvalidated = !isInitialSelection,

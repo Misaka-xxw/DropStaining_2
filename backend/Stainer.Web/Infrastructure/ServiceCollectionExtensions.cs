@@ -52,6 +52,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MockLisQueryService>();
         services.AddScoped<MockDemoDataSeeder>();
         services.AddScoped<DabLifecycleService>();
+        services.AddScoped<CoordinateProfileLifecycleService>();
         services.AddScoped<EngineeringWriteService>();
         services.AddScoped<PreflightValidationService>();
         services.AddScoped<MachineRunService>();

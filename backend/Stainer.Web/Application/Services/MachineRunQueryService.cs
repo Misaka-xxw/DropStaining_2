@@ -31,6 +31,8 @@ public sealed class MachineRunQueryService(StainerDbContext dbContext)
             run.RunCode,
             run.Status,
             run.CurrentMajorStepCode,
+            run.CoordinateProfileVersionId,
+            run.CoordinateSnapshotJson,
             run.ChannelBatches
                 .OrderBy(x => x.DrawerCode)
                 .Select(x => new ChannelBatchResponse(
@@ -39,7 +41,9 @@ public sealed class MachineRunQueryService(StainerDbContext dbContext)
                     x.Status,
                     x.ExperimentType,
                     x.SelectedWorkflowVersionId,
+                    x.CoordinateProfileVersionId,
                     x.WorkflowSelectionStatus,
+                    x.CoordinateSelectionStatus,
                     x.WorkflowLockedAtUtc,
                     x.SlideTasks
                         .OrderBy(s => s.SlotCode)

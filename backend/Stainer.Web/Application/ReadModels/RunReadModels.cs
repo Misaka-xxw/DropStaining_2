@@ -22,6 +22,8 @@ public sealed record MachineRunDetailResponse(
     string RunCode,
     string Status,
     string? CurrentMajorStepCode,
+    string? CoordinateProfileVersionId,
+    string CoordinateSnapshotJson,
     IReadOnlyList<ChannelBatchResponse> ChannelBatches,
     IReadOnlyList<WorkflowExecutionResponse> WorkflowExecutions,
     IReadOnlyList<AlarmResponse> Alarms);
@@ -32,7 +34,9 @@ public sealed record ChannelBatchResponse(
     string Status,
     string? ExperimentType,
     string? WorkflowVersionId,
+    string? CoordinateProfileVersionId,
     string WorkflowSelectionStatus,
+    string CoordinateSelectionStatus,
     DateTimeOffset? WorkflowLockedAtUtc,
     IReadOnlyList<SlideTaskResponse> Slides);
 

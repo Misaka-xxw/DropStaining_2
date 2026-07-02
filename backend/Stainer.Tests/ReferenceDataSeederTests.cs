@@ -79,7 +79,12 @@ public sealed class ReferenceDataSeederTests
             .SingleAsync(x => x.Code == ReferenceDataSeeder.DefaultCoordinateProfileCode);
 
         Assert.True(profile.IsActive);
-        Assert.Equal("Active", profile.Status);
+        Assert.Equal(CoordinateProfileStatus.Enabled, profile.Status);
+        Assert.NotNull(profile.ActiveVersionId);
+        var activeVersion = await dbContext.CoordinateProfileVersions.SingleAsync(x => x.Id == profile.ActiveVersionId);
+        Assert.Equal(CoordinateProfileVersionStatus.Active, activeVersion.Status);
+        Assert.Equal(CoordinateVersionUsageScope.MockOnly, activeVersion.UsageScope);
+        Assert.Equal(CoordinateVersionVerificationStatus.Unverified, activeVersion.VerificationStatus);
 
         var needle1 = profile.CoordinatePoints.Single(x => x.PointCode == "Needle1");
         Assert.Equal(0, needle1.PresetXUm);
@@ -114,7 +119,8 @@ public sealed class ReferenceDataSeederTests
         Assert.Equal(40, await dbContext.ReagentRackPositions.CountAsync());
         Assert.Equal(8, await dbContext.DabMixPositions.CountAsync());
         Assert.Equal(4, await dbContext.WashPositions.CountAsync());
-        Assert.Equal(70, await dbContext.CoordinatePoints.CountAsync());
+        Assert.Equal(73, await dbContext.CoordinatePoints.CountAsync());
+        Assert.Equal(1, await dbContext.CoordinateProfileVersions.CountAsync(x => x.IsActive));
     }
 
     [Fact]

@@ -47,7 +47,27 @@ public sealed record CoordinateProfileResponse(
     string Status,
     string OriginDefinition,
     bool IsActive,
+    string? ActiveVersionId,
+    IReadOnlyList<CoordinateProfileVersionResponse> Versions,
     IReadOnlyList<CoordinatePointResponse> Points);
+
+public sealed record CoordinateProfileVersionResponse(
+    string Id,
+    string CoordinateProfileId,
+    int VersionNo,
+    string VersionLabel,
+    string Status,
+    bool IsActive,
+    string UsageScope,
+    string VerificationStatus,
+    string? SourceVersionId,
+    string ChangeReason,
+    string ChangeSummaryJson,
+    string ValidationResultJson,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? PublishedAtUtc,
+    DateTimeOffset? ActivatedAtUtc,
+    IReadOnlyList<CoordinatePointResponse> TargetPoints);
 
 public sealed record CoordinatePointResponse(
     string Id,
@@ -57,11 +77,31 @@ public sealed record CoordinatePointResponse(
     long? PresetYUm,
     long? CalibratedXUm,
     long? CalibratedYUm,
+    long? CalibratedZUm,
     long? SafeZUm,
     long? AspirateZUm,
     long? DispenseZUm,
+    long? ActionOffsetXUm,
+    long? ActionOffsetYUm,
+    long? ActionOffsetZUm,
+    string ValidationStatus,
+    string ValidationMessage,
     bool RequiresCalibration,
     bool IsEnabled);
+
+public sealed record CoordinateProfileVersionMutationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string CoordinateProfileId,
+    string CoordinateProfileVersionId,
+    int VersionNo,
+    string VersionLabel,
+    string Status,
+    bool IsActive,
+    string UsageScope,
+    string VerificationStatus,
+    string Message);
 
 public sealed record LiquidClassResponse(
     string Id,

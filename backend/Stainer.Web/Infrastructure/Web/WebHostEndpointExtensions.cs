@@ -319,6 +319,24 @@ public static class WebHostEndpointExtensions
             Results.Ok(await service.GetLayoutAsync(cancellationToken)));
         app.MapGet("/api/engineering/coordinate-profiles", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListCoordinateProfilesAsync(cancellationToken)));
+        app.MapPost("/api/engineering/coordinate-profile-versions", async (HttpContext context, CreateCoordinateProfileVersionRequest request, UserSessionService sessionService, CoordinateProfileLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.CreateVersionAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/coordinate-profile-versions/{versionId}/publish", async (HttpContext context, string versionId, PublishCoordinateProfileVersionRequest request, UserSessionService sessionService, CoordinateProfileLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.PublishAsync(versionId, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/coordinate-profile-versions/{versionId}/activate", async (HttpContext context, string versionId, ActivateCoordinateProfileVersionRequest request, UserSessionService sessionService, CoordinateProfileLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ActivateAsync(versionId, request, actor, cancellationToken));
+            }));
         app.MapGet("/api/engineering/liquid-classes", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListLiquidClassesAsync(cancellationToken)));
         app.MapGet("/api/dab", (MockRuntimeStore store, int? slideCount) => Results.Ok(store.GetDab(slideCount)));

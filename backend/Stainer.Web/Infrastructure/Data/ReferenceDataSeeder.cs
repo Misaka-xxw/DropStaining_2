@@ -251,58 +251,105 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
 
     private async Task<CoordinateProfile> SeedCoordinateProfileAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var profile = await dbContext.CoordinateProfiles.FirstOrDefaultAsync(x => x.Code == DefaultCoordinateProfileCode, cancellationToken);
-        if (profile is not null)
+        var profile = await dbContext.CoordinateProfiles
+            .Include(x => x.Versions)
+            .FirstOrDefaultAsync(x => x.Code == DefaultCoordinateProfileCode, cancellationToken);
+        if (profile is null)
         {
-            return profile;
+            profile = new CoordinateProfile
+            {
+                Code = DefaultCoordinateProfileCode,
+                Name = "Factory default coordinate profile v1",
+                Status = CoordinateProfileStatus.Enabled,
+                IsActive = true,
+                OriginDefinition = "Needle1 is the innermost needle and defines mechanical origin (0, 0). Needle2 offset is (+25000 um, 0).",
+                CreatedAtUtc = now
+            };
+            dbContext.CoordinateProfiles.Add(profile);
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        profile = new CoordinateProfile
+        var activeVersion = profile.Versions.SingleOrDefault(x => x.IsActive);
+        if (activeVersion is null)
         {
-            Code = DefaultCoordinateProfileCode,
-            Name = "Factory default coordinate profile v1",
-            Status = "Active",
-            IsActive = true,
-            OriginDefinition = "Needle1 is the innermost needle and defines mechanical origin (0, 0). Needle2 offset is (+25000 um, 0).",
-            CreatedAtUtc = now
-        };
-        dbContext.CoordinateProfiles.Add(profile);
+            activeVersion = new CoordinateProfileVersion
+            {
+                CoordinateProfileId = profile.Id,
+                VersionNo = profile.Versions.Count == 0 ? 1 : profile.Versions.Max(x => x.VersionNo) + 1,
+                VersionLabel = "1",
+                Status = CoordinateProfileVersionStatus.Draft,
+                IsActive = false,
+                UsageScope = CoordinateVersionUsageScope.MockOnly,
+                VerificationStatus = CoordinateVersionVerificationStatus.Unverified,
+                ChangeReason = "Factory default coordinate baseline.",
+                ChangeSummaryJson = "{\"seeded\":true}",
+                ValidationResultJson = "{\"status\":\"FactoryDefault\"}",
+                CreatedAtUtc = now
+            };
+            dbContext.CoordinateProfileVersions.Add(activeVersion);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        profile.ActiveVersionId = activeVersion.Id;
         await dbContext.SaveChangesAsync(cancellationToken);
         return profile;
     }
 
     private async Task SeedCoordinatePointsAsync(CoordinateProfile profile, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        await EnsureCoordinatePointAsync(profile.Id, "Needle1", "Needle", 0, 0, false, now, cancellationToken);
-        await EnsureCoordinatePointAsync(profile.Id, "Needle2", "Needle", 25000, 0, false, now, cancellationToken);
+        var versionId = profile.ActiveVersionId
+            ?? (await dbContext.CoordinateProfileVersions.SingleAsync(x => x.CoordinateProfileId == profile.Id && x.IsActive, cancellationToken)).Id;
+
+        await EnsureCoordinatePointAsync(profile.Id, versionId, "Needle1", "Needle", 0, 0, false, now, cancellationToken);
+        await EnsureCoordinatePointAsync(profile.Id, versionId, "Needle2", "Needle", 25000, 0, false, now, cancellationToken);
 
         var slotCodes = await dbContext.PhysicalSlots.Select(x => x.Code).ToListAsync(cancellationToken);
         foreach (var code in slotCodes)
         {
-            await EnsureCoordinatePointAsync(profile.Id, code, "PhysicalSlot", null, null, true, now, cancellationToken);
+            await EnsureCoordinatePointAsync(profile.Id, versionId, code, "PhysicalSlot", null, null, true, now, cancellationToken);
         }
 
         var reagentCodes = await dbContext.ReagentRackPositions.Select(x => x.Code).ToListAsync(cancellationToken);
         foreach (var code in reagentCodes)
         {
-            await EnsureCoordinatePointAsync(profile.Id, code, "ReagentRackPosition", null, null, true, now, cancellationToken);
+            await EnsureCoordinatePointAsync(profile.Id, versionId, code, "ReagentRackPosition", null, null, true, now, cancellationToken);
         }
 
         var dabCodes = await dbContext.DabMixPositions.Select(x => x.Code).ToListAsync(cancellationToken);
         foreach (var code in dabCodes)
         {
-            await EnsureCoordinatePointAsync(profile.Id, code, "DabMixPosition", null, null, true, now, cancellationToken);
+            await EnsureCoordinatePointAsync(profile.Id, versionId, code, "DabMixPosition", null, null, true, now, cancellationToken);
         }
 
         var washCodes = await dbContext.WashPositions.Select(x => x.Code).ToListAsync(cancellationToken);
         foreach (var code in washCodes)
         {
-            await EnsureCoordinatePointAsync(profile.Id, code, "WashPosition", null, null, true, now, cancellationToken);
+            await EnsureCoordinatePointAsync(profile.Id, versionId, code, "WashPosition", null, null, true, now, cancellationToken);
         }
+
+        await EnsureCoordinatePointAsync(profile.Id, versionId, "SampleScan", "SampleScanPosition", null, null, true, now, cancellationToken);
+        await EnsureCoordinatePointAsync(profile.Id, versionId, "DabA", "DabSourceBottle", null, null, true, now, cancellationToken);
+        await EnsureCoordinatePointAsync(profile.Id, versionId, "DabB", "DabSourceBottle", null, null, true, now, cancellationToken);
+
+        var version = await dbContext.CoordinateProfileVersions.SingleAsync(x => x.Id == versionId, cancellationToken);
+        if (version.Status == CoordinateProfileVersionStatus.Draft)
+        {
+            version.Status = CoordinateProfileVersionStatus.Active;
+            version.IsActive = true;
+            version.UsageScope = CoordinateVersionUsageScope.MockOnly;
+            version.VerificationStatus = CoordinateVersionVerificationStatus.Unverified;
+            version.PublishedAtUtc = now;
+            version.ActivatedAtUtc = now;
+        }
+
+        profile.Status = CoordinateProfileStatus.Enabled;
+        profile.IsActive = true;
+        profile.ActiveVersionId = versionId;
     }
 
     private async Task EnsureCoordinatePointAsync(
         string coordinateProfileId,
+        string coordinateProfileVersionId,
         string pointCode,
         string pointType,
         long? xUm,
@@ -311,7 +358,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        if (await dbContext.CoordinatePoints.AnyAsync(x => x.CoordinateProfileId == coordinateProfileId && x.PointCode == pointCode, cancellationToken))
+        if (await dbContext.CoordinatePoints.AnyAsync(x => x.CoordinateProfileVersionId == coordinateProfileVersionId && x.PointCode == pointCode, cancellationToken))
         {
             return;
         }
@@ -319,6 +366,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         dbContext.CoordinatePoints.Add(new CoordinatePoint
         {
             CoordinateProfileId = coordinateProfileId,
+            CoordinateProfileVersionId = coordinateProfileVersionId,
             PointCode = pointCode,
             PointType = pointType,
             PresetXUm = xUm,
@@ -326,6 +374,8 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             CalibratedXUm = xUm,
             CalibratedYUm = yUm,
             RequiresCalibration = requiresCalibration,
+            ValidationStatus = requiresCalibration ? CoordinateTargetPointValidationStatus.NeedsCalibration : CoordinateTargetPointValidationStatus.Validated,
+            ValidationMessage = requiresCalibration ? "Factory default point requires calibration." : "Factory default coordinate point.",
             CreatedAtUtc = now
         });
     }

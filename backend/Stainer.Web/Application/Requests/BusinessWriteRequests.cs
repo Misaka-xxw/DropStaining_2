@@ -193,9 +193,42 @@ public sealed record CalibrateCoordinatePointRequest(
     string PointCode,
     long? CalibratedXUm,
     long? CalibratedYUm,
+    long? CalibratedZUm,
     long? SafeZUm,
     long? AspirateZUm,
     long? DispenseZUm,
+    string Reason);
+
+public sealed record CoordinateTargetPointInput(
+    string PointCode,
+    string? PointType,
+    long? XUm,
+    long? YUm,
+    long? ZUm,
+    long? SafeZUm,
+    long? LiquidDetectZUm,
+    long? DispenseZUm,
+    long? ActionOffsetXUm,
+    long? ActionOffsetYUm,
+    long? ActionOffsetZUm,
+    bool? IsEnabled);
+
+public sealed record CreateCoordinateProfileVersionRequest(
+    string CommandId,
+    string ProfileCode,
+    string? SourceVersionId,
+    string VersionLabel,
+    string Reason,
+    IReadOnlyList<CoordinateTargetPointInput> TargetPoints,
+    string? ValidationResultJson = null);
+
+public sealed record PublishCoordinateProfileVersionRequest(
+    string CommandId,
+    string Reason,
+    string ValidationResultJson);
+
+public sealed record ActivateCoordinateProfileVersionRequest(
+    string CommandId,
     string Reason);
 
 public sealed record SaveLiquidClassRequest(

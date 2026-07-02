@@ -17,6 +17,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<WashPosition> WashPositions => Set<WashPosition>();
     public DbSet<DeviceProfile> DeviceProfiles => Set<DeviceProfile>();
     public DbSet<CoordinateProfile> CoordinateProfiles => Set<CoordinateProfile>();
+    public DbSet<CoordinateProfileVersion> CoordinateProfileVersions => Set<CoordinateProfileVersion>();
     public DbSet<CoordinatePoint> CoordinatePoints => Set<CoordinatePoint>();
     public DbSet<CoordinateCalibrationHistory> CoordinateCalibrationHistory => Set<CoordinateCalibrationHistory>();
     public DbSet<WorkflowDefinition> WorkflowDefinitions => Set<WorkflowDefinition>();
@@ -74,6 +75,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureWashPosition(modelBuilder);
         ConfigureDeviceProfile(modelBuilder);
         ConfigureCoordinateProfile(modelBuilder);
+        ConfigureCoordinateProfileVersion(modelBuilder);
         ConfigureCoordinatePoint(modelBuilder);
         ConfigureCoordinateCalibrationHistory(modelBuilder);
         ConfigureWorkflowDefinition(modelBuilder);
@@ -103,6 +105,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public override int SaveChanges()
     {
         ValidateWorkflowVersionChanges();
+        ValidateCoordinateVersionChanges();
         EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return base.SaveChanges();
     }
@@ -110,6 +113,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ValidateWorkflowVersionChanges();
+        ValidateCoordinateVersionChanges();
         EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
@@ -122,6 +126,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         await ValidateWorkflowVersionChangesAsync(cancellationToken);
+        await ValidateCoordinateVersionChangesAsync(cancellationToken);
         EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
@@ -356,6 +361,199 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         }
     }
 
+    private void ValidateCoordinateVersionChanges()
+    {
+        ChangeTracker.DetectChanges();
+        EnsureCoordinateVersionLifecycleIsControlled();
+
+        var changedPointVersionIds = GetChangedCoordinatePointVersionIds();
+        var addedVersionIds = GetAddedCoordinateVersionIds();
+        var protectedStatuses = LoadPersistedCoordinateVersionStatuses(changedPointVersionIds);
+        var referencedVersionIds = LoadReferencedCoordinateVersionIds(changedPointVersionIds);
+        EnsureCoordinatePointsDoNotModifyProtectedVersions(changedPointVersionIds, addedVersionIds, protectedStatuses, referencedVersionIds);
+    }
+
+    private async Task ValidateCoordinateVersionChangesAsync(CancellationToken cancellationToken)
+    {
+        ChangeTracker.DetectChanges();
+        EnsureCoordinateVersionLifecycleIsControlled();
+
+        var changedPointVersionIds = GetChangedCoordinatePointVersionIds();
+        var addedVersionIds = GetAddedCoordinateVersionIds();
+        var protectedStatuses = await LoadPersistedCoordinateVersionStatusesAsync(changedPointVersionIds, cancellationToken);
+        var referencedVersionIds = await LoadReferencedCoordinateVersionIdsAsync(changedPointVersionIds, cancellationToken);
+        EnsureCoordinatePointsDoNotModifyProtectedVersions(changedPointVersionIds, addedVersionIds, protectedStatuses, referencedVersionIds);
+    }
+
+    private void EnsureCoordinateVersionLifecycleIsControlled()
+    {
+        foreach (var entry in ChangeTracker.Entries<CoordinateProfileVersion>())
+        {
+            if (entry.State == EntityState.Deleted)
+            {
+                throw new InvalidOperationException("Coordinate profile versions cannot be deleted.");
+            }
+
+            if (entry.State != EntityState.Modified)
+            {
+                continue;
+            }
+
+            var originalStatus = entry.Property(x => x.Status).OriginalValue;
+            if (originalStatus is CoordinateProfileVersionStatus.Published or CoordinateProfileVersionStatus.Active or CoordinateProfileVersionStatus.Retired
+                && !IsAllowedCoordinateLifecycleChange(entry))
+            {
+                throw new InvalidOperationException("Published or active coordinate versions cannot be modified in place. Create a new version for changes.");
+            }
+        }
+    }
+
+    private static bool IsAllowedCoordinateLifecycleChange(EntityEntry<CoordinateProfileVersion> entry)
+    {
+        var modifiedProperties = entry.Properties
+            .Where(x => x.IsModified)
+            .Select(x => x.Metadata.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        if (modifiedProperties.Count == 0)
+        {
+            return false;
+        }
+
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            nameof(CoordinateProfileVersion.Status),
+            nameof(CoordinateProfileVersion.IsActive),
+            nameof(CoordinateProfileVersion.PublishedByUserId),
+            nameof(CoordinateProfileVersion.ActivatedByUserId),
+            nameof(CoordinateProfileVersion.PublishedAtUtc),
+            nameof(CoordinateProfileVersion.ActivatedAtUtc),
+            nameof(CoordinateProfileVersion.RetiredAtUtc),
+            nameof(CoordinateProfileVersion.ValidationResultJson)
+        };
+        return modifiedProperties.All(allowed.Contains);
+    }
+
+    private string[] GetChangedCoordinatePointVersionIds()
+    {
+        return ChangeTracker.Entries<CoordinatePoint>()
+            .Where(IsChanged)
+            .Select(x => x.Entity.CoordinateProfileVersionId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToArray();
+    }
+
+    private string[] GetAddedCoordinateVersionIds()
+    {
+        return ChangeTracker.Entries<CoordinateProfileVersion>()
+            .Where(x => x.State == EntityState.Added)
+            .Select(x => x.Entity.Id)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToArray();
+    }
+
+    private Dictionary<string, string> LoadPersistedCoordinateVersionStatuses(string[] versionIds)
+    {
+        if (versionIds.Length == 0)
+        {
+            return [];
+        }
+
+        return CoordinateProfileVersions
+            .AsNoTracking()
+            .Where(x => versionIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.Status })
+            .ToDictionary(x => x.Id, x => x.Status);
+    }
+
+    private async Task<Dictionary<string, string>> LoadPersistedCoordinateVersionStatusesAsync(string[] versionIds, CancellationToken cancellationToken)
+    {
+        if (versionIds.Length == 0)
+        {
+            return [];
+        }
+
+        return await CoordinateProfileVersions
+            .AsNoTracking()
+            .Where(x => versionIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.Status })
+            .ToDictionaryAsync(x => x.Id, x => x.Status, cancellationToken);
+    }
+
+    private HashSet<string> LoadReferencedCoordinateVersionIds(string[] versionIds)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        if (versionIds.Length == 0)
+        {
+            return result;
+        }
+
+        foreach (var id in ChannelBatches.AsNoTracking().Where(x => x.CoordinateProfileVersionId != null && versionIds.Contains(x.CoordinateProfileVersionId)).Select(x => x.CoordinateProfileVersionId!))
+        {
+            result.Add(id);
+        }
+
+        foreach (var id in MachineRuns.AsNoTracking().Where(x => x.CoordinateProfileVersionId != null && versionIds.Contains(x.CoordinateProfileVersionId)).Select(x => x.CoordinateProfileVersionId!))
+        {
+            result.Add(id);
+        }
+
+        return result;
+    }
+
+    private async Task<HashSet<string>> LoadReferencedCoordinateVersionIdsAsync(string[] versionIds, CancellationToken cancellationToken)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        if (versionIds.Length == 0)
+        {
+            return result;
+        }
+
+        var batchIds = await ChannelBatches.AsNoTracking()
+            .Where(x => x.CoordinateProfileVersionId != null && versionIds.Contains(x.CoordinateProfileVersionId))
+            .Select(x => x.CoordinateProfileVersionId!)
+            .ToListAsync(cancellationToken);
+        foreach (var id in batchIds)
+        {
+            result.Add(id);
+        }
+
+        var runIds = await MachineRuns.AsNoTracking()
+            .Where(x => x.CoordinateProfileVersionId != null && versionIds.Contains(x.CoordinateProfileVersionId))
+            .Select(x => x.CoordinateProfileVersionId!)
+            .ToListAsync(cancellationToken);
+        foreach (var id in runIds)
+        {
+            result.Add(id);
+        }
+
+        return result;
+    }
+
+    private static void EnsureCoordinatePointsDoNotModifyProtectedVersions(
+        string[] changedPointVersionIds,
+        string[] addedVersionIds,
+        IReadOnlyDictionary<string, string> persistedStatuses,
+        IReadOnlySet<string> referencedVersionIds)
+    {
+        var addedVersionIdSet = addedVersionIds.ToHashSet(StringComparer.Ordinal);
+        foreach (var versionId in changedPointVersionIds)
+        {
+            if (addedVersionIdSet.Contains(versionId))
+            {
+                continue;
+            }
+
+            if (referencedVersionIds.Contains(versionId)
+                || (persistedStatuses.TryGetValue(versionId, out var status)
+                    && status is CoordinateProfileVersionStatus.Published or CoordinateProfileVersionStatus.Active or CoordinateProfileVersionStatus.Retired))
+            {
+                throw new InvalidOperationException("Coordinate target points cannot be modified in place after publish, activation, or task/run reference.");
+            }
+        }
+    }
+
     private static bool IsChanged(EntityEntry entry)
     {
         return entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted;
@@ -528,8 +726,47 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(64).IsRequired();
         entity.Property(x => x.OriginDefinition).HasColumnName("origin_definition").HasMaxLength(512).IsRequired();
         entity.Property(x => x.IsActive).HasColumnName("is_active").IsRequired();
+        entity.Property(x => x.ActiveVersionId).HasColumnName("active_version_id").HasMaxLength(36);
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.HasIndex(x => x.Code).IsUnique();
+        entity.HasOne(x => x.ActiveVersion).WithMany().HasForeignKey(x => x.ActiveVersionId).OnDelete(DeleteBehavior.SetNull);
+    }
+
+    private static void ConfigureCoordinateProfileVersion(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<CoordinateProfileVersion>();
+        entity.ToTable("coordinate_profile_versions");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.CoordinateProfileId).HasColumnName("coordinate_profile_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.VersionNo).HasColumnName("version_no").IsRequired();
+        entity.Property(x => x.VersionLabel).HasColumnName("version_label").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.IsActive).HasColumnName("is_active").IsRequired();
+        entity.Property(x => x.UsageScope).HasColumnName("usage_scope").HasMaxLength(32).HasDefaultValue(CoordinateVersionUsageScope.MockOnly).IsRequired();
+        entity.Property(x => x.VerificationStatus).HasColumnName("verification_status").HasMaxLength(32).HasDefaultValue(CoordinateVersionVerificationStatus.Unverified).IsRequired();
+        entity.Property(x => x.SourceVersionId).HasColumnName("source_version_id").HasMaxLength(36);
+        entity.Property(x => x.ChangeReason).HasColumnName("change_reason").HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.ChangeSummaryJson).HasColumnName("change_summary_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.ValidationResultJson).HasColumnName("validation_result_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
+        entity.Property(x => x.PublishedByUserId).HasColumnName("published_by_user_id").HasMaxLength(36);
+        entity.Property(x => x.ActivatedByUserId).HasColumnName("activated_by_user_id").HasMaxLength(36);
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.PublishedAtUtc).HasColumnName("published_at_utc");
+        entity.Property(x => x.ActivatedAtUtc).HasColumnName("activated_at_utc");
+        entity.Property(x => x.RetiredAtUtc).HasColumnName("retired_at_utc");
+        entity.HasIndex(x => new { x.CoordinateProfileId, x.VersionNo }).IsUnique();
+        entity.HasIndex(x => new { x.CoordinateProfileId, x.VersionLabel }).IsUnique();
+        entity.HasIndex(x => x.CoordinateProfileId)
+            .IsUnique()
+            .HasFilter("is_active = 1")
+            .HasDatabaseName("UX_coordinate_profile_versions_profile_active");
+        entity.HasOne(x => x.CoordinateProfile).WithMany(x => x.Versions).HasForeignKey(x => x.CoordinateProfileId).OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(x => x.SourceVersion).WithMany(x => x.DerivedVersions).HasForeignKey(x => x.SourceVersionId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        entity.HasOne(x => x.PublishedByUser).WithMany().HasForeignKey(x => x.PublishedByUserId).OnDelete(DeleteBehavior.SetNull);
+        entity.HasOne(x => x.ActivatedByUser).WithMany().HasForeignKey(x => x.ActivatedByUserId).OnDelete(DeleteBehavior.SetNull);
     }
 
     private static void ConfigureCoordinatePoint(ModelBuilder modelBuilder)
@@ -539,21 +776,31 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         entity.Property(x => x.CoordinateProfileId).HasColumnName("coordinate_profile_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36).IsRequired();
         entity.Property(x => x.PointCode).HasColumnName("point_code").HasMaxLength(128).IsRequired();
         entity.Property(x => x.PointType).HasColumnName("point_type").HasMaxLength(64).IsRequired();
         entity.Property(x => x.PresetXUm).HasColumnName("preset_x_um");
         entity.Property(x => x.PresetYUm).HasColumnName("preset_y_um");
         entity.Property(x => x.CalibratedXUm).HasColumnName("calibrated_x_um");
         entity.Property(x => x.CalibratedYUm).HasColumnName("calibrated_y_um");
+        entity.Property(x => x.CalibratedZUm).HasColumnName("calibrated_z_um");
         entity.Property(x => x.SafeZUm).HasColumnName("safe_z_um");
-        entity.Property(x => x.AspirateZUm).HasColumnName("aspirate_z_um");
+        entity.Property(x => x.LiquidDetectZUm).HasColumnName("liquid_detect_z_um");
         entity.Property(x => x.DispenseZUm).HasColumnName("dispense_z_um");
+        entity.Property(x => x.ActionOffsetXUm).HasColumnName("action_offset_x_um");
+        entity.Property(x => x.ActionOffsetYUm).HasColumnName("action_offset_y_um");
+        entity.Property(x => x.ActionOffsetZUm).HasColumnName("action_offset_z_um");
         entity.Property(x => x.RequiresCalibration).HasColumnName("requires_calibration").IsRequired();
+        entity.Property(x => x.ValidationStatus).HasColumnName("validation_status").HasMaxLength(64).HasDefaultValue(CoordinateTargetPointValidationStatus.Unverified).IsRequired();
+        entity.Property(x => x.ValidationMessage).HasColumnName("validation_message").HasMaxLength(2000).HasDefaultValue(string.Empty).IsRequired();
         entity.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
-        entity.HasIndex(x => new { x.CoordinateProfileId, x.PointCode }).IsUnique();
+        entity.Ignore(x => x.AspirateZUm);
+        entity.HasIndex(x => new { x.CoordinateProfileId, x.PointCode });
+        entity.HasIndex(x => new { x.CoordinateProfileVersionId, x.PointCode }).IsUnique();
         entity.HasOne(x => x.CoordinateProfile).WithMany(x => x.CoordinatePoints).HasForeignKey(x => x.CoordinateProfileId).OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(x => x.CoordinateProfileVersion).WithMany(x => x.TargetPoints).HasForeignKey(x => x.CoordinateProfileVersionId).OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureCoordinateCalibrationHistory(ModelBuilder modelBuilder)
@@ -563,17 +810,28 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         entity.Property(x => x.CoordinatePointId).HasColumnName("coordinate_point_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
+        entity.Property(x => x.SourceCoordinateProfileVersionId).HasColumnName("source_coordinate_profile_version_id").HasMaxLength(36);
         entity.Property(x => x.PreviousXUm).HasColumnName("previous_x_um");
         entity.Property(x => x.PreviousYUm).HasColumnName("previous_y_um");
         entity.Property(x => x.NewXUm).HasColumnName("new_x_um");
         entity.Property(x => x.NewYUm).HasColumnName("new_y_um");
+        entity.Property(x => x.NewZUm).HasColumnName("new_z_um");
         entity.Property(x => x.SafeZUm).HasColumnName("safe_z_um");
-        entity.Property(x => x.AspirateZUm).HasColumnName("aspirate_z_um");
+        entity.Property(x => x.LiquidDetectZUm).HasColumnName("liquid_detect_z_um");
         entity.Property(x => x.DispenseZUm).HasColumnName("dispense_z_um");
+        entity.Property(x => x.ActionOffsetXUm).HasColumnName("action_offset_x_um");
+        entity.Property(x => x.ActionOffsetYUm).HasColumnName("action_offset_y_um");
+        entity.Property(x => x.ActionOffsetZUm).HasColumnName("action_offset_z_um");
+        entity.Property(x => x.ChangeSummaryJson).HasColumnName("change_summary_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.ValidationResultJson).HasColumnName("validation_result_json").HasMaxLength(40000).IsRequired();
         entity.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(1000).IsRequired();
         entity.Property(x => x.CalibratedByUserId).HasColumnName("calibrated_by_user_id").HasMaxLength(36);
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Ignore(x => x.AspirateZUm);
         entity.HasOne(x => x.CoordinatePoint).WithMany(x => x.CalibrationHistory).HasForeignKey(x => x.CoordinatePointId).OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(x => x.CoordinateProfileVersion).WithMany().HasForeignKey(x => x.CoordinateProfileVersionId).OnDelete(DeleteBehavior.SetNull);
+        entity.HasOne(x => x.SourceCoordinateProfileVersion).WithMany().HasForeignKey(x => x.SourceCoordinateProfileVersionId).OnDelete(DeleteBehavior.SetNull);
         entity.HasOne(x => x.CalibratedByUser).WithMany().HasForeignKey(x => x.CalibratedByUserId).OnDelete(DeleteBehavior.SetNull);
     }
 
@@ -1061,12 +1319,15 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         runs.Property(x => x.StopRequested).HasColumnName("stop_requested").IsRequired();
         runs.Property(x => x.FaultMessage).HasColumnName("fault_message").HasMaxLength(2000);
         runs.Property(x => x.CurrentMajorStepCode).HasColumnName("current_major_step_code").HasMaxLength(128);
+        runs.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
+        runs.Property(x => x.CoordinateSnapshotJson).HasColumnName("coordinate_snapshot_json").HasMaxLength(40000).HasDefaultValue("{}").IsRequired();
         runs.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         runs.Property(x => x.StartedAtUtc).HasColumnName("started_at_utc");
         runs.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
         runs.HasIndex(x => x.RunCode).IsUnique();
         runs.HasIndex(x => x.Status);
         runs.HasOne(x => x.RequestedByUser).WithMany().HasForeignKey(x => x.RequestedByUserId).OnDelete(DeleteBehavior.SetNull);
+        runs.HasOne(x => x.CoordinateProfileVersion).WithMany().HasForeignKey(x => x.CoordinateProfileVersionId).OnDelete(DeleteBehavior.Restrict);
 
         var batches = modelBuilder.Entity<ChannelBatch>();
         batches.ToTable("channel_batches", table =>
@@ -1084,6 +1345,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         batches.Property(x => x.ExperimentType).HasColumnName("experiment_type").HasMaxLength(16);
         batches.Property(x => x.SelectedWorkflowVersionId).HasColumnName("selected_workflow_version_id").HasMaxLength(36);
         batches.Property(x => x.WorkflowSnapshotJson).HasColumnName("workflow_snapshot_json").HasMaxLength(40000).IsRequired();
+        batches.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
+        batches.Property(x => x.CoordinateSnapshotJson).HasColumnName("coordinate_snapshot_json").HasMaxLength(40000).HasDefaultValue("{}").IsRequired();
+        batches.Property(x => x.CoordinateSelectionStatus).HasColumnName("coordinate_selection_status").HasMaxLength(32).HasDefaultValue(CoordinateSelectionStatus.Unselected).IsRequired();
         batches.Property(x => x.WorkflowSelectionStatus).HasColumnName("workflow_selection_status").HasMaxLength(32).IsRequired();
         batches.Property(x => x.NeedsManualResolution).HasColumnName("needs_manual_resolution").IsRequired();
         batches.Property(x => x.ManualResolutionReason).HasColumnName("manual_resolution_reason").HasMaxLength(2000).IsRequired();
@@ -1095,12 +1359,14 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         batches.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
         batches.HasIndex(x => new { x.MachineRunId, x.DrawerCode }).IsUnique();
         batches.HasIndex(x => x.SelectedWorkflowVersionId);
+        batches.HasIndex(x => x.CoordinateProfileVersionId);
         batches.HasIndex(x => x.DrawerId)
             .IsUnique()
             .HasFilter($"status in ('{RuntimeLedgerStatus.Pending}', '{RuntimeLedgerStatus.Running}', '{RuntimeLedgerStatus.Paused}', '{RuntimeLedgerStatus.Faulted}')");
         batches.HasOne(x => x.MachineRun).WithMany(x => x.ChannelBatches).HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.SetNull);
         batches.HasOne(x => x.Drawer).WithMany().HasForeignKey(x => x.DrawerId).OnDelete(DeleteBehavior.Restrict);
         batches.HasOne(x => x.SelectedWorkflowVersion).WithMany().HasForeignKey(x => x.SelectedWorkflowVersionId).OnDelete(DeleteBehavior.Restrict);
+        batches.HasOne(x => x.CoordinateProfileVersion).WithMany().HasForeignKey(x => x.CoordinateProfileVersionId).OnDelete(DeleteBehavior.Restrict);
         batches.HasOne(x => x.WorkflowSelectedByUser).WithMany().HasForeignKey(x => x.WorkflowSelectedByUserId).OnDelete(DeleteBehavior.SetNull);
 
         var histories = modelBuilder.Entity<WorkflowAssignmentHistory>();

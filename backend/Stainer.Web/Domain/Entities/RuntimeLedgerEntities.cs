@@ -10,6 +10,9 @@ public sealed class ChannelBatch
     public string? ExperimentType { get; set; }
     public string? SelectedWorkflowVersionId { get; set; }
     public string WorkflowSnapshotJson { get; set; } = "{}";
+    public string? CoordinateProfileVersionId { get; set; }
+    public string CoordinateSnapshotJson { get; set; } = "{}";
+    public string CoordinateSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.CoordinateSelectionStatus.Unselected;
     public string WorkflowSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.WorkflowSelectionStatus.Unselected;
     public bool NeedsManualResolution { get; set; }
     public string ManualResolutionReason { get; set; } = string.Empty;
@@ -23,6 +26,7 @@ public sealed class ChannelBatch
     public MachineRun? MachineRun { get; set; }
     public Drawer? Drawer { get; set; }
     public WorkflowVersion? SelectedWorkflowVersion { get; set; }
+    public CoordinateProfileVersion? CoordinateProfileVersion { get; set; }
     public User? WorkflowSelectedByUser { get; set; }
     public ICollection<SlideTask> SlideTasks { get; set; } = new List<SlideTask>();
     public ICollection<WorkflowAssignmentHistory> WorkflowAssignmentHistory { get; set; } = new List<WorkflowAssignmentHistory>();
@@ -78,11 +82,14 @@ public sealed class MachineRun
     public bool StopRequested { get; set; }
     public string? FaultMessage { get; set; }
     public string? CurrentMajorStepCode { get; set; }
+    public string? CoordinateProfileVersionId { get; set; }
+    public string CoordinateSnapshotJson { get; set; } = "{}";
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? StartedAtUtc { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
 
     public User? RequestedByUser { get; set; }
+    public CoordinateProfileVersion? CoordinateProfileVersion { get; set; }
     public ICollection<ChannelBatch> ChannelBatches { get; set; } = new List<ChannelBatch>();
     public ICollection<WorkflowExecution> WorkflowExecutions { get; set; } = new List<WorkflowExecution>();
 }
@@ -278,6 +285,13 @@ public static class DabRepreparationPlanStatus
 {
     public const string AwaitingMixPosition = "AwaitingMixPosition";
     public const string Planned = "Planned";
+    public const string NeedsManualResolution = "NeedsManualResolution";
+}
+
+public static class CoordinateSelectionStatus
+{
+    public const string Unselected = "Unselected";
+    public const string Frozen = "Frozen";
     public const string NeedsManualResolution = "NeedsManualResolution";
 }
 

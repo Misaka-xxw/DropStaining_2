@@ -24,7 +24,9 @@ public sealed class EfReferenceDataRepository(StainerDbContext dbContext) : IRef
     {
         return await dbContext.CoordinateProfiles
             .Include(x => x.CoordinatePoints)
-            .Where(x => x.IsActive)
+            .Include(x => x.ActiveVersion)
+            .ThenInclude(x => x!.TargetPoints)
+            .Where(x => x.IsActive && x.ActiveVersionId != null)
             .OrderBy(x => x.Code)
             .FirstOrDefaultAsync(cancellationToken);
     }

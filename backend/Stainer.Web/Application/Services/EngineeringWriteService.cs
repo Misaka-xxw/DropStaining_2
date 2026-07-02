@@ -8,7 +8,10 @@ using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Application.Services;
 
-public sealed class EngineeringWriteService(StainerDbContext dbContext, CommandIdempotencyService idempotencyService)
+public sealed class EngineeringWriteService(
+    StainerDbContext dbContext,
+    CommandIdempotencyService idempotencyService,
+    CoordinateProfileLifecycleService coordinateProfileLifecycleService)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -17,73 +20,7 @@ public sealed class EngineeringWriteService(StainerDbContext dbContext, CommandI
         AuthenticatedUser actor,
         CancellationToken cancellationToken = default)
     {
-        return idempotencyService.RunAsync(
-            request.CommandId,
-            "engineering.coordinate.calibrate",
-            request,
-            actor,
-            async () =>
-            {
-                RequireReason(request.Reason);
-                var point = await dbContext.CoordinatePoints
-                    .Include(x => x.CoordinateProfile)
-                    .SingleOrDefaultAsync(
-                        x => x.PointCode == request.PointCode && x.CoordinateProfile!.Code == request.ProfileCode,
-                        cancellationToken);
-                if (point is null)
-                {
-                    throw new BusinessRuleException("coordinate_point_not_found", "Coordinate point was not found.", StatusCodes.Status404NotFound);
-                }
-
-                var before = new
-                {
-                    point.CalibratedXUm,
-                    point.CalibratedYUm,
-                    point.SafeZUm,
-                    point.AspirateZUm,
-                    point.DispenseZUm,
-                    point.RequiresCalibration
-                };
-
-                point.CalibratedXUm = request.CalibratedXUm;
-                point.CalibratedYUm = request.CalibratedYUm;
-                point.SafeZUm = request.SafeZUm;
-                point.AspirateZUm = request.AspirateZUm;
-                point.DispenseZUm = request.DispenseZUm;
-                point.RequiresCalibration = false;
-                point.UpdatedAtUtc = DateTimeOffset.UtcNow;
-
-                dbContext.CoordinateCalibrationHistory.Add(new CoordinateCalibrationHistory
-                {
-                    CoordinatePointId = point.Id,
-                    PreviousXUm = before.CalibratedXUm,
-                    PreviousYUm = before.CalibratedYUm,
-                    NewXUm = request.CalibratedXUm,
-                    NewYUm = request.CalibratedYUm,
-                    SafeZUm = request.SafeZUm,
-                    AspirateZUm = request.AspirateZUm,
-                    DispenseZUm = request.DispenseZUm,
-                    Reason = request.Reason.Trim(),
-                    CalibratedByUserId = actor.UserId,
-                    CreatedAtUtc = DateTimeOffset.UtcNow
-                });
-
-                AddAudit(actor, "engineering.coordinate.calibrate", "CoordinatePoint", point.Id, before, new
-                {
-                    point.CalibratedXUm,
-                    point.CalibratedYUm,
-                    point.SafeZUm,
-                    point.AspirateZUm,
-                    point.DispenseZUm,
-                    point.RequiresCalibration
-                }, request.Reason);
-
-                return new CommandExecutionResult<EngineeringWriteResponse>(
-                    new EngineeringWriteResponse(true, request.CommandId, false, point.Id, "Coordinate point calibrated."),
-                    "CoordinatePoint",
-                    point.Id);
-            },
-            cancellationToken);
+        return coordinateProfileLifecycleService.CalibratePointAsNewVersionAsync(request, actor, cancellationToken);
     }
 
     public Task<EngineeringWriteResponse> SaveLiquidClassAsync(

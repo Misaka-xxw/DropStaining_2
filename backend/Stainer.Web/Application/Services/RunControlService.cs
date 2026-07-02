@@ -14,6 +14,7 @@ public sealed class RunControlService(
     PreflightValidationService preflightValidationService,
     DeviceInitializationService deviceInitializationService,
     DeviceModeService deviceModeService,
+    CoordinateProfileLifecycleService coordinateProfileLifecycleService,
     MachineExecutorLeaseService leaseService,
     SafetyLogWriter safetyLogWriter)
 {
@@ -27,6 +28,7 @@ public sealed class RunControlService(
             actor,
             async () =>
             {
+                await coordinateProfileLifecycleService.EnsureRunCoordinateUsableAsync(runId, deviceModeService.CurrentMode, cancellationToken);
                 deviceModeService.EnsureRunStartAllowed();
                 await deviceInitializationService.EnsureReadyAsync(cancellationToken);
                 leaseService.EnsureOwner();
@@ -139,6 +141,19 @@ public sealed class RunControlService(
                 throw new BusinessRuleException("channel_workflow_required", "Each channel batch must have a selected workflow before start.", StatusCodes.Status409Conflict);
             }
 
+            if (batch.CoordinateSelectionStatus == CoordinateSelectionStatus.NeedsManualResolution)
+            {
+                throw new BusinessRuleException("channel_coordinate_needs_manual_resolution", "Channel batch needs manual coordinate resolution before it can start.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.CoordinateSelectionStatus != CoordinateSelectionStatus.Frozen
+                || string.IsNullOrWhiteSpace(batch.CoordinateProfileVersionId)
+                || string.IsNullOrWhiteSpace(batch.CoordinateSnapshotJson)
+                || batch.CoordinateSnapshotJson == "{}")
+            {
+                throw new BusinessRuleException("channel_coordinate_required", "Each channel batch must have a frozen coordinate version before start.", StatusCodes.Status409Conflict);
+            }
+
             if (batch.WorkflowLockedAtUtc is null)
             {
                 dbContext.WorkflowAssignmentHistory.Add(new WorkflowAssignmentHistory
@@ -161,5 +176,20 @@ public sealed class RunControlService(
             batch.WorkflowSelectionStatus = WorkflowSelectionStatus.Locked;
             batch.WorkflowLockedAtUtc ??= now;
         }
+
+        var coordinateVersionIds = run.ChannelBatches
+            .Select(x => x.CoordinateProfileVersionId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (coordinateVersionIds.Count != 1)
+        {
+            throw new BusinessRuleException("coordinate_version_mismatch", "All channel batches in one run must use the same frozen coordinate version.", StatusCodes.Status409Conflict);
+        }
+
+        run.CoordinateProfileVersionId ??= coordinateVersionIds[0];
+        run.CoordinateSnapshotJson = run.ChannelBatches
+            .Select(x => x.CoordinateSnapshotJson)
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && x != "{}") ?? "{}";
     }
 }

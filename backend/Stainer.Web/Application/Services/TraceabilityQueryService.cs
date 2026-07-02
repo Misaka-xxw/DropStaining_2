@@ -106,6 +106,8 @@ public sealed class TraceabilityQueryService(
             run.StartedAtUtc,
             run.CompletedAtUtc,
             run.RequestedByUser?.DisplayName ?? run.RequestedByUser?.Username,
+            run.CoordinateProfileVersionId,
+            run.CoordinateSnapshotJson,
             run.ChannelBatches
                 .OrderBy(x => x.DrawerCode)
                 .Select(ToHistoryChannelBatch)
@@ -356,6 +358,7 @@ public sealed class TraceabilityQueryService(
                     run.StartedAtUtc,
                     run.CompletedAtUtc,
                     run.RequestedByUser?.DisplayName ?? run.RequestedByUser?.Username,
+                    run.CoordinateProfileVersionId,
                     run.ChannelBatches.Count,
                     run.ChannelBatches.SelectMany(x => x.SlideTasks).Count(),
                     alarmCounts.GetValueOrDefault(run.Id),
@@ -508,6 +511,9 @@ public sealed class TraceabilityQueryService(
             version?.WorkflowDefinition?.Code,
             version?.WorkflowDefinition?.Name,
             version?.VersionLabel,
+            batch.CoordinateProfileVersionId,
+            batch.CoordinateSelectionStatus,
+            batch.CoordinateSnapshotJson,
             batch.WorkflowSelectionStatus,
             batch.CreatedAtUtc,
             batch.StartedAtUtc,

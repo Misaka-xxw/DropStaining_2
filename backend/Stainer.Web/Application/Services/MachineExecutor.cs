@@ -761,9 +761,9 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         var hasActiveDeviceProfile = await dbContext.DeviceProfiles
             .AsNoTracking()
             .AnyAsync(x => x.IsActive, cancellationToken);
-        var hasActiveCoordinateProfile = await dbContext.CoordinateProfiles
+        var hasActiveCoordinateProfile = await dbContext.CoordinateProfileVersions
             .AsNoTracking()
-            .AnyAsync(x => x.IsActive && x.Status == "Active", cancellationToken);
+            .AnyAsync(x => x.IsActive && x.Status == CoordinateProfileVersionStatus.Active, cancellationToken);
         if (hasActiveDeviceProfile && hasActiveCoordinateProfile)
         {
             return true;

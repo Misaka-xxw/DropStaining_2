@@ -84,6 +84,13 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
         {
             throw new BusinessRuleException("dab_position_occupied", "The selected DAB mix position was occupied by another command.", StatusCodes.Status409Conflict);
         }
+        catch (DbUpdateException ex) when (IsCoordinateActiveVersionConflict(ex))
+        {
+            throw new BusinessRuleException(
+                "coordinate_active_version_conflict",
+                "Another command activated a coordinate version for this profile. Refresh and retry.",
+                StatusCodes.Status409Conflict);
+        }
 
         return result.Response;
     }
@@ -134,6 +141,13 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             || message.Contains("dab_mix_positions.active_dab_batch_id", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsCoordinateActiveVersionConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains("UX_coordinate_profile_versions_profile_active", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("coordinate_profile_versions.coordinate_profile_id", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static T MarkReplay<T>(T response)
         where T : class
     {
@@ -158,6 +172,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             DatabaseBackupResponse x => x with { Replayed = true } as T ?? response,
             DatabaseRestoreResponse x => x with { Replayed = true } as T ?? response,
             EngineeringWriteResponse x => x with { Replayed = true } as T ?? response,
+            CoordinateProfileVersionMutationResponse x => x with { Replayed = true } as T ?? response,
             MachineRunResponse x => x with { Replayed = true } as T ?? response,
             RunCommandResponse x => x with { Replayed = true } as T ?? response,
             CommandResponse x => x with { Replayed = true } as T ?? response,
