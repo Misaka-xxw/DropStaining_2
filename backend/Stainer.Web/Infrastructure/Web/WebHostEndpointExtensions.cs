@@ -234,6 +234,12 @@ public static class WebHostEndpointExtensions
             }));
         app.MapGet("/api/state", async (RuntimePageBridgeService bridge, CancellationToken cancellationToken) =>
             Results.Ok(await bridge.GetStateAsync(cancellationToken)));
+        app.MapGet("/api/operator/snapshot", async (HttpContext context, UserSessionService sessionService, OperatorSnapshotQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.GetAsync(actor, cancellationToken));
+            }));
         app.MapGet("/api/current-user", async (HttpContext context, UserSessionService sessionService, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

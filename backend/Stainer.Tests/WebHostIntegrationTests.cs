@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -63,7 +64,7 @@ public sealed class WebHostIntegrationTests
         var controlConsole = await client.GetStringAsync("/control-console");
         Assert.Contains("app-shell", controlConsole);
         Assert.Contains("controlConsoleFrame", controlConsole);
-        Assert.Contains("/static/control-console/index.html?v=20260630-r14", controlConsole);
+        Assert.Contains("/static/control-console/index.html?v=20260702-r19", controlConsole);
         Assert.DoesNotContain("top-panel", controlConsole);
 
         var mockTimeline = await client.GetStringAsync("/mock-timeline");
@@ -157,6 +158,99 @@ public sealed class WebHostIntegrationTests
         Assert.DoesNotContain("/api/reagents/scan'", hostScript);
         Assert.DoesNotContain("/api/reagents/scan\"", hostScript);
         Assert.DoesNotContain("CreateReagent(", hostScript);
+    }
+
+    [Fact]
+    public async Task Operator_pages_use_formal_snapshot_dab_and_run_contracts()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var dashboard = await client.GetStringAsync("/dashboard");
+        var samples = await client.GetStringAsync("/samples");
+        var reagents = await client.GetStringAsync("/reagents");
+        var run = await client.GetStringAsync("/run");
+        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
+        var runScript = await client.GetStringAsync("/static/js/run.js");
+
+        Assert.Contains("dashboardEvents", dashboard);
+        Assert.Contains("dashboardEventModal", dashboard);
+        Assert.DoesNotContain("DAB 临时配液区", dashboard);
+        Assert.Contains("channelScriptModal", samples);
+        Assert.DoesNotContain("单玻片流程", samples);
+        Assert.Contains("dabPositionGrid", reagents);
+        Assert.Contains("dabCleaningConfirmButton", reagents);
+        Assert.Contains("runResourceGrid", run);
+        Assert.Contains("runNeedles", run);
+        Assert.Contains("runCommandStages", run);
+
+        Assert.Contains("/api/operator/snapshot", hostScript);
+        Assert.Contains("/api/dab/batches/", hostScript);
+        Assert.DoesNotContain("/api/state", hostScript);
+        Assert.Contains("/api/operator/snapshot", runScript);
+        Assert.Contains("/api/runs/", runScript);
+        Assert.DoesNotContain("/api/state", runScript);
+        Assert.DoesNotContain("/api/run/start", runScript);
+    }
+
+    [Fact]
+    public async Task Operator_snapshot_projects_sqlite_needles_dab_and_audit_data()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+
+        var login = await client.PostAsJsonAsync("/api/login", new
+        {
+            username = "operator",
+            password = "123456",
+            role = "operator"
+        });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var needle = await dbContext.NeedleStates.SingleOrDefaultAsync(x => x.NeedleCode == NeedleCodes.Needle1)
+                ?? new NeedleState
+                {
+                    NeedleCode = NeedleCodes.Needle1,
+                    NeedleNo = 1,
+                    Status = MotionStatuses.Idle
+                };
+            if (dbContext.Entry(needle).State == EntityState.Detached)
+            {
+                dbContext.NeedleStates.Add(needle);
+            }
+            needle.LoadedSourceType = NeedleLoadSourceTypes.ReagentBottle;
+            needle.LoadedReagentCode = "UI-FORMAL-REAGENT";
+            needle.VolumeUl = 135;
+            needle.NeedsWash = true;
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                Action = "operator.ui.formal-snapshot",
+                EntityType = "OperatorUi",
+                Message = "Formal operator snapshot integration test"
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var response = await client.GetAsync("/api/operator/snapshot");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+
+        Assert.Equal(4, root.GetProperty("channels").GetArrayLength());
+        Assert.Equal(8, root.GetProperty("dabPositions").GetArrayLength());
+        Assert.Equal(2, root.GetProperty("needles").GetArrayLength());
+        Assert.Equal("operator", root.GetProperty("activeUser").GetProperty("role").GetString());
+        var projectedNeedle = root.GetProperty("needles")
+            .EnumerateArray()
+            .Single(x => x.GetProperty("needleCode").GetString() == NeedleCodes.Needle1);
+        Assert.Equal("UI-FORMAL-REAGENT", projectedNeedle.GetProperty("loadedReagentCode").GetString());
+        Assert.Equal(135, projectedNeedle.GetProperty("volumeUl").GetInt32());
+        Assert.True(projectedNeedle.GetProperty("needsWash").GetBoolean());
+        Assert.Contains(root.GetProperty("recentEvents").EnumerateArray(),
+            x => x.GetProperty("title").GetString() == "operator.ui.formal-snapshot");
     }
 
     [Fact]

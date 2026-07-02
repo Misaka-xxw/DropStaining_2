@@ -62,6 +62,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<PreflightValidationService>();
         services.AddScoped<MachineRunService>();
         services.AddScoped<MachineRunQueryService>();
+        services.AddScoped<OperatorSnapshotQueryService>();
         services.AddScoped<TraceabilityQueryService>();
         services.AddScoped<DeviceModeService>();
         services.AddScoped<DeviceControlService>();

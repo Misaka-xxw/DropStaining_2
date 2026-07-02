@@ -23,7 +23,7 @@ let pendingLisRawCode = null;
 
 async function loadHostState(){
   try{
-    const state = await api('/api/state');
+    const state = await api('/api/operator/snapshot');
     window.machineStateSnapshot = state;
     renderShellState(state);
     renderDashboard(state);
@@ -72,19 +72,32 @@ function renderShellState(state){
 
 function renderDashboard(state){
   if(!document.getElementById('drawerBoard')) return;
-  const count = slideCount(state);
-  setText('kpiInit', state.initialized ? '已通过' : '待初始化');
-  setText('kpiReagents', (state.reagents || []).length ? '已扫码' : '待扫码');
-  setText('kpiRunId', state.runId ? state.runId.slice(-6) : '--');
-  setText('kpiRunIdFull', state.runId || '尚未开始实验');
-  document.getElementById('stepInit')?.classList.toggle('done', !!state.initialized);
-  document.getElementById('stepSamples')?.classList.toggle('done', count > 0);
-  document.getElementById('stepReagents')?.classList.toggle('done', (state.reagents || []).length > 0);
-  document.getElementById('stepRun')?.classList.toggle('active', state.status === 'running');
-
   renderDrawerBoard('drawerBoard', state.channels || []);
   renderSystemChecks(state.system || {});
-  renderTimeline('dashboardLogs', state.logs || [], 10);
+  renderDashboardEvents(state.recentEvents || []);
+  setText('dashboardRunSummary', state.runId
+    ? `${state.runCode || state.runId} · ${state.currentMajorStepCode || statusText(state.status)}`
+    : '当前没有正式运行');
+}
+
+function renderDashboardEvents(events){
+  const root = document.getElementById('dashboardEvents');
+  if(!root) return;
+  root.innerHTML = (events || []).slice(0, 8).map(event => `<button type="button" class="operator-event-row" onclick="openDashboardEvent('${escapeHtml(event.id)}')"><span>${escapeHtml(formatDateTime(event.occurredAtUtc))}</span><b>${escapeHtml(event.title)}</b><em>${escapeHtml(event.status || event.type)}</em></button>`).join('')
+    || '<div class="empty-state"><b>暂无正式事件</b><span>初始化、命令和运行事件会显示在这里。</span></div>';
+}
+
+function openDashboardEvent(eventId){
+  const event = (window.machineStateSnapshot?.recentEvents || []).find(x => x.id === eventId);
+  if(!event) return;
+  setText('dashboardEventTitle', event.title || '事件详情');
+  const body = document.getElementById('dashboardEventBody');
+  if(body){
+    body.innerHTML = `<div><span>时间</span><b>${escapeHtml(formatDateTime(event.occurredAtUtc))}</b></div><div><span>类型</span><b>${escapeHtml(event.type || '--')}</b></div><div><span>状态</span><b>${escapeHtml(event.status || '--')}</b></div><div><span>详情</span><b>${escapeHtml(event.detail || '--')}</b></div>`;
+  }
+  const link = document.getElementById('dashboardEventLink');
+  if(link) link.onclick = () => { location.href = event.href || '/history'; };
+  document.getElementById('dashboardEventModal')?.classList.remove('hidden');
 }
 
 function renderDrawerBoard(id, channels){
@@ -125,7 +138,7 @@ function renderSystemChecks(system){
 
 async function renderReagents(){
   if(!document.getElementById('reagentDeck')) return;
-  await Promise.all([refreshReagentRack(), refreshReagentScanSession()]);
+  await Promise.all([refreshReagentRack(), refreshReagentScanSession(), refreshDabPositions()]);
 }
 
 async function refreshReagentRack(){
@@ -336,6 +349,85 @@ async function renderConfigure(){
   }
 }
 
+async function refreshDabPositions(){
+  const root = document.getElementById('dabPositionGrid');
+  if(!root) return;
+  try{
+    const snapshot = window.machineStateSnapshot || await api('/api/operator/snapshot');
+    window.dabPositionSnapshot = snapshot.dabPositions || [];
+    renderDabPositions(window.dabPositionSnapshot);
+  }catch(e){
+    root.innerHTML = `<div class="empty-state"><b>DAB 状态读取失败</b><span>${escapeHtml(e.message || '请检查正式只读接口')}</span></div>`;
+  }
+}
+
+function renderDabPositions(positions){
+  const root = document.getElementById('dabPositionGrid');
+  if(!root) return;
+  const byCode = new Map((positions || []).map(x => [String(x.code || '').toUpperCase(), x]));
+  root.innerHTML = Array.from({length:8}, (_, index) => {
+    const code = `M${index + 1}`;
+    const position = byCode.get(code);
+    const batchState = position?.batchStatus || position?.status || 'Available';
+    const expiry = position?.expiresAtUtc ? formatDateTime(position.expiresAtUtc) : '--';
+    const volume = position?.remainingVolumeUl == null ? '--' : formatVolume(position.remainingVolumeUl);
+    return `<button type="button" class="dab-position status-${escapeHtml(String(batchState).toLowerCase())}" onclick="showDabPosition('${code}')"><b>${code}</b><span>${escapeHtml(batchState)}</span><small>${escapeHtml(volume)} · ${escapeHtml(expiry)}</small></button>`;
+  }).join('');
+}
+
+function showDabPosition(code){
+  const position = (window.dabPositionSnapshot || []).find(x => String(x.code).toUpperCase() === String(code).toUpperCase());
+  if(!position){
+    toast(`${code} 暂无正式位置记录`, true);
+    return;
+  }
+  const body = document.getElementById('dabDetailBody');
+  if(body){
+    const rows = [
+      ['位置', position.code],
+      ['位置状态', position.status],
+      ['批次状态', position.batchStatus || '--'],
+      ['批次编号', position.activeDabBatchId || '--'],
+      ['DAB A 来源', position.dabASource || '--'],
+      ['DAB B 来源', position.dabBSource || '--'],
+      ['玻片数', position.slideCount ?? '--'],
+      ['剩余量', position.remainingVolumeUl == null ? '--' : formatVolume(position.remainingVolumeUl)],
+      ['配制时间', formatDateTime(position.preparedAtUtc)],
+      ['到期时间', formatDateTime(position.expiresAtUtc)],
+      ['清洗状态', position.cleaningStatus || '--']
+    ];
+    body.innerHTML = rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('');
+  }
+  const role = String(window.machineStateSnapshot?.activeUser?.role || '').toLowerCase();
+  const canManage = ['engineer','admin'].includes(role);
+  const hasBatch = !!position.activeDabBatchId;
+  const start = document.getElementById('dabCleaningStartButton');
+  const confirmButton = document.getElementById('dabCleaningConfirmButton');
+  if(start){
+    start.onclick = () => runDabCleaning(position.activeDabBatchId, 'start');
+    setButtonDisabledReason(start, !canManage || !hasBatch, !canManage ? '仅工程师或管理员可启动清洗' : '该位置没有活动 DAB 批次');
+  }
+  if(confirmButton){
+    confirmButton.onclick = () => runDabCleaning(position.activeDabBatchId, 'confirm');
+    const ready = position.cleaningStatus === 'Required' || position.batchStatus === 'AwaitingCleaning';
+    setButtonDisabledReason(confirmButton, !canManage || !hasBatch || !ready, !canManage ? '仅工程师或管理员可确认清洗' : !hasBatch ? '该位置没有活动 DAB 批次' : '当前批次无需清洗确认');
+  }
+  document.getElementById('dabDetailModal')?.classList.remove('hidden');
+}
+
+async function runDabCleaning(batchId, action){
+  if(!batchId) return;
+  const label = action === 'start' ? '启动清洗' : '确认清洗完成';
+  if(!confirm(`${label}？该操作将写入正式 DAB 批次和审计。`)) return;
+  await api(`/api/dab/batches/${encodeURIComponent(batchId)}/cleaning/${action}`, {
+    method:'POST',
+    body:JSON.stringify({commandId:commandId(`dab-cleaning-${action}`)})
+  });
+  document.getElementById('dabDetailModal')?.classList.add('hidden');
+  await loadHostState();
+  toast(`${label}已记录`);
+}
+
 function workflowStatusText(status){
   return ({Draft:'草稿', Published:'已发布', Retired:'已停用'}[status] || status || '--');
 }
@@ -438,6 +530,7 @@ function findSlideById(state, slideTaskId){
 function applyMachineEvent(event){
   const state = window.machineStateSnapshot;
   if(!state || !event) return;
+  scheduleFormalSnapshotRefresh();
   const payload = event.payload || {};
   appendMachineLog(state, event);
   if(typeof window.invalidatePreflightView === 'function'
@@ -516,6 +609,16 @@ let machineSocket = null;
 let machineReconnectTimer = null;
 let machineReconnectDelayMs = 1000;
 let machineEverConnected = false;
+let formalSnapshotTimer = null;
+
+function scheduleFormalSnapshotRefresh(){
+  if(formalSnapshotTimer) clearTimeout(formalSnapshotTimer);
+  formalSnapshotTimer = setTimeout(async () => {
+    formalSnapshotTimer = null;
+    await loadHostState();
+    if(typeof window.refreshRunView === 'function') await window.refreshRunView();
+  }, 180);
+}
 
 function machineHubUrl(){
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -532,7 +635,10 @@ function connectMachineHub(){
       const wasReconnect = machineEverConnected;
       machineEverConnected = true;
       machineReconnectDelayMs = 1000;
-      if(wasReconnect) await loadHostState();
+      if(wasReconnect){
+        await loadHostState();
+        if(typeof window.refreshRunView === 'function') await window.refreshRunView();
+      }
     };
     machineSocket.onmessage = event => {
       String(event.data || '').split('\x1e').filter(Boolean).forEach(frame => {
@@ -619,12 +725,13 @@ function showReagentDetail(pos){
     openReagentScanModal(pos, false);
     return;
   }
+  window.reagentDetailPosition = pos;
   const body = document.getElementById('reagentDetailBody');
   if(!body) return;
   const position = rackPositionByCode(pos);
   const bottle = position?.bottle;
   const state = scanStateOf(position);
-  body.innerHTML = `<div><span>位置</span><b>${escapeHtml(pos)}</b></div><div><span>SCAN_STATE</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || '--')}</small></div><div><span>完整条码</span><b>${escapeHtml(bottle?.fullBarcode || position?.rawBarcode || '--')}</b><small>${escapeHtml(bottle?.barcodeSummary || position?.barcodeSummary || '--')}</small></div><div><span>试剂名称</span><b>${escapeHtml(bottle?.name || scanStateTitle(state))}</b></div><div><span>试剂代码</span><b>${escapeHtml(bottle?.reagentCode || position?.parsedReagentCode || '--')}</b></div><div><span>剩余量</span><b>${escapeHtml(bottle ? formatVolume(bottle.remainingVolumeUl) : '--')}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle?.lotNo, bottle?.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle?.expirationDate))}</b></div><div><span>最后扫码时间</span><b>${escapeHtml(formatDateTime(position?.lastScannedAtUtc || bottle?.lastScannedAtUtc))}</b></div><div><span>扫码会话</span><b>${escapeHtml(position?.lastScanSessionCode || '--')}</b><small>${escapeHtml(position?.lastScanSessionStatus || '--')}</small></div>`;
+  body.innerHTML = `<div><span>位置</span><b>${escapeHtml(pos)}</b></div><div><span>状态</span><b>${escapeHtml(bottle?.status || scanStateLabel(state))}</b></div><div><span>错误</span><b>${escapeHtml(state === 'INVALID' ? position?.validationMessage || '扫码校验失败' : '--')}</b></div><div><span>完整条码</span><b>${escapeHtml(bottle?.fullBarcode || position?.rawBarcode || '--')}</b><small>${escapeHtml(bottle?.barcodeSummary || position?.barcodeSummary || '--')}</small></div><div><span>试剂名称</span><b>${escapeHtml(bottle?.name || scanStateTitle(state))}</b></div><div><span>试剂代码</span><b>${escapeHtml(bottle?.reagentCode || position?.parsedReagentCode || '--')}</b></div><div><span>剩余量</span><b>${escapeHtml(bottle ? formatVolume(bottle.remainingVolumeUl) : '--')}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle?.lotNo, bottle?.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle?.expirationDate))}</b></div><div><span>最后扫码时间</span><b>${escapeHtml(formatDateTime(position?.lastScannedAtUtc || bottle?.lastScannedAtUtc))}</b></div><div><span>扫码会话</span><b>${escapeHtml(position?.lastScanSessionCode || '--')}</b><small>${escapeHtml(position?.lastScanSessionStatus || '--')}</small></div>`;
   document.getElementById('reagentDetail')?.classList.remove('hidden');
 }
 
@@ -1045,11 +1152,11 @@ function updateConfirmModalFromSlot(){
   if(rawCodeLabel) rawCodeLabel.classList.toggle('hidden', path === 'he');
   if(primaryLabel) primaryLabel.classList.toggle('hidden', pendingPrimaryAntibodyCandidates.length === 0);
   if(rawCode && path === 'he') rawCode.value = '';
-  setText('confirmChannelScript', workflow.selected
-    ? `实验类型：${channel.experimentType}；系统绑定流程：${workflow.label} / ${workflow.version}`
-    : '实验类型：未选择。请先在通道卡片中选择 HE 或 IHC。');
   const expected = path === 'he' ? 'HE' : 'IHC';
   const valid = workflow.selected && !channel?.workflowLocked && channel?.experimentType === expected;
+  setText('confirmChannelScript', workflow.selected
+    ? `通道继承：${channel.experimentType} · ${workflow.label} / ${workflow.version}；当前识别路径要求 ${expected}，${valid ? '流程兼容' : '流程不兼容'}。`
+    : '实验类型：未选择。请先在通道卡片中选择 HE 或 IHC。');
   if(button) button.disabled = !valid;
   showSampleTaskError(valid ? '' : `该 Slot 所在通道需要先选择 ${expected} 实验类型，且启动后不能追加样本。`);
 }
@@ -1838,6 +1945,9 @@ function showSampleDetail(letter, slot){
       ['实验类型', channel.experimentType || slide.experimentType || '--'],
       ['继承通道脚本', inherited],
       ['一抗代码', slide.confirmedPrimaryAntibodyCode || slide.primaryAntibodyCode || '--'],
+      ['识别路径', slide.inputMode || '--'],
+      ['兼容性', slide.compatibilityValidationStatus || '--'],
+      ['兼容性说明', slide.compatibilityValidationMessage || '--'],
       ['当前步骤', slide.currentStep || '--'],
       ['任务编号', slide.id || '--']
     ];
@@ -1869,12 +1979,14 @@ function renderReagentRackFromDatabase(rack){
       const bottle = position?.bottle;
       const scanState = scanStateOf(position);
       const code = bottle?.reagentCode || position?.reagentCode || position?.parsedReagentCode || '';
-      const title = scanState === 'VALID' ? ['VALID', code].filter(Boolean).join(' ') : reagentShortStateLabel(scanState);
+      const title = scanState === 'VALID' ? (bottle?.name || code || '有效试剂') : reagentShortStateLabel(scanState);
       const subtitle = scanState === 'VALID'
-        ? [bottle?.lotNo, bottle?.barcodeSummary || position?.barcodeSummary].filter(Boolean).join(' / ')
+        ? [bottle?.fullBarcode || position?.rawBarcode, bottle?.lotNo, formatDate(bottle?.expirationDate)].filter(Boolean).join(' / ')
         : (scanState === 'INVALID' ? (invalidOrScanMessage(position) || '点击查看原因') : '');
       const end = scanState === 'VALID' && bottle ? formatVolume(bottle.remainingVolumeUl) : '';
-      return `<button type="button" class="vial ${bottle ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(bottle?.reagentType || '')}" onclick="showReagentDetail('${pos}')" title="${escapeHtml(pos + ' ' + title + ' ' + invalidOrScanMessage(position))}"><b>${pos}</b><div class="vial-main"><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle)}</small></div><em>${escapeHtml(end)}</em></button>`;
+      const stateText = bottle?.status || reagentShortStateLabel(scanState);
+      const errorText = scanState === 'INVALID' ? invalidOrScanMessage(position) : '';
+      return `<button type="button" class="vial ${bottle ? 'filled' : 'empty'} scan-${scanState.toLowerCase()} ${escapeHtml(bottle?.reagentType || '')}" onclick="showReagentDetail('${pos}')" title="${escapeHtml([pos, title, subtitle, stateText, errorText].filter(Boolean).join(' · '))}"><b>${pos}</b><div class="vial-main"><span>${escapeHtml(title)}</span><small>${escapeHtml(subtitle || errorText)}</small></div><em>${escapeHtml(end)}<small>${escapeHtml(stateText)}</small></em></button>`;
     }).join('');
     return `<div class="reagent-rack"><header><b>ch${col}</b><span>R${(col-1)*8+1}-R${col*8}</span></header>${rows}</div>`;
   }).join('');

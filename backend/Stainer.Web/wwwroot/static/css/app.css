@@ -433,4 +433,34 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 .experiment-type-options b{font-size:28px;color:#0c63bd}
 .experiment-type-options span{font-size:14px;color:#64748b;font-weight:800}
 @media(max-width:620px){.experiment-type-options{grid-template-columns:1fr}}
+
+.dashboard-ops-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:12px}
+.dashboard-checks .check-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+.operator-event-list{display:grid;gap:8px;min-height:0;overflow:auto}
+.operator-event-row{width:100%;min-height:42px;border:1px solid #dbe7f5;border-radius:8px;background:#f8fbff;display:grid;grid-template-columns:150px minmax(0,1fr) 120px;gap:10px;align-items:center;padding:8px 10px;text-align:left;color:#0d1726;cursor:pointer}
+.operator-event-row span,.operator-event-row em{font-size:12px;color:#64748b;font-style:normal}.operator-event-row em{text-align:right}.operator-event-row:hover{border-color:#60a5fa;background:#eef6ff}
+.dab-position-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.dab-position{min-height:62px;border:1px solid #dbe7f5;border-radius:8px;background:#f8fbff;display:grid;gap:2px;padding:8px;text-align:left;color:#0d1726;cursor:pointer}.dab-position b{color:#0c63bd}.dab-position span{font-size:12px;font-weight:900}.dab-position small{font-size:10px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dab-position.status-available{border-color:#bbf7d0;background:#f0fdf4}.dab-position.status-expired,.dab-position.status-failed,.dab-position.status-unknown,.dab-position.status-awaitingcleaning{border-color:#fecaca;background:#fff1f2}
+.v18-reagent-deck .vial em{display:grid;gap:2px}.v18-reagent-deck .vial em small{font-size:9px;text-align:right;color:#64748b}
+.operator-run-resources{grid-template-columns:repeat(3,minmax(0,1fr))}.operator-run-resources div{border-radius:8px!important}
+.run-device-columns{display:grid;grid-template-columns:1fr 1.35fr;gap:12px;height:100%;min-height:0}.run-device-columns>div{min-width:0;min-height:0}.operator-device-list{display:grid;gap:6px;max-height:110px;overflow:auto}.operator-device-list>div{border:1px solid #dbe7f5;border-radius:8px;background:#f8fbff;padding:7px;display:grid;grid-template-columns:.8fr 1.2fr;gap:4px}.operator-device-list b{font-size:12px}.operator-device-list span,.operator-device-list em{font-size:10px;color:#64748b;font-style:normal}.operator-device-list em{grid-column:1/-1}.command-stage-list>div{grid-template-columns:1fr .8fr}.command-stage-list>div>em{grid-column:1/-1}
+
+@media(min-width:1001px){
+  body:has(#drawerBoard) .dashboard-channel-panel{flex:1 1 auto;min-height:0;overflow:hidden;padding:18px}
+  body:has(#drawerBoard) .dashboard-ops-grid{flex:0 0 238px;min-height:0;overflow:hidden}
+  body:has(#drawerBoard) .dashboard-ops-grid>.modern-card{height:100%;min-height:0;overflow:hidden;padding:14px}
+  body:has(#drawerBoard) .dashboard-events-card .operator-event-list{height:calc(100% - 48px)}
+  body:has(#drawerBoard) .dashboard-checks .check-list{height:calc(100% - 48px);overflow:auto;gap:6px}
+  body:has(.v18-runbar) .run-side-stack{grid-template-rows:250px 250px 160px minmax(120px,1fr)}
+  body:has(.v18-runbar) .run-resource-card{padding:14px}
+  body:has(.v18-runbar) .operator-run-resources{height:calc(100% - 36px);gap:7px}
+  body:has(.v18-runbar) .operator-run-resources div{padding:8px}
+  body:has(.v18-runbar) .operator-run-resources b{font-size:12px}
+  body:has(.v18-runbar) .operator-run-resources span{font-size:11px}
+  body:has(.v18-runbar) .operator-run-resources em{font-size:11px}
+  body:has(.v18-runbar) .run-device-card{padding:12px}
+  body:has(.v18-runbar) .run-device-card h3{font-size:16px;margin-bottom:6px}
+}
+
+@media(max-width:1000px){.dashboard-ops-grid,.run-device-columns{grid-template-columns:1fr}.operator-event-row{grid-template-columns:1fr}.operator-event-row em{text-align:left}.operator-run-resources{grid-template-columns:1fr}.dab-position-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @keyframes pulse{50%{opacity:.72;box-shadow:0 0 0 14px rgba(245,158,11,.06)}}

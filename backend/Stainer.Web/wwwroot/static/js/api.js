@@ -1,18 +1,40 @@
 async function api(url, options={}){
-  options.headers = Object.assign({'Content-Type':'application/json'}, options.headers || {});
-  const res = await fetch(url, options);
-  let data = null;
-  const text = await res.text();
-  try { data = text ? JSON.parse(text) : {}; } catch(e) { data = {raw:text}; }
-  if(!res.ok){
-    const msg = data.detail || data.message || ('请求失败：' + res.status);
-    toast(msg, true);
-    const error = new Error(msg);
-    error.status = res.status;
-    error.data = data;
-    throw error;
+  const request = Object.assign({}, options);
+  request.headers = Object.assign({'Content-Type':'application/json'}, options.headers || {});
+  const method = String(request.method || 'GET').toUpperCase();
+  const active = options.busyElement || (method !== 'GET' && document.activeElement instanceof HTMLButtonElement ? document.activeElement : null);
+  delete request.busyElement;
+  const priorDisabled = active?.disabled;
+  if(active){
+    active.disabled = true;
+    active.setAttribute('aria-busy', 'true');
   }
-  return data;
+  try{
+    const res = await fetch(url, request);
+    let data = null;
+    const text = await res.text();
+    try { data = text ? JSON.parse(text) : {}; } catch(e) { data = {raw:text}; }
+    if(!res.ok){
+      const msg = data.detail || data.message || ('请求失败：' + res.status);
+      toast(msg, true);
+      const error = new Error(msg);
+      error.status = res.status;
+      error.data = data;
+      throw error;
+    }
+    return data;
+  }finally{
+    if(active){
+      active.disabled = !!priorDisabled;
+      active.removeAttribute('aria-busy');
+    }
+  }
+}
+function setButtonDisabledReason(button, disabled, reason=''){
+  if(!button) return;
+  button.disabled = !!disabled;
+  button.title = disabled ? reason : '';
+  button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
 }
 function toast(message, danger=false){
   const el = document.getElementById('toast');
@@ -61,7 +83,7 @@ function initializeUserMenu(){
   });
 }
 function statusText(s){
-  const map = {idle:'空闲',initialized:'已初始化',ready:'就绪',running:'运行中',paused:'暂停',stopped:'已停止/待处理',completed:'完成',error:'故障',empty:'可上样',loaded:'待确认',configured:'待启动',waiting:'等待/待卸载',dispensing:'加液',incubating:'孵育',washing:'通道清洗',mixing:'通道混匀'};
+  const map = {idle:'空闲',initialized:'已初始化',ready:'就绪',running:'运行中',paused:'暂停',stopped:'已停止/待处理',completed:'完成',error:'故障',unknown:'Unknown / 待人工处理',empty:'可上样',loaded:'待确认',configured:'待启动',waiting:'等待/待卸载',dispensing:'加液',incubating:'孵育',washing:'通道清洗',mixing:'通道混匀'};
   return map[s] || s;
 }
 

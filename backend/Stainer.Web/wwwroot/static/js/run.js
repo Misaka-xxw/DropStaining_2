@@ -1,111 +1,8 @@
-let startAfterValidation = false;
-async function runAction(action){
-  if(action === 'start'){
-    await openValidationModal(true);
-    return;
-  }
-  await api(`/api/run/${action}`, {method:'POST'});
-  const label = {pause:'暂停', resume:'恢复', stop:'普通整机停止'}[action] || action;
-  toast('命令已下发：' + label);
-  await refreshRun();
-}
-async function confirmStop(){
-  if(confirm('普通整机停止将在当前原子动作完成后停止后续调度，并将未完成任务标记为“已停止/待处理”。确认执行？')){
-    await runAction('stop');
-  }
-}
-async function openValidationModal(autoStart=false){
-  const state = await api('/api/state');
-  const issues = [];
-  if(!state.initialized) issues.push(['关键设备','初始化未完成','先执行初始化/预检']);
-  const slideCount = state.channels.reduce((n,ch)=>n + ch.slides.length, 0);
-  if(slideCount === 0) issues.push(['样本任务','未创建已确认任务','返回样本确认页面']);
-  if(state.reagents.length === 0) issues.push(['试剂校验','未扫描试剂架','返回试剂扫描页面']);
-  if(state.system.waste_tank_full) issues.push(['废液','废液桶已满','清理废液并重试']);
-  if(state.system.toxic_tank_full) issues.push(['排毒','排毒桶已满','清理排毒桶并重试']);
-  const needed = ['BLOCK','SECONDARY','DAB-A','DAB-B','WATER','HEMATOXYLIN','WASH'];
-  const available = new Set(state.reagents.filter(r=>r.available).map(r=>r.code));
-  needed.forEach(code=>{ if(state.reagents.length && !available.has(code)) issues.push(['所需试剂', code + ' 缺失/未知', '补齐目录或重新扫码']); });
-  const body = document.getElementById('validationBody');
-  const btn = document.getElementById('validationStartBtn');
-  if(body){
-    if(issues.length){
-      body.innerHTML = issues.map(x=>`<div class="validation-issue"><b>${x[0]}</b><span>${x[1]}</span><em>${x[2]}</em></div>`).join('') + '<div class="notice-box danger-note">校验失败：不允许管理员或操作员覆盖；请返回处理后再启动。</div>';
-      btn.disabled = true;
-      btn.textContent = '校验失败，禁止启动';
-    }else{
-      body.innerHTML = '<div class="validation-ok"><b>全部校验通过</b><span>样本、初始化、试剂与关键设备状态满足启动条件。</span></div>';
-      btn.disabled = false;
-      btn.textContent = '启动整机运行';
-    }
-  }
-  validationModal.classList.remove('hidden');
-  startAfterValidation = autoStart;
-}
-async function forceStartAfterValidation(){
-  validationModal.classList.add('hidden');
-  await api('/api/run/start', {method:'POST'});
-  toast('启动命令已下发');
-  await refreshRun();
-}
-function majorStepFor(slide){
-  const step = slide.current_step || '';
-  if(step.includes('DAB')) return 'DAB';
-  if(step.includes('二抗')) return '二抗';
-  if(step.includes('一抗')) return '一抗';
-  if(step.includes('苏木素')) return '苏木素与终洗';
-  if(step.includes('阻断')) return '前处理';
-  return slide.protocol_code === 'HE' ? '苏木素与终洗' : '待调度';
-}
-function reagentSourceFor(slide){
-  const step = majorStepFor(slide);
-  const map = {
-    '前处理':'阻断剂 / 清洗液',
-    '一抗':'一抗 ' + (slide.antibody_code || '待确认'),
-    '二抗':'二抗 / HRP',
-    'DAB':'DAB A/B / 水',
-    '苏木素与终洗':'苏木素 / 清洗液'
-  };
-  return map[step] || '无';
-}
-function etaFor(slide){
-  const progress = Number(slide.progress || 0);
-  if(progress >= 100) return '已完成';
-  if(slide.status === 'error') return '待处理';
-  return Math.max(8, Math.round((100 - progress) * 0.9)) + ' 分钟';
-}
-function renderChannels(channels){
-  const root = document.getElementById('runChannels');
-  if(!root) return;
-  root.innerHTML = channels.map((ch, idx) => {
-    const letter = ['A','B','C','D'][idx] || ch.id;
-    return `<div class="runtime-channel ${ch.status}">
-      <div class="runtime-head"><b>${letter} 通道</b><span>${statusText(ch.status)}</span></div>
-      <div class="progress-track"><span style="width:${ch.progress}%"></span></div>
-      <p><b>${ch.progress}%</b> · ${ch.current_step || '空闲'}</p>
-      <div class="runtime-slides">
-        ${[1,2,3,4].map(slot => {
-          const s = ch.slides.find(x=>x.slot===slot);
-          return `<div class="runtime-slide ${s?'loaded':'empty'}"><b>${letter}-${String(slot).padStart(2,'0')}</b><small>${s?s.barcode:'空位'}</small><em>${s?majorStepFor(s):'EMPTY'}</em><small>${s?s.current_step:''}</small><small>${s?'来源：' + reagentSourceFor(s):''}</small><small>${s?'预计剩余：' + etaFor(s):''}</small></div>`;
-        }).join('')}
-      </div>
-    </div>`;
-  }).join('');
-}
-async function refreshRun(){
-  const state = await api('/api/state');
-  const status = document.getElementById('runStatus');
-  if(status){ status.className = 'status-chip status-' + state.status; status.innerHTML = '<i></i><b data-status-label>'+statusText(state.status)+'</b>'; }
-  renderChannels(state.channels);
-  const logRoot = document.getElementById('logList');
-  if(logRoot){ logRoot.innerHTML = state.logs.slice(0,30).map(x=>`<div>${x}</div>`).join('') || '<div>暂无日志</div>'; }
-}
-document.addEventListener('DOMContentLoaded',()=>{ refreshRun(); window.refreshRunView = refreshRun; });
-
 let latestPreflightReport = null;
 let currentRunSnapshot = null;
 let currentUserSnapshot = null;
 let systemInfoSnapshot = null;
+let operatorRunSnapshot = null;
 
 async function fetchJsonOrNull(url){
   const res = await fetch(url, {headers:{'Content-Type':'application/json'}});
@@ -125,13 +22,14 @@ async function fetchJsonOrNull(url){
 }
 
 async function loadRunContext(){
-  const [run, user, systemInfo] = await Promise.all([
+  const [run, operatorSnapshot, systemInfo] = await Promise.all([
     fetchJsonOrNull('/api/runs/current'),
-    fetchJsonOrNull('/api/current-user'),
+    fetchJsonOrNull('/api/operator/snapshot'),
     fetchJsonOrNull('/api/system/info')
   ]);
   currentRunSnapshot = run;
-  currentUserSnapshot = user?.user || user;
+  operatorRunSnapshot = operatorSnapshot;
+  currentUserSnapshot = operatorSnapshot?.activeUser || null;
   systemInfoSnapshot = systemInfo || {deviceMode:'Mock', deviceStateSource:'MockDeviceState'};
   return run;
 }
@@ -281,8 +179,8 @@ async function ensureRunCreated(){
   let run = await loadRunContext();
   if(run && !['Completed','Stopped','completed','stopped'].includes(run.status)) return run;
 
-  const state = await api('/api/state');
-  const taskIds = (state.channels || [])
+  const snapshot = operatorRunSnapshot || await api('/api/operator/snapshot');
+  const taskIds = (snapshot.channels || [])
     .flatMap(channel => channel.slides || [])
     .map(slide => slide.stainingTaskId)
     .filter(Boolean);
@@ -396,11 +294,53 @@ async function refreshRun(){
   setText('runIdSmall', run ? `${run.runCode || run.id} · ${systemInfoSnapshot?.deviceMode || 'Mock'} · ${majorStepForRun(run)}` : '未生成批号 · Mock');
   renderChannels(run?.channelBatches || []);
   renderRunCommandVisibility(run);
+  renderRunResources(operatorRunSnapshot, run);
   const logRoot = document.getElementById('logList');
   if(logRoot){
-    const alarms = (run?.alarms || []).map(x => `[${x.severity}] ${x.code}: ${x.message}`);
-    const steps = (run?.workflowExecutions || []).flatMap(x => x.steps || []).slice(0, 20).map(x => `${x.status} · ${x.majorStepCode} · ${x.stepName}`);
-    logRoot.innerHTML = alarms.concat(steps).slice(0, 30).map(x => `<div>${escapeHtml(x)}</div>`).join('') || '<div>暂无正式运行事件</div>';
+    const alarms = (operatorRunSnapshot?.alarmDetails || run?.alarms || []).map(x => `[${x.severity}] ${x.code}: ${x.message}`);
+    const events = (operatorRunSnapshot?.recentEvents || []).map(x => `${formatDateTime(x.occurredAtUtc)} · ${x.title} · ${x.detail}`);
+    logRoot.innerHTML = alarms.concat(events).slice(0, 30).map(x => `<div>${escapeHtml(x)}</div>`).join('') || '<div>暂无正式运行事件</div>';
+  }
+}
+
+function renderRunResources(snapshot, run){
+  if(!snapshot) return;
+  const executions = run?.workflowExecutions || [];
+  const activeStep = executions.flatMap(x => x.steps || []).find(x => ['Running','Failed','Unknown'].includes(x.status))
+    || executions.flatMap(x => x.steps || []).find(x => x.status === 'Pending');
+  const command = (snapshot.deviceCommands || [])[0];
+  const cooling = snapshot.thermal?.cooling;
+  const points = snapshot.thermal?.points || [];
+  const abnormalPoints = points.filter(x => !x.isConnected || ['Faulted','Unknown','TimedOut'].includes(x.status));
+  const pumps = snapshot.fluidics?.pumps || [];
+  const mixers = snapshot.fluidics?.mixers || [];
+  const liquidIssues = (snapshot.fluidics?.liquidLevels || []).filter(x => !x.isConnected || ['Low','Depleted','Full','Faulted','Unknown'].includes(x.levelStatus));
+  const dab = (snapshot.dabPositions || []).find(x => x.activeDabBatchId);
+  const waiting = (snapshot.resourceLeases || []).filter(x => x.status === 'Waiting' || x.status === 'NeedsManualResolution');
+  const root = document.getElementById('runResourceGrid');
+  if(root){
+    const rows = [
+      ['当前大步骤', run?.currentMajorStepCode || snapshot.currentMajorStepCode || '--', activeStep?.status || run?.status || '--'],
+      ['原子动作', activeStep?.stepName || activeStep?.actionType || '--', activeStep ? `${activeStep.actionType} · ${activeStep.reagentCode || '无试剂'}` : '--'],
+      ['设备命令', command?.commandType || '--', command?.status || '无命令'],
+      ['温控', points.length ? `${points.length - abnormalPoints.length}/${points.length} 正常` : '--', abnormalPoints.length ? `${abnormalPoints.length} 异常` : '正常'],
+      ['制冷', cooling ? `${(Number(cooling.currentTemperatureDeciC || 0) / 10).toFixed(1)}℃` : '--', cooling?.status || '--'],
+      ['泵 / 混匀', `${pumps.filter(x => x.isConnected).length}/${pumps.length} · ${mixers.filter(x => x.isConnected).length}/${mixers.length}`, snapshot.fluidics?.ready ? 'READY' : 'BLOCK'],
+      ['液位', liquidIssues.length ? `${liquidIssues.length} 项需处理` : '正常', liquidIssues.map(x => x.displayName).join('、') || 'READY'],
+      ['DAB', dab ? `${dab.code} · ${formatVolume(dab.remainingVolumeUl)}` : '无活动批次', dab?.batchStatus || '--'],
+      ['资源等待', waiting.length ? `${waiting.length} 项` : '无', waiting[0]?.waitReason || '未发生抢占']
+    ];
+    root.innerHTML = rows.map(([label, value, state]) => `<div><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span><em>${escapeHtml(state)}</em></div>`).join('');
+  }
+
+  const needleRoot = document.getElementById('runNeedles');
+  if(needleRoot){
+    needleRoot.innerHTML = (snapshot.needles || []).map(needle => `<div><b>${escapeHtml(needle.needleCode)}</b><span>${escapeHtml(needle.loadedReagentCode || needle.loadedSourceType)} · ${escapeHtml(needle.volumeUl)} uL</span><em>${escapeHtml(needle.status)}${needle.needsWash ? ' · 待洗针' : ''}${needle.lastErrorCode ? ` · ${escapeHtml(needle.lastErrorCode)}` : ''}</em></div>`).join('') || '<div><b>双针状态</b><span>暂无正式针头状态</span><em>UNKNOWN</em></div>';
+  }
+
+  const commandRoot = document.getElementById('runCommandStages');
+  if(commandRoot){
+    commandRoot.innerHTML = (snapshot.deviceCommands || []).slice(0, 8).map(item => `<div><b>${escapeHtml(item.commandType)}</b><span>${escapeHtml(item.status)}</span><em>${escapeHtml(formatDateTime(item.completedAtUtc || item.acknowledgedAtUtc || item.commandSentAtUtc || item.createdAtUtc))}</em></div>`).join('') || '<div><b>暂无设备命令</b><span>Planned → CommandSent → DeviceAcknowledged → Completed / Failed / Unknown</span></div>';
   }
 }
 
@@ -408,6 +348,11 @@ function renderRunCommandVisibility(run){
   const role = String(currentUserSnapshot?.activeRole || currentUserSnapshot?.role || '').toLowerCase();
   const canEngineer = ['engineer','admin'].includes(role);
   const hasRun = !!run && !['Completed','Stopped','completed','stopped'].includes(run.status);
+  const status = String(run?.status || '').toLowerCase();
+  setButtonDisabledReason(document.getElementById('runStartButton'), hasRun && !['created','pending'].includes(status), '已有运行正在执行或等待处理');
+  setButtonDisabledReason(document.getElementById('runPauseButton'), status !== 'running', status ? `当前状态 ${run.status} 不能暂停` : '当前没有正式运行');
+  setButtonDisabledReason(document.getElementById('runResumeButton'), status !== 'paused', status ? `当前状态 ${run.status} 不能恢复` : '当前没有正式运行');
+  setButtonDisabledReason(document.getElementById('runStopButton'), !['running','paused'].includes(status), status ? `当前状态 ${run.status} 不能普通停止` : '当前没有正式运行');
   document.getElementById('mockFaultButton')?.classList.toggle('hidden', !(canEngineer && hasRun && (systemInfoSnapshot?.deviceMode || 'Mock') === 'Mock'));
   document.getElementById('redoMajorStepButton')?.classList.toggle('hidden', !(canEngineer && hasRun));
 }
@@ -415,4 +360,5 @@ function renderRunCommandVisibility(run){
 document.addEventListener('DOMContentLoaded', () => {
   window.refreshRunView = refreshRun;
   window.invalidatePreflightView = markPreflightInvalid;
+  refreshRun();
 });
