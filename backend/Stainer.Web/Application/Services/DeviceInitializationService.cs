@@ -15,7 +15,8 @@ public sealed class DeviceInitializationService(
     CommandIdempotencyService idempotencyService,
     IRuntimeEventPublisher eventPublisher,
     SafetyLogWriter safetyLogWriter,
-    ThermalControlService thermalControlService)
+    ThermalControlService thermalControlService,
+    FluidicsControlService fluidicsControlService)
 {
     private static readonly SemaphoreSlim InitializationGate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -27,6 +28,8 @@ public sealed class DeviceInitializationService(
         (DeviceModules.SampleScanner, "check-connection"),
         (DeviceModules.ReagentScanner, "check-connection"),
         (DeviceModules.RobotArm, "home"),
+        (DeviceModules.Pump, "check-pwm-channels"),
+        (DeviceModules.Mixer, "check-mixer-channels"),
         (DeviceModules.LiquidLevel, "read-levels"),
         (DeviceModules.NeedleWash, "prepare")
     ];
@@ -105,6 +108,7 @@ public sealed class DeviceInitializationService(
 
 
         await thermalControlService.EnsureReadyForRunAsync(cancellationToken);
+        await fluidicsControlService.EnsureReadyForRunAsync(cancellationToken);
     }
 
     private async Task<DeviceInitializationResponse> ExecuteSerializedAsync(
@@ -166,6 +170,16 @@ public sealed class DeviceInitializationService(
                             }
                             parameters["thermalStateValidated"] = thermalResult.Ok;
                         }
+                        FluidicsDeviceResult? fluidicsResult = null;
+                        if (check.ModuleCode is DeviceModules.Pump or DeviceModules.Mixer or DeviceModules.LiquidLevel)
+                        {
+                            fluidicsResult = await fluidicsControlService.InitializeModuleAsync(check.ModuleCode, cancellationToken);
+                            foreach (var pair in fluidicsResult.Data)
+                            {
+                                parameters[pair.Key] = pair.Value;
+                            }
+                            parameters["fluidicsStateValidated"] = fluidicsResult.Ok;
+                        }
 
                         var result = thermalResult is { Ok: false }
                             ? new DeviceCommandResult(
@@ -179,6 +193,18 @@ public sealed class DeviceInitializationService(
                                 DateTimeOffset.UtcNow,
                                 thermalResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
                                 thermalResult.Data)
+                            : fluidicsResult is { Ok: false }
+                            ? new DeviceCommandResult(
+                                false,
+                                fluidicsResult.Status,
+                                check.ModuleCode,
+                                step.Action,
+                                fluidicsResult.ErrorCode,
+                                fluidicsResult.Message,
+                                check.StartedAtUtc.Value,
+                                DateTimeOffset.UtcNow,
+                                fluidicsResult.Status is not DeviceCommandStatuses.TimedOut and not DeviceCommandStatuses.Unknown,
+                                fluidicsResult.Data)
                             : await deviceAdapter.InitializeModuleAsync(
                                 new DeviceOperationRequest(
                                     new DeviceCommandContext($"{commandId}:{check.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),

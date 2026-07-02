@@ -68,7 +68,8 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 await using var scope = scopeFactory.CreateAsyncScope();
                 var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
                 var dabLifecycleService = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
-                await ProcessCommandAsync(dbContext, dabLifecycleService, command, stoppingToken);
+                var fluidicsControlService = scope.ServiceProvider.GetRequiredService<FluidicsControlService>();
+                await ProcessCommandAsync(dbContext, dabLifecycleService, fluidicsControlService, command, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -124,6 +125,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
     private async Task ProcessCommandAsync(
         StainerDbContext dbContext,
         DabLifecycleService dabLifecycleService,
+        FluidicsControlService fluidicsControlService,
         MachineExecutorCommand command,
         CancellationToken cancellationToken)
     {
@@ -131,11 +133,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         {
             case MachineExecutorCommandType.Start:
             case MachineExecutorCommandType.Resume:
-                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, command.RunId, cancellationToken);
+                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, command.RunId, cancellationToken);
                 break;
             case MachineExecutorCommandType.Redo:
                 await RedoCurrentMajorStepAsync(dbContext, command.RunId, command.Payload ?? "Redo requested.", cancellationToken);
-                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, command.RunId, cancellationToken);
+                await ExecuteRunUntilBlockedAsync(dbContext, dabLifecycleService, fluidicsControlService, command.RunId, cancellationToken);
                 break;
         }
     }
@@ -143,6 +145,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
     private async Task ExecuteRunUntilBlockedAsync(
         StainerDbContext dbContext,
         DabLifecycleService dabLifecycleService,
+        FluidicsControlService fluidicsControlService,
         string runId,
         CancellationToken cancellationToken)
     {
@@ -198,20 +201,35 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 return;
             }
 
-            var step = run.WorkflowExecutions
+            var pendingSteps = run.WorkflowExecutions
                 .SelectMany(x => x.StepExecutions)
                 .Where(x => x.Status == RuntimeLedgerStatus.Pending)
                 .OrderBy(x => x.WorkflowExecution!.SlideTask!.SlotCode)
                 .ThenBy(x => x.StepNo)
-                .FirstOrDefault();
+                .ToList();
 
-            if (step is null)
+            if (pendingSteps.Count == 0)
             {
                 await CompleteRunAsync(dbContext, run, cancellationToken);
                 return;
             }
 
-            var stepCompleted = await ExecuteStepAsync(dbContext, dabLifecycleService, run, step, cancellationToken);
+            var step = SelectNextExecutableStep(run, pendingSteps);
+            if (step is null)
+            {
+                var blocked = pendingSteps.First();
+                await FaultRunAsync(
+                    dbContext,
+                    run.Id,
+                    blocked.Id,
+                    "Mixer step is waiting for all same-channel slides in this round to complete liquid addition.",
+                    cancellationToken,
+                    "mixer_prerequisite_not_met",
+                    markUnknown: false);
+                return;
+            }
+
+            var stepCompleted = await ExecuteStepAsync(dbContext, dabLifecycleService, fluidicsControlService, run, step, cancellationToken);
             if (!stepCompleted)
             {
                 return;
@@ -242,6 +260,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
     private async Task<bool> ExecuteStepAsync(
         StainerDbContext dbContext,
         DabLifecycleService dabLifecycleService,
+        FluidicsControlService fluidicsControlService,
         MachineRun run,
         WorkflowStepExecution step,
         CancellationToken cancellationToken)
@@ -318,6 +337,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             || (IsDabStep(step)
                 && deviceResult.Data.TryGetValue("faultType", out var faultType)
                 && string.Equals(Convert.ToString(faultType), DeviceFaultTypes.Disconnect, StringComparison.OrdinalIgnoreCase));
+        await RecordFluidicsDeviceFailureIfNeededAsync(fluidicsControlService, run, step, command, deviceResult, cancellationToken);
         var businessOk = false;
         if (deviceResult.Ok)
         {
@@ -452,7 +472,12 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 ["liquidClassParametersJson"] = command.LiquidClassParametersJson,
                 ["drawerCode"] = step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode,
                 ["slotNo"] = ParseSlotNo(step.WorkflowExecution?.SlideTask?.SlotCode),
-                ["targetTemperatureDeciC"] = step.TargetTemperatureDeciC ?? 420
+                ["targetTemperatureDeciC"] = step.TargetTemperatureDeciC ?? 420,
+                ["pwmChannelCode"] = DrawerToPwm(step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode),
+                ["speedPercent"] = DefaultPumpSpeed(step.ActionType),
+                ["durationMs"] = 25,
+                ["targetPointCode"] = ResolveWashTargetPoint(step.ActionType),
+                ["roundKey"] = $"{command.MachineRunId}:{step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode}:{step.MajorStepCode}"
             });
 
         if (IsDabStep(step))
@@ -466,6 +491,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         }
 
         var action = step.ActionType.ToLowerInvariant();
+        if (action.Contains("level"))
+        {
+            return deviceAdapter.ReadLiquidLevelsAsync(request, cancellationToken);
+        }
+
         if (action.Contains("needle") && action.Contains("wash"))
         {
             return deviceAdapter.WashNeedlesAsync(request, cancellationToken);
@@ -489,16 +519,137 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         return deviceAdapter.ExecuteWorkflowActionAsync(request, cancellationToken);
     }
 
+    private static async Task RecordFluidicsDeviceFailureIfNeededAsync(
+        FluidicsControlService fluidicsControlService,
+        MachineRun run,
+        WorkflowStepExecution step,
+        DeviceCommandExecution command,
+        DeviceCommandResult deviceResult,
+        CancellationToken cancellationToken)
+    {
+        if (deviceResult.Ok)
+        {
+            return;
+        }
+
+        var moduleCode = ResolveDeviceModule(step);
+        if (!IsFluidicsModule(moduleCode) || !ShouldRecordFluidicsDeviceFailure(deviceResult))
+        {
+            return;
+        }
+
+        var drawerCode = step.WorkflowExecution?.SlideTask?.ChannelBatch?.DrawerCode;
+        await fluidicsControlService.RecordDeviceFailureFromExecutorAsync(
+            moduleCode,
+            deviceResult.Status,
+            deviceResult.ErrorCode,
+            deviceResult.Message,
+            DrawerToPwm(drawerCode),
+            drawerCode,
+            ResolveLiquidSourceType(deviceResult),
+            run.Id,
+            step.Id,
+            command.Id,
+            cancellationToken);
+    }
+
     private static string ResolveDeviceModule(WorkflowStepExecution step)
     {
         if (IsDabStep(step)) return DeviceModules.Dab;
         if (IsTemperatureStep(step)) return DeviceModules.Temperature;
         var action = step.ActionType.ToLowerInvariant();
+        if (action.Contains("level")) return DeviceModules.LiquidLevel;
         if (action.Contains("needle")) return DeviceModules.NeedleWash;
         if (action.Contains("wash")) return DeviceModules.Pump;
         if (action.Contains("mix")) return DeviceModules.Mixer;
         if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0) return DeviceModules.Pipette;
         return DeviceModules.Workflow;
+    }
+
+    private static bool IsFluidicsModule(string moduleCode) =>
+        string.Equals(moduleCode, DeviceModules.Pump, StringComparison.Ordinal)
+        || string.Equals(moduleCode, DeviceModules.Mixer, StringComparison.Ordinal)
+        || string.Equals(moduleCode, DeviceModules.LiquidLevel, StringComparison.Ordinal);
+
+    private static bool ShouldRecordFluidicsDeviceFailure(DeviceCommandResult deviceResult) =>
+        deviceResult.Status is DeviceCommandStatuses.Unknown or DeviceCommandStatuses.TimedOut
+        || deviceResult.Data.ContainsKey("faultPlanId");
+
+    private static string? ResolveLiquidSourceType(DeviceCommandResult deviceResult)
+    {
+        if (deviceResult.Data.TryGetValue("sourceType", out var sourceType) && !string.IsNullOrWhiteSpace(Convert.ToString(sourceType)))
+        {
+            return Convert.ToString(sourceType);
+        }
+
+        if (deviceResult.Data.TryGetValue("liquidSourceType", out var liquidSourceType) && !string.IsNullOrWhiteSpace(Convert.ToString(liquidSourceType)))
+        {
+            return Convert.ToString(liquidSourceType);
+        }
+
+        return null;
+    }
+
+    private static WorkflowStepExecution? SelectNextExecutableStep(MachineRun run, IReadOnlyList<WorkflowStepExecution> pendingSteps)
+    {
+        foreach (var step in pendingSteps)
+        {
+            if (!IsMixStep(step) || MixerPrerequisitesSatisfied(run, step))
+            {
+                return step;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool MixerPrerequisitesSatisfied(MachineRun run, WorkflowStepExecution mixStep)
+    {
+        var channelBatchId = mixStep.WorkflowExecution?.SlideTask?.ChannelBatchId;
+        if (string.IsNullOrWhiteSpace(channelBatchId))
+        {
+            return false;
+        }
+
+        var participatingWorkflows = run.WorkflowExecutions
+            .Where(x => x.SlideTask?.ChannelBatchId == channelBatchId
+                && x.StepExecutions.Any(step => step.MajorStepCode == mixStep.MajorStepCode && IsMixStep(step)))
+            .ToList();
+        if (participatingWorkflows.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var workflow in participatingWorkflows)
+        {
+            var additions = workflow.StepExecutions
+                .Where(step => step.MajorStepCode == mixStep.MajorStepCode
+                    && step.StepNo < mixStep.StepNo
+                    && IsLiquidAdditionStep(step))
+                .ToList();
+            if (additions.Count > 0 && additions.Any(step => step.Status != RuntimeLedgerStatus.Completed))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsMixStep(WorkflowStepExecution step) =>
+        step.ActionType.Contains("mix", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsLiquidAdditionStep(WorkflowStepExecution step)
+    {
+        if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0)
+        {
+            return true;
+        }
+
+        var action = step.ActionType.Replace("_", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal);
+        return action.Contains("dispens", StringComparison.OrdinalIgnoreCase)
+            || action.Contains("pipett", StringComparison.OrdinalIgnoreCase)
+            || action.Contains("addliquid", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsLiquidClassAction(string actionType)
@@ -509,6 +660,36 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             || normalized.Contains("liquiddetect", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("blowout", StringComparison.OrdinalIgnoreCase)
             || normalized.Contains("pipett", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? DrawerToPwm(string? drawerCode)
+    {
+        return (drawerCode ?? string.Empty).Trim().ToUpperInvariant() switch
+        {
+            "A" => "PWM0",
+            "B" => "PWM1",
+            "C" => "PWM2",
+            "D" => "PWM3",
+            _ => null
+        };
+    }
+
+    private static int DefaultPumpSpeed(string actionType) =>
+        actionType.Contains("reverse", StringComparison.OrdinalIgnoreCase) ? -60 : 60;
+
+    private static string? ResolveWashTargetPoint(string actionType)
+    {
+        if (actionType.Contains("outer", StringComparison.OrdinalIgnoreCase))
+        {
+            return "WashOuterLeft";
+        }
+
+        if (actionType.Contains("inner", StringComparison.OrdinalIgnoreCase))
+        {
+            return "WashInnerLeft";
+        }
+
+        return null;
     }
 
     private async Task<bool> ConsumeReagentAsync(

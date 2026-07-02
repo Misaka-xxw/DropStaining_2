@@ -91,6 +91,13 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
                 "Another command activated a coordinate version for this profile. Refresh and retry.",
                 StatusCodes.Status409Conflict);
         }
+        catch (DbUpdateException ex) when (IsLiquidClassEnabledVersionConflict(ex))
+        {
+            throw new BusinessRuleException(
+                "liquid_class_enabled_version_conflict",
+                "Another command enabled a Liquid Class version for this profile. Refresh and retry.",
+                StatusCodes.Status409Conflict);
+        }
 
         return result.Response;
     }
@@ -148,6 +155,14 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             || message.Contains("coordinate_profile_versions.coordinate_profile_id", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsLiquidClassEnabledVersionConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains("liquid_class_versions.liquid_class_profile_id", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("ix_liquid_class_versions_liquid_class_profile_id", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("liquid_class_profiles.enabled_version_id", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static T MarkReplay<T>(T response)
         where T : class
     {
@@ -170,6 +185,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             DeviceInitializationResponse x => x with { Replayed = true } as T ?? response,
             DeviceFaultMutationResponse x => x with { Replayed = true } as T ?? response,
             ThermalMutationResponse x => x with { Replayed = true } as T ?? response,
+            FluidicsMutationResponse x => x with { Replayed = true } as T ?? response,
             DatabaseBackupResponse x => x with { Replayed = true } as T ?? response,
             DatabaseRestoreResponse x => x with { Replayed = true } as T ?? response,
             EngineeringWriteResponse x => x with { Replayed = true } as T ?? response,

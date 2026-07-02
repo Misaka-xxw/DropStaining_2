@@ -57,6 +57,10 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<ThermalPointState> ThermalPointStates => Set<ThermalPointState>();
     public DbSet<CoolingUnitState> CoolingUnitStates => Set<CoolingUnitState>();
     public DbSet<TemperatureTelemetry> TemperatureTelemetry => Set<TemperatureTelemetry>();
+    public DbSet<PumpChannelState> PumpChannelStates => Set<PumpChannelState>();
+    public DbSet<MixerChannelState> MixerChannelStates => Set<MixerChannelState>();
+    public DbSet<LiquidContainerState> LiquidContainerStates => Set<LiquidContainerState>();
+    public DbSet<FluidicsTelemetry> FluidicsTelemetry => Set<FluidicsTelemetry>();
     public DbSet<ReagentReservation> ReagentReservations => Set<ReagentReservation>();
     public DbSet<ReagentConsumption> ReagentConsumptions => Set<ReagentConsumption>();
     public DbSet<SystemLiquidUsage> SystemLiquidUsages => Set<SystemLiquidUsage>();
@@ -108,6 +112,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureRuntimeLedger(modelBuilder);
         ConfigureDeviceInitialization(modelBuilder);
         ConfigureThermalState(modelBuilder);
+        ConfigureFluidicsState(modelBuilder);
     }
 
     public override int SaveChanges()
@@ -1923,5 +1928,97 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         telemetry.Property(x => x.RecordedAtUtc).HasColumnName("recorded_at_utc").IsRequired();
         telemetry.HasIndex(x => new { x.SourceType, x.SourceId, x.RecordedAtUtc });
         telemetry.HasIndex(x => x.RecordedAtUtc);
+    }
+
+    private static void ConfigureFluidicsState(ModelBuilder modelBuilder)
+    {
+        var pumps = modelBuilder.Entity<PumpChannelState>();
+        pumps.ToTable("pump_channel_states");
+        pumps.HasKey(x => x.Id);
+        pumps.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        pumps.Property(x => x.PwmChannelCode).HasColumnName("pwm_channel_code").HasMaxLength(16).IsRequired();
+        pumps.Property(x => x.PwmChannelNo).HasColumnName("pwm_channel_no").IsRequired();
+        pumps.Property(x => x.DrawerCode).HasColumnName("drawer_code").HasMaxLength(1).IsRequired();
+        pumps.Property(x => x.SpeedPercent).HasColumnName("speed_percent").IsRequired();
+        pumps.Property(x => x.Direction).HasColumnName("direction").HasMaxLength(32).IsRequired();
+        pumps.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        pumps.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        pumps.Property(x => x.TargetPointCode).HasColumnName("target_point_code").HasMaxLength(128);
+        pumps.Property(x => x.DurationMs).HasColumnName("duration_ms");
+        pumps.Property(x => x.CurrentCommandId).HasColumnName("current_command_id").HasMaxLength(128);
+        pumps.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        pumps.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
+        pumps.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        pumps.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        pumps.Property(x => x.FaultMessage).HasColumnName("fault_message").HasMaxLength(2000);
+        pumps.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
+        pumps.HasIndex(x => x.PwmChannelCode).IsUnique();
+        pumps.HasIndex(x => x.PwmChannelNo).IsUnique();
+        pumps.HasIndex(x => x.DrawerCode).IsUnique();
+        pumps.HasIndex(x => new { x.MachineRunId, x.WorkflowStepExecutionId });
+
+        var mixers = modelBuilder.Entity<MixerChannelState>();
+        mixers.ToTable("mixer_channel_states");
+        mixers.HasKey(x => x.Id);
+        mixers.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        mixers.Property(x => x.DrawerCode).HasColumnName("drawer_code").HasMaxLength(1).IsRequired();
+        mixers.Property(x => x.ChannelNo).HasColumnName("channel_no").IsRequired();
+        mixers.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        mixers.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        mixers.Property(x => x.CurrentRoundKey).HasColumnName("current_round_key").HasMaxLength(256);
+        mixers.Property(x => x.CurrentCommandId).HasColumnName("current_command_id").HasMaxLength(128);
+        mixers.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        mixers.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
+        mixers.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        mixers.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        mixers.Property(x => x.FaultMessage).HasColumnName("fault_message").HasMaxLength(2000);
+        mixers.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
+        mixers.HasIndex(x => x.DrawerCode).IsUnique();
+        mixers.HasIndex(x => x.ChannelNo).IsUnique();
+        mixers.HasIndex(x => new { x.MachineRunId, x.WorkflowStepExecutionId });
+
+        var liquids = modelBuilder.Entity<LiquidContainerState>();
+        liquids.ToTable("liquid_container_states");
+        liquids.HasKey(x => x.Id);
+        liquids.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        liquids.Property(x => x.SourceType).HasColumnName("source_type").HasMaxLength(64).IsRequired();
+        liquids.Property(x => x.DisplayName).HasColumnName("display_name").HasMaxLength(128).IsRequired();
+        liquids.Property(x => x.IsWaste).HasColumnName("is_waste").IsRequired();
+        liquids.Property(x => x.CapacityUl).HasColumnName("capacity_ul").IsRequired();
+        liquids.Property(x => x.CurrentVolumeUl).HasColumnName("current_volume_ul").IsRequired();
+        liquids.Property(x => x.LowThresholdUl).HasColumnName("low_threshold_ul").IsRequired();
+        liquids.Property(x => x.FullThresholdUl).HasColumnName("full_threshold_ul").IsRequired();
+        liquids.Property(x => x.LevelStatus).HasColumnName("level_status").HasMaxLength(32).IsRequired();
+        liquids.Property(x => x.IsConnected).HasColumnName("is_connected").IsRequired();
+        liquids.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        liquids.Property(x => x.FaultMessage).HasColumnName("fault_message").HasMaxLength(2000);
+        liquids.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
+        liquids.HasIndex(x => x.SourceType).IsUnique();
+
+        var telemetry = modelBuilder.Entity<FluidicsTelemetry>();
+        telemetry.ToTable("fluidics_telemetry");
+        telemetry.HasKey(x => x.Id);
+        telemetry.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        telemetry.Property(x => x.SourceType).HasColumnName("source_type").HasMaxLength(32).IsRequired();
+        telemetry.Property(x => x.SourceId).HasColumnName("source_id").HasMaxLength(36).IsRequired();
+        telemetry.Property(x => x.EventType).HasColumnName("event_type").HasMaxLength(64).IsRequired();
+        telemetry.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        telemetry.Property(x => x.PwmChannelCode).HasColumnName("pwm_channel_code").HasMaxLength(16);
+        telemetry.Property(x => x.DrawerCode).HasColumnName("drawer_code").HasMaxLength(1);
+        telemetry.Property(x => x.LiquidSourceType).HasColumnName("liquid_source_type").HasMaxLength(64);
+        telemetry.Property(x => x.SpeedPercent).HasColumnName("speed_percent");
+        telemetry.Property(x => x.Direction).HasColumnName("direction").HasMaxLength(32);
+        telemetry.Property(x => x.CurrentVolumeUl).HasColumnName("current_volume_ul");
+        telemetry.Property(x => x.CapacityUl).HasColumnName("capacity_ul");
+        telemetry.Property(x => x.TargetPointCode).HasColumnName("target_point_code").HasMaxLength(128);
+        telemetry.Property(x => x.CommandId).HasColumnName("command_id").HasMaxLength(128);
+        telemetry.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
+        telemetry.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
+        telemetry.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        telemetry.Property(x => x.FaultCode).HasColumnName("fault_code").HasMaxLength(128);
+        telemetry.Property(x => x.RecordedAtUtc).HasColumnName("recorded_at_utc").IsRequired();
+        telemetry.HasIndex(x => new { x.SourceType, x.SourceId, x.RecordedAtUtc });
+        telemetry.HasIndex(x => x.RecordedAtUtc);
+        telemetry.HasIndex(x => new { x.MachineRunId, x.WorkflowStepExecutionId });
     }
 }

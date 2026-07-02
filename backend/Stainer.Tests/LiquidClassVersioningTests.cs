@@ -145,6 +145,42 @@ public sealed class LiquidClassVersioningTests
     }
 
     [Fact]
+    public async Task Concurrent_enable_keeps_single_enabled_version_and_active_pointer()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client);
+
+        var baseline = Assert.Single((await client.GetFromJsonAsync<List<LiquidClassResponse>>("/api/engineering/liquid-classes"))!, x => x.EnabledVersionId is not null);
+        var draftA = await CreatePublishedDraftAsync(client, baseline, "concurrent-a", 151);
+        var draftB = await CreatePublishedDraftAsync(client, baseline, "concurrent-b", 161);
+
+        var enableA = client.PostAsJsonAsync($"/api/engineering/liquid-class-versions/{draftA.LiquidClassVersionId}/enable", new
+        {
+            commandId = "cmd-liquid-concurrent-a-enable",
+            reason = "concurrent enable A"
+        });
+        var enableB = client.PostAsJsonAsync($"/api/engineering/liquid-class-versions/{draftB.LiquidClassVersionId}/enable", new
+        {
+            commandId = "cmd-liquid-concurrent-b-enable",
+            reason = "concurrent enable B"
+        });
+        var responses = await Task.WhenAll(enableA, enableB);
+        Assert.Contains(responses, x => x.StatusCode == HttpStatusCode.OK);
+        Assert.All(responses, x => Assert.True(x.StatusCode is HttpStatusCode.OK or HttpStatusCode.Conflict, $"Unexpected status {x.StatusCode}: {x.Content.ReadAsStringAsync().Result}"));
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var profile = await dbContext.LiquidClassProfiles
+            .Include(x => x.Versions)
+            .SingleAsync(x => x.Id == baseline.Id);
+        var enabledVersions = profile.Versions.Where(x => x.Status == LiquidClassVersionStatus.Enabled).ToList();
+        var enabled = Assert.Single(enabledVersions);
+        Assert.Equal(profile.EnabledVersionId, enabled.Id);
+        Assert.Contains(enabled.Id, new[] { draftA.LiquidClassVersionId, draftB.LiquidClassVersionId });
+    }
+
+    [Fact]
     public async Task Invalid_units_or_ranges_are_rejected_without_a_command_receipt()
     {
         await using var factory = CreateFactory();
@@ -223,6 +259,36 @@ public sealed class LiquidClassVersioningTests
             commandId = $"cmd-{suffix}-select",
             drawerCode,
             experimentType = StainingTaskType.He
+        });
+    }
+
+    private static async Task<LiquidClassVersionMutationResponse> CreatePublishedDraftAsync(
+        HttpClient client,
+        LiquidClassResponse baseline,
+        string suffix,
+        int aspirateSpeed)
+    {
+        var draft = await PostAsync<LiquidClassVersionMutationResponse>(client, "/api/engineering/liquid-classes", new
+        {
+            commandId = $"cmd-liquid-{suffix}-draft",
+            code = baseline.Code,
+            name = $"Concurrent {suffix}",
+            aspirateSpeedUlPerSecond = aspirateSpeed,
+            dispenseSpeedUlPerSecond = aspirateSpeed + 5,
+            leadingAirGapUl = 8,
+            trailingAirGapUl = 9,
+            excessVolumeUl = 3,
+            preWetCycles = 2,
+            mixCycles = 1,
+            isEnabled = false,
+            reason = $"concurrent draft {suffix}",
+            sourceVersionId = baseline.EnabledVersionId,
+            versionLabel = suffix
+        });
+        return await PostAsync<LiquidClassVersionMutationResponse>(client, $"/api/engineering/liquid-class-versions/{draft.LiquidClassVersionId}/publish", new
+        {
+            commandId = $"cmd-liquid-{suffix}-publish",
+            reason = $"publish {suffix}"
         });
     }
 

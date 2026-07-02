@@ -11,6 +11,7 @@ public sealed class PreHardwareReadinessService(
     MachineExecutorLeaseService leaseService,
     StartupRecoveryService startupRecoveryService,
     DatabaseMaintenanceService databaseMaintenanceService,
+    FluidicsControlService fluidicsControlService,
     StainerDbContext dbContext,
     InMemoryRuntimeEventPublisher eventPublisher,
     SafetyLogWriter safetyLogWriter)
@@ -46,6 +47,12 @@ public sealed class PreHardwareReadinessService(
             "database_health",
             database.Ok,
             database.Message));
+
+        var fluidics = await fluidicsControlService.GetReadinessAsync(cancellationToken);
+        checks.Add(new PreHardwareReadinessCheckResponse(
+            "fluidics_formal_state_ready",
+            fluidics.Ok,
+            fluidics.Message));
 
         if (createBackup)
         {

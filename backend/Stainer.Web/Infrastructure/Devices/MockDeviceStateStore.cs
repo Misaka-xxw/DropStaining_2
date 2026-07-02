@@ -13,6 +13,8 @@ public sealed class MockDeviceStateStore
         DeviceModules.SampleScanner,
         DeviceModules.ReagentScanner,
         DeviceModules.RobotArm,
+        DeviceModules.Pump,
+        DeviceModules.Mixer,
         DeviceModules.LiquidLevel,
         DeviceModules.NeedleWash
     };
@@ -81,6 +83,40 @@ public sealed class MockDeviceStateStore
             var module = GetOrCreateModule(moduleCode);
             module.ConnectionStatus = connectionStatus;
             module.CurrentAction = "Idle";
+            module.CurrentParametersJson = currentParametersJson;
+            module.LastErrorCode = errorCode;
+            module.LastErrorMessage = errorMessage;
+            Touch(module);
+        }
+    }
+
+    internal void SyncModuleState(
+        string moduleCode,
+        string connectionStatus,
+        string currentAction,
+        string? currentParametersJson,
+        string? errorCode,
+        string? errorMessage)
+    {
+        lock (syncRoot)
+        {
+            var module = GetOrCreateModule(moduleCode);
+            if (!string.IsNullOrWhiteSpace(module.LastErrorCode) && string.IsNullOrWhiteSpace(errorCode))
+            {
+                return;
+            }
+
+            if (module.ConnectionStatus == connectionStatus
+                && module.CurrentAction == currentAction
+                && module.CurrentParametersJson == currentParametersJson
+                && module.LastErrorCode == errorCode
+                && module.LastErrorMessage == errorMessage)
+            {
+                return;
+            }
+
+            module.ConnectionStatus = connectionStatus;
+            module.CurrentAction = currentAction;
             module.CurrentParametersJson = currentParametersJson;
             module.LastErrorCode = errorCode;
             module.LastErrorMessage = errorMessage;

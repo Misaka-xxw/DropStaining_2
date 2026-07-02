@@ -11,7 +11,8 @@ namespace Stainer.Web.Application.Services;
 
 public sealed class DabLifecycleService(
     StainerDbContext dbContext,
-    CommandIdempotencyService idempotencyService)
+    CommandIdempotencyService idempotencyService,
+    FluidicsControlService fluidicsControlService)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -542,6 +543,18 @@ public sealed class DabLifecycleService(
         var waterReservation = reserved.Single(x => x.SourceRole == "Water");
         waterReservation.Status = ReagentReservationStatus.Consumed;
         waterReservation.UpdatedAtUtc = now;
+        var waterConsumption = await fluidicsControlService.ConsumeSystemLiquidFromRunAsync(
+            SystemLiquidSourceTypes.SystemWater,
+            waterReservation.ReservedVolumeUl,
+            run,
+            step,
+            command,
+            cancellationToken);
+        if (!waterConsumption.Ok)
+        {
+            return DabExecutorMutationResult.Failure(waterConsumption.ErrorCode ?? "system_water_unavailable", waterConsumption.Message, batch);
+        }
+
         dbContext.SystemLiquidUsages.Add(new SystemLiquidUsage
         {
             MachineRunId = run.Id,
@@ -550,11 +563,7 @@ public sealed class DabLifecycleService(
             DabBatchId = batch.Id,
             SourceType = SystemLiquidSourceTypes.SystemWater,
             VolumeUl = waterReservation.ReservedVolumeUl,
-            LevelSnapshotJson = JsonSerializer.Serialize(deviceResult.Data.GetValueOrDefault("waterLevelSnapshot") ?? new
-            {
-                sourceType = SystemLiquidSourceTypes.SystemWater,
-                capturedAtUtc = now
-            }),
+            LevelSnapshotJson = JsonSerializer.Serialize(waterConsumption.Data),
             CreatedAtUtc = now
         });
 

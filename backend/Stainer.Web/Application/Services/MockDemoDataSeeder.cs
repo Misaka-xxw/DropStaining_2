@@ -110,6 +110,7 @@ public sealed class MockDemoDataSeeder(
 
     private async Task EnsureReagentDefinitionsAsync(DateTimeOffset now, MutationCounts counts, CancellationToken cancellationToken)
     {
+        var defaultLiquidClass = await LoadDefaultLiquidClassProfileAsync(cancellationToken);
         foreach (var reagent in DemoReagents())
         {
             var existing = await dbContext.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == reagent.Code, cancellationToken);
@@ -120,6 +121,7 @@ public sealed class MockDemoDataSeeder(
                     ReagentCode = reagent.Code,
                     Name = reagent.Name,
                     ReagentType = reagent.Type,
+                    LiquidClassProfileId = defaultLiquidClass?.Id,
                     MinimumAlarmVolumeUl = reagent.MinimumAlarmVolumeUl,
                     LegacyMetadataJson = JsonSerializer.Serialize(new { demo = DemoKey }, JsonOptions),
                     IsEnabled = true,
@@ -129,7 +131,22 @@ public sealed class MockDemoDataSeeder(
                 counts.Created++;
                 await EnsureTagAsync(nameof(ReagentDefinition), existing.Id, counts, cancellationToken);
             }
+            else if (existing.LiquidClassProfileId is null && defaultLiquidClass is not null)
+            {
+                existing.LiquidClassProfileId = defaultLiquidClass.Id;
+                existing.UpdatedAtUtc = now;
+                counts.Updated++;
+            }
         }
+    }
+
+    private async Task<LiquidClassProfile?> LoadDefaultLiquidClassProfileAsync(CancellationToken cancellationToken)
+    {
+        return await dbContext.LiquidClassProfiles
+            .Where(x => x.IsEnabled && x.EnabledVersionId != null)
+            .OrderByDescending(x => x.Code == "FactoryGeneral-v1")
+            .ThenBy(x => x.Code)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private async Task<(WorkflowVersion HeVersion, WorkflowVersion IhcVersion)> EnsureWorkflowsAsync(

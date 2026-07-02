@@ -89,3 +89,81 @@ public sealed record TemperatureTelemetryResponse(
     string Status,
     string? FaultCode,
     DateTimeOffset RecordedAtUtc);
+
+public sealed record FluidicsStateResponse(
+    bool Ready,
+    IReadOnlyList<PumpChannelResponse> Pumps,
+    IReadOnlyList<MixerChannelResponse> Mixers,
+    IReadOnlyList<LiquidContainerResponse> LiquidLevels,
+    DateTimeOffset GeneratedAtUtc);
+
+public sealed record PumpChannelResponse(
+    string Id,
+    string PwmChannelCode,
+    int PwmChannelNo,
+    string DrawerCode,
+    int SpeedPercent,
+    string Direction,
+    string Status,
+    bool IsConnected,
+    string? TargetPointCode,
+    int? DurationMs,
+    string? CurrentCommandId,
+    string? FaultCode,
+    string? FaultMessage,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record MixerChannelResponse(
+    string Id,
+    string DrawerCode,
+    int ChannelNo,
+    string Status,
+    bool IsConnected,
+    string? CurrentRoundKey,
+    string? CurrentCommandId,
+    string? FaultCode,
+    string? FaultMessage,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record LiquidContainerResponse(
+    string Id,
+    string SourceType,
+    string DisplayName,
+    bool IsWaste,
+    int CapacityUl,
+    int CurrentVolumeUl,
+    int LowThresholdUl,
+    int FullThresholdUl,
+    string LevelStatus,
+    bool IsConnected,
+    string? FaultCode,
+    string? FaultMessage,
+    DateTimeOffset UpdatedAtUtc);
+
+public sealed record FluidicsMutationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string Message,
+    FluidicsStateResponse State);
+
+public sealed record FluidicsTelemetryResponse(
+    string Id,
+    string SourceType,
+    string SourceId,
+    string EventType,
+    string Status,
+    string? PwmChannelCode,
+    string? DrawerCode,
+    string? LiquidSourceType,
+    int? SpeedPercent,
+    string? Direction,
+    int? CurrentVolumeUl,
+    int? CapacityUl,
+    string? TargetPointCode,
+    string? CommandId,
+    string? MachineRunId,
+    string? WorkflowStepExecutionId,
+    string? DeviceCommandExecutionId,
+    string? FaultCode,
+    DateTimeOffset RecordedAtUtc);

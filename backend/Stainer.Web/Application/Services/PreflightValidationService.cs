@@ -11,7 +11,8 @@ namespace Stainer.Web.Application.Services;
 public sealed class PreflightValidationService(
     StainerDbContext dbContext,
     DeviceInitializationService deviceInitializationService,
-    ThermalControlService thermalControlService)
+    ThermalControlService thermalControlService,
+    FluidicsControlService fluidicsControlService)
 {
     public async Task<PreflightValidationReportResponse> ValidateAsync(CancellationToken cancellationToken = default)
     {
@@ -29,6 +30,11 @@ public sealed class PreflightValidationService(
         if (!thermalReadiness.Ok)
         {
             issues.Add(new PreflightValidationIssueResponse("Thermal", thermalReadiness.ErrorCode!, thermalReadiness.Message));
+        }
+        var fluidicsReadiness = await fluidicsControlService.GetReadinessAsync(cancellationToken);
+        if (!fluidicsReadiness.Ok)
+        {
+            issues.Add(new PreflightValidationIssueResponse("Fluidics", fluidicsReadiness.ErrorCode!, fluidicsReadiness.Message));
         }
         var tasks = await dbContext.StainingTasks
             .AsNoTracking()
@@ -355,8 +361,23 @@ public sealed class PreflightValidationService(
             .AsNoTracking()
             .Select(x => new { x.Id, x.CurrentTemperatureDeciC, x.TargetTemperatureDeciC, x.IsEnabled, x.IsConnected, x.Status, x.FaultCode, x.UpdatedAtUtc })
             .SingleOrDefaultAsync(cancellationToken);
+        var pumps = await dbContext.PumpChannelStates
+            .AsNoTracking()
+            .OrderBy(x => x.PwmChannelNo)
+            .Select(x => new { x.Id, x.PwmChannelCode, x.DrawerCode, x.SpeedPercent, x.Direction, x.Status, x.IsConnected, x.FaultCode, x.UpdatedAtUtc })
+            .ToListAsync(cancellationToken);
+        var mixers = await dbContext.MixerChannelStates
+            .AsNoTracking()
+            .OrderBy(x => x.ChannelNo)
+            .Select(x => new { x.Id, x.DrawerCode, x.Status, x.IsConnected, x.FaultCode, x.UpdatedAtUtc })
+            .ToListAsync(cancellationToken);
+        var liquidLevels = await dbContext.LiquidContainerStates
+            .AsNoTracking()
+            .OrderBy(x => x.SourceType)
+            .Select(x => new { x.Id, x.SourceType, x.CurrentVolumeUl, x.CapacityUl, x.LevelStatus, x.IsConnected, x.FaultCode, x.UpdatedAtUtc })
+            .ToListAsync(cancellationToken);
 
-        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements, initialization, thermalPoints, cooling });
+        var json = JsonSerializer.Serialize(new { tasks, batches, scanSessions, scanItems, bottles, placements, initialization, thermalPoints, cooling, pumps, mixers, liquidLevels });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
     }
 }

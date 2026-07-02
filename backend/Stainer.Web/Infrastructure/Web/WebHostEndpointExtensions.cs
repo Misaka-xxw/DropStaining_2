@@ -105,6 +105,72 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.ClearFaultAsync(request, actor, cancellationToken));
             }));
+        app.MapGet("/api/fluidics/state", async (HttpContext context, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.GetStateAsync(cancellationToken));
+            }));
+        app.MapGet("/api/fluidics/telemetry", async (HttpContext context, int? take, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListTelemetryAsync(take ?? 200, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/pumps/run", async (HttpContext context, RunPumpRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.RunPumpAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/pumps/stop", async (HttpContext context, StopPumpRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.StopPumpAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/wash", async (HttpContext context, WashTargetRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.WashAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/mixers/{drawerCode}/start", async (HttpContext context, string drawerCode, MixerCommandRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.StartMixerAsync(drawerCode, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/mixers/{drawerCode}/complete", async (HttpContext context, string drawerCode, MixerCommandRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.CompleteMixerAsync(drawerCode, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/mixers/{drawerCode}/stop", async (HttpContext context, string drawerCode, MixerCommandRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.StopMixerAsync(drawerCode, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/liquid-levels", async (HttpContext context, SetLiquidLevelRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.SetLiquidLevelAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/faults", async (HttpContext context, ConfigureFluidicsFaultRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ConfigureFaultAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/faults/clear", async (HttpContext context, ClearFluidicsFaultRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ClearFaultAsync(request, actor, cancellationToken));
+            }));
         app.MapPost("/api/device/mock-faults", async (HttpContext context, ConfigureMockDeviceFaultRequest request, UserSessionService sessionService, DeviceControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

@@ -48,3 +48,54 @@ public sealed record ClearThermalFaultRequest(
     string Reason,
     string? DrawerCode = null,
     int? SlotNo = null);
+
+public sealed record RunPumpRequest(
+    string CommandId,
+    string PwmChannelCode,
+    int SpeedPercent,
+    int? DurationMs = null,
+    string? TargetPointCode = null,
+    string? Reason = null);
+
+public sealed record StopPumpRequest(
+    string CommandId,
+    string PwmChannelCode,
+    string? Reason = null);
+
+public sealed record WashTargetRequest(
+    string CommandId,
+    string TargetPointCode,
+    int SpeedPercent,
+    int? DurationMs = null,
+    string? Reason = null);
+
+public sealed record MixerCommandRequest(
+    string CommandId,
+    string? RoundKey = null,
+    string? Reason = null);
+
+public sealed record SetLiquidLevelRequest(
+    string CommandId,
+    string SourceType,
+    string LevelStatus,
+    int? CurrentVolumeUl = null,
+    string? Reason = null);
+
+public sealed record ConfigureFluidicsFaultRequest(
+    string CommandId,
+    string TargetType,
+    string FaultType,
+    string Reason,
+    string? PwmChannelCode = null,
+    string? DrawerCode = null,
+    string? SourceType = null,
+    string? ErrorCode = null,
+    string? Message = null);
+
+public sealed record ClearFluidicsFaultRequest(
+    string CommandId,
+    string TargetType,
+    string Reason,
+    string? PwmChannelCode = null,
+    string? DrawerCode = null,
+    string? SourceType = null);

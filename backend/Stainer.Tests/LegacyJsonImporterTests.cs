@@ -64,7 +64,8 @@ public sealed class LegacyJsonImporterTests
         Assert.Equal(2, await dbContext.ReagentDefinitions.CountAsync(x => x.ReagentCode == "ABC" || x.ReagentCode == "XYZ"));
         Assert.Equal(2, await dbContext.ReagentBottles.CountAsync());
         Assert.Equal(2, await dbContext.ReagentRackPlacements.CountAsync());
-        Assert.Single(await dbContext.LiquidClassProfiles.ToListAsync());
+        var importedLiquidClass = await dbContext.LiquidClassProfiles.SingleAsync(x => x.Code == "Thin");
+        Assert.Equal(40, importedLiquidClass.AspirateSpeedUlPerSecond);
         Assert.Single(await dbContext.LegacyRuntimeSnapshots.ToListAsync());
 
         Assert.Equal(2, await dbContext.LegacyImportRuns.CountAsync());
