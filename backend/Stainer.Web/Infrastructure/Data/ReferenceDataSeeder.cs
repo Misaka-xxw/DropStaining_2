@@ -12,6 +12,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
     public const string ManualIhcWorkflowCode = "TEST-IHC-001-A-V1";
     public const string ManualPrimaryAntibodyCode = "001";
     private const string DefaultDeviceProfileCode = "FactoryDevice-v1";
+    private const string DefaultLiquidClassCode = "FactoryGeneral-v1";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task SeedAsync(CancellationToken cancellationToken = default)
@@ -426,6 +427,69 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
 
     private async Task SeedManualAcceptanceReagentsAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
+        var liquidClass = await dbContext.LiquidClassProfiles
+            .Include(x => x.EnabledVersion)
+            .SingleOrDefaultAsync(x => x.Code == DefaultLiquidClassCode, cancellationToken);
+        if (liquidClass is null)
+        {
+            liquidClass = new LiquidClassProfile
+            {
+                Code = DefaultLiquidClassCode,
+                Name = "Factory general liquid class v1",
+                AspirateSpeedUlPerSecond = 100,
+                DispenseSpeedUlPerSecond = 100,
+                LeadingAirGapUl = 5,
+                TrailingAirGapUl = 5,
+                ExcessVolumeUl = 0,
+                PreWetCycles = 1,
+                MixCycles = 0,
+                IsEnabled = true,
+                CreatedAtUtc = now
+            };
+            dbContext.LiquidClassProfiles.Add(liquidClass);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            var version = new LiquidClassVersion
+            {
+                LiquidClassProfile = liquidClass,
+                LiquidClassProfileId = liquidClass.Id,
+                VersionNo = 1,
+                VersionLabel = "1",
+                Name = liquidClass.Name,
+                Status = LiquidClassVersionStatus.Enabled,
+                ChangeReason = "Factory seeded Liquid Class baseline.",
+                ChangeSummaryJson = "{\"seeded\":true}",
+                LiquidDetectionEnabled = true,
+                LiquidDetectionSensitivityPercent = 50,
+                LiquidDetectionSpeedUmPerSecond = 1_000,
+                AspirateSpeedUlPerSecond = 100,
+                AspirateDelayMs = 100,
+                DispenseSpeedUlPerSecond = 100,
+                DispenseDelayMs = 100,
+                LeadingAirGapUl = 5,
+                TrailingAirGapUl = 5,
+                BlowoutVolumeUl = 10,
+                BlowoutDelayMs = 100,
+                VolumeAdjustmentUl = 0,
+                PreWetCycles = 1,
+                MixCycles = 0,
+                CreatedAtUtc = now,
+                PublishedAtUtc = now,
+                EnabledAtUtc = now
+            };
+            version.ValidationRecords.Add(new LiquidClassValidationRecord
+            {
+                LiquidClassVersion = version,
+                LiquidClassVersionId = version.Id,
+                Stage = LiquidClassValidationStage.Enable,
+                IsValid = true,
+                ResultJson = "{\"valid\":true,\"source\":\"seed\"}",
+                CreatedAtUtc = now
+            });
+            dbContext.LiquidClassVersions.Add(version);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            liquidClass.EnabledVersionId = version.Id;
+        }
+
         foreach (var reagent in ManualAcceptanceReagents())
         {
             var definition = await dbContext.ReagentDefinitions
@@ -437,6 +501,8 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
                     ReagentCode = reagent.Code,
                     Name = reagent.Name,
                     ReagentType = reagent.Type,
+                    LiquidClassProfile = liquidClass,
+                    LiquidClassProfileId = liquidClass.Id,
                     MinimumAlarmVolumeUl = reagent.MinimumAlarmVolumeUl,
                     LegacyMetadataJson = JsonSerializer.Serialize(new
                     {
@@ -451,6 +517,12 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             }
 
             var changed = false;
+            if (definition.LiquidClassProfileId is null)
+            {
+                definition.LiquidClassProfile = liquidClass;
+                definition.LiquidClassProfileId = liquidClass.Id;
+                changed = true;
+            }
             if (string.IsNullOrWhiteSpace(definition.Name) || definition.Name.StartsWith("Definition ", StringComparison.Ordinal))
             {
                 definition.Name = reagent.Name;

@@ -154,6 +154,18 @@ public sealed class RunControlService(
                 throw new BusinessRuleException("channel_coordinate_required", "Each channel batch must have a frozen coordinate version before start.", StatusCodes.Status409Conflict);
             }
 
+            if (batch.LiquidClassSelectionStatus == LiquidClassSelectionStatus.NeedsManualResolution)
+            {
+                throw new BusinessRuleException("channel_liquid_class_needs_manual_resolution", "Channel batch needs manual Liquid Class resolution before start.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.LiquidClassSelectionStatus != LiquidClassSelectionStatus.Frozen
+                || string.IsNullOrWhiteSpace(batch.LiquidClassSnapshotJson)
+                || batch.LiquidClassSnapshotJson == "{}")
+            {
+                throw new BusinessRuleException("channel_liquid_class_required", "Each channel batch must have frozen Liquid Class versions before start.", StatusCodes.Status409Conflict);
+            }
+
             if (batch.WorkflowLockedAtUtc is null)
             {
                 dbContext.WorkflowAssignmentHistory.Add(new WorkflowAssignmentHistory

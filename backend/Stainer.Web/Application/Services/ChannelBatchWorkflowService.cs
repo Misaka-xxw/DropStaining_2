@@ -12,7 +12,8 @@ public sealed class ChannelBatchWorkflowService(
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
     IRuntimeEventPublisher eventPublisher,
-    CoordinateProfileLifecycleService coordinateProfileLifecycleService)
+    CoordinateProfileLifecycleService coordinateProfileLifecycleService,
+    LiquidClassSnapshotFactory liquidClassSnapshotFactory)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly string[] ActiveBatchStatuses =
@@ -43,6 +44,9 @@ public sealed class ChannelBatchWorkflowService(
 
                 var batch = await LoadTargetBatchAsync(request, cancellationToken);
                 EnsureBatchCanInitialSelect(batch);
+                var liquidClassSnapshot = batch.LiquidClassSelectionStatus == LiquidClassSelectionStatus.Frozen && batch.LiquidClassSnapshotJson != "{}"
+                    ? LiquidClassSnapshotFactory.ValidateFrozenForWorkflow(version, batch.LiquidClassSnapshotJson)
+                    : await liquidClassSnapshotFactory.FreezeForWorkflowAsync(version, cancellationToken);
                 AddInitialSelectionHistory(batch, actor, request.CommandId, experimentType, version.Id, snapshot, now);
 
                 batch.ExperimentType = experimentType;
@@ -51,6 +55,8 @@ public sealed class ChannelBatchWorkflowService(
                 batch.CoordinateProfileVersionId = coordinate.VersionId;
                 batch.CoordinateSnapshotJson = coordinate.SnapshotJson;
                 batch.CoordinateSelectionStatus = CoordinateSelectionStatus.Frozen;
+                batch.LiquidClassSnapshotJson = liquidClassSnapshot;
+                batch.LiquidClassSelectionStatus = LiquidClassSelectionStatus.Frozen;
                 batch.WorkflowSelectionStatus = WorkflowSelectionStatus.Selected;
                 batch.WorkflowSelectedAtUtc = now;
                 batch.WorkflowSelectedByUserId = actor.UserId;
@@ -144,11 +150,17 @@ public sealed class ChannelBatchWorkflowService(
                         now);
                 }
 
+                var liquidClassSnapshot = batch.LiquidClassSelectionStatus == LiquidClassSelectionStatus.Frozen && batch.LiquidClassSnapshotJson != "{}"
+                    ? LiquidClassSnapshotFactory.ValidateFrozenForWorkflow(version, batch.LiquidClassSnapshotJson)
+                    : await liquidClassSnapshotFactory.FreezeForWorkflowAsync(version, cancellationToken);
+
                 var oldExperimentType = batch.ExperimentType;
                 var oldWorkflowVersionId = batch.SelectedWorkflowVersionId;
                 batch.ExperimentType = experimentType;
                 batch.SelectedWorkflowVersionId = version.Id;
                 batch.WorkflowSnapshotJson = snapshot;
+                batch.LiquidClassSnapshotJson = liquidClassSnapshot;
+                batch.LiquidClassSelectionStatus = LiquidClassSelectionStatus.Frozen;
                 if (isInitialSelection)
                 {
                     batch.CoordinateProfileVersionId = coordinate.VersionId;
@@ -220,6 +232,9 @@ public sealed class ChannelBatchWorkflowService(
                 var existing = activeBatches
                     .OrderByDescending(x => x.CreatedAtUtc)
                     .FirstOrDefault();
+                var liquidClassCatalogSnapshot = existing is null
+                    ? await liquidClassSnapshotFactory.FreezeCatalogAsync(cancellationToken)
+                    : existing.LiquidClassSnapshotJson;
                 var batch = existing ?? new ChannelBatch
                 {
                     DrawerId = drawer.Id,
@@ -227,6 +242,8 @@ public sealed class ChannelBatchWorkflowService(
                     Status = RuntimeLedgerStatus.Pending,
                     WorkflowSnapshotJson = "{}",
                     WorkflowSelectionStatus = WorkflowSelectionStatus.Unselected,
+                    LiquidClassSnapshotJson = liquidClassCatalogSnapshot,
+                    LiquidClassSelectionStatus = LiquidClassSelectionStatus.Frozen,
                     CreatedAtUtc = DateTimeOffset.UtcNow
                 };
 

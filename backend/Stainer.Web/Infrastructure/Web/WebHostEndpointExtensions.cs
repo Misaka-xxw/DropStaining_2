@@ -339,6 +339,18 @@ public static class WebHostEndpointExtensions
             }));
         app.MapGet("/api/engineering/liquid-classes", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListLiquidClassesAsync(cancellationToken)));
+        app.MapPost("/api/engineering/liquid-class-versions/{versionId}/publish", async (HttpContext context, string versionId, PublishLiquidClassVersionRequest request, UserSessionService sessionService, EngineeringWriteService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.PublishLiquidClassVersionAsync(versionId, request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/liquid-class-versions/{versionId}/enable", async (HttpContext context, string versionId, EnableLiquidClassVersionRequest request, UserSessionService sessionService, EngineeringWriteService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.EnableLiquidClassVersionAsync(versionId, request, actor, cancellationToken));
+            }));
         app.MapGet("/api/dab", (MockRuntimeStore store, int? slideCount) => Results.Ok(store.GetDab(slideCount)));
         app.MapGet("/api/dab/positions", async (HttpContext context, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>

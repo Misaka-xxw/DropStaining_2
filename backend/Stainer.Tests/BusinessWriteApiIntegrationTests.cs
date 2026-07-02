@@ -1560,6 +1560,10 @@ public sealed class BusinessWriteApiIntegrationTests
         int requiredVolumeUl,
         string status)
     {
+        var liquidClassProfileId = await dbContext.LiquidClassProfiles
+            .Where(x => x.EnabledVersionId != null)
+            .Select(x => x.Id)
+            .SingleAsync();
         var reagentDefinition = await dbContext.ReagentDefinitions.SingleOrDefaultAsync(x => x.ReagentCode == reagentCode);
         if (reagentDefinition is null)
         {
@@ -1568,9 +1572,14 @@ public sealed class BusinessWriteApiIntegrationTests
                 ReagentCode = reagentCode,
                 Name = $"Reagent {reagentCode}",
                 ReagentType = "test",
+                LiquidClassProfileId = liquidClassProfileId,
                 CreatedAtUtc = DateTimeOffset.UtcNow
             };
             dbContext.ReagentDefinitions.Add(reagentDefinition);
+        }
+        else if (reagentDefinition.LiquidClassProfileId is null)
+        {
+            reagentDefinition.LiquidClassProfileId = liquidClassProfileId;
         }
 
         var workflowDefinition = new WorkflowDefinition

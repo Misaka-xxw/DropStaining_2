@@ -103,10 +103,17 @@ public sealed class EfEngineeringReadRepository(StainerDbContext dbContext) : IE
 
     public async Task<IReadOnlyList<LiquidClassResponse>> ListLiquidClassesAsync(CancellationToken cancellationToken = default)
     {
-        return await dbContext.LiquidClassProfiles
+        var profiles = await dbContext.LiquidClassProfiles
             .AsNoTracking()
+            .AsSplitQuery()
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.Differences)
+            .Include(x => x.Versions)
+            .ThenInclude(x => x.ValidationRecords)
             .OrderBy(x => x.Code)
-            .Select(x => new LiquidClassResponse(
+            .ToListAsync(cancellationToken);
+
+        return profiles.Select(x => new LiquidClassResponse(
                 x.Id,
                 x.Code,
                 x.Name,
@@ -117,8 +124,54 @@ public sealed class EfEngineeringReadRepository(StainerDbContext dbContext) : IE
                 x.ExcessVolumeUl,
                 x.PreWetCycles,
                 x.MixCycles,
-                x.IsEnabled))
-            .ToListAsync(cancellationToken);
+                x.IsEnabled,
+                x.EnabledVersionId,
+                x.Versions
+                    .OrderByDescending(version => version.VersionNo)
+                    .Select(version => new LiquidClassVersionResponse(
+                        version.Id,
+                        version.VersionNo,
+                        version.VersionLabel,
+                        version.Name,
+                        version.Status,
+                        version.Status == LiquidClassVersionStatus.Enabled && x.EnabledVersionId == version.Id,
+                        version.SourceVersionId,
+                        version.ChangeReason,
+                        version.ChangeSummaryJson,
+                        version.LiquidDetectionEnabled,
+                        version.LiquidDetectionSensitivityPercent,
+                        version.LiquidDetectionSpeedUmPerSecond,
+                        version.AspirateSpeedUlPerSecond,
+                        version.AspirateDelayMs,
+                        version.DispenseSpeedUlPerSecond,
+                        version.DispenseDelayMs,
+                        version.LeadingAirGapUl,
+                        version.TrailingAirGapUl,
+                        version.BlowoutVolumeUl,
+                        version.BlowoutDelayMs,
+                        version.VolumeAdjustmentUl,
+                        version.PreWetCycles,
+                        version.MixCycles,
+                        version.CreatedAtUtc,
+                        version.PublishedAtUtc,
+                        version.EnabledAtUtc,
+                        version.Differences.OrderBy(difference => difference.ParameterName)
+                            .Select(difference => new LiquidClassDifferenceResponse(
+                                difference.ParameterName,
+                                difference.PreviousValue,
+                                difference.NewValue,
+                                difference.Unit))
+                            .ToList(),
+                        version.ValidationRecords.OrderBy(record => record.CreatedAtUtc)
+                            .Select(record => new LiquidClassValidationResponse(
+                                record.Stage,
+                                record.IsValid,
+                                record.ResultJson,
+                                record.ValidatedByUserId,
+                                record.CreatedAtUtc))
+                            .ToList()))
+                    .ToList()))
+            .ToList();
     }
 
     private static CoordinateProfileVersionResponse ToVersionResponse(CoordinateProfileVersion version)

@@ -110,6 +110,8 @@ public sealed class MachineRunService(
                     RequestedByUserId = actor.UserId,
                     CoordinateProfileVersionId = coordinateVersionIds[0],
                     CoordinateSnapshotJson = coordinateSnapshotJson,
+                    LiquidClassSnapshotJson = LiquidClassSnapshotFactory.FreezeForRun(batches),
+                    LiquidClassSelectionStatus = LiquidClassSelectionStatus.Frozen,
                     CreatedAtUtc = now
                 };
                 dbContext.MachineRuns.Add(run);
@@ -183,6 +185,18 @@ public sealed class MachineRunService(
                 || batch.CoordinateSnapshotJson == "{}")
             {
                 throw new BusinessRuleException("channel_coordinate_required", "Each channel batch must have a frozen coordinate version before creating a run.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.LiquidClassSelectionStatus == LiquidClassSelectionStatus.NeedsManualResolution)
+            {
+                throw new BusinessRuleException("channel_liquid_class_needs_manual_resolution", "Channel batch needs manual Liquid Class resolution before creating a run.", StatusCodes.Status409Conflict);
+            }
+
+            if (batch.LiquidClassSelectionStatus != LiquidClassSelectionStatus.Frozen
+                || string.IsNullOrWhiteSpace(batch.LiquidClassSnapshotJson)
+                || batch.LiquidClassSnapshotJson == "{}")
+            {
+                throw new BusinessRuleException("channel_liquid_class_required", "Each channel batch must have frozen Liquid Class versions before creating a run.", StatusCodes.Status409Conflict);
             }
 
             if (batch.WorkflowLockedAtUtc is not null || batch.StartedAtUtc is not null || !string.IsNullOrWhiteSpace(batch.MachineRunId))

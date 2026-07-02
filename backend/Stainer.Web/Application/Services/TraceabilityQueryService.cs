@@ -64,6 +64,10 @@ public sealed class TraceabilityQueryService(
                 x.WorkflowStepExecutionId,
                 x.CommandType,
                 x.Status,
+                x.LiquidClassVersionId,
+                x.LiquidClassVersionNo,
+                x.LiquidClassSelectionStatus,
+                x.LiquidClassParametersJson,
                 x.CreatedAtUtc,
                 x.CommandSentAtUtc,
                 x.AcknowledgedAtUtc,
@@ -108,6 +112,8 @@ public sealed class TraceabilityQueryService(
             run.RequestedByUser?.DisplayName ?? run.RequestedByUser?.Username,
             run.CoordinateProfileVersionId,
             run.CoordinateSnapshotJson,
+            run.LiquidClassSelectionStatus,
+            run.LiquidClassSnapshotJson,
             run.ChannelBatches
                 .OrderBy(x => x.DrawerCode)
                 .Select(ToHistoryChannelBatch)
@@ -514,6 +520,8 @@ public sealed class TraceabilityQueryService(
             batch.CoordinateProfileVersionId,
             batch.CoordinateSelectionStatus,
             batch.CoordinateSnapshotJson,
+            batch.LiquidClassSelectionStatus,
+            batch.LiquidClassSnapshotJson,
             batch.WorkflowSelectionStatus,
             batch.CreatedAtUtc,
             batch.StartedAtUtc,

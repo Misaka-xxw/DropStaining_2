@@ -31,6 +31,9 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<ReagentScanSession> ReagentScanSessions => Set<ReagentScanSession>();
     public DbSet<ReagentScanItem> ReagentScanItems => Set<ReagentScanItem>();
     public DbSet<LiquidClassProfile> LiquidClassProfiles => Set<LiquidClassProfile>();
+    public DbSet<LiquidClassVersion> LiquidClassVersions => Set<LiquidClassVersion>();
+    public DbSet<LiquidClassVersionDifference> LiquidClassVersionDifferences => Set<LiquidClassVersionDifference>();
+    public DbSet<LiquidClassValidationRecord> LiquidClassValidationRecords => Set<LiquidClassValidationRecord>();
     public DbSet<LegacyImportRun> LegacyImportRuns => Set<LegacyImportRun>();
     public DbSet<LegacyImportIssue> LegacyImportIssues => Set<LegacyImportIssue>();
     public DbSet<LegacyRuntimeSnapshot> LegacyRuntimeSnapshots => Set<LegacyRuntimeSnapshot>();
@@ -84,6 +87,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureWorkflowReagentRequirement(modelBuilder);
         ConfigurePrimaryAntibodyWorkflowMapping(modelBuilder);
         ConfigureLiquidClassProfile(modelBuilder);
+        ConfigureLiquidClassVersion(modelBuilder);
         ConfigureReagentDefinition(modelBuilder);
         ConfigureReagentBottle(modelBuilder);
         ConfigureReagentRackPlacement(modelBuilder);
@@ -106,6 +110,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     {
         ValidateWorkflowVersionChanges();
         ValidateCoordinateVersionChanges();
+        ValidateLiquidClassVersionChanges();
         EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return base.SaveChanges();
     }
@@ -114,6 +119,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     {
         ValidateWorkflowVersionChanges();
         ValidateCoordinateVersionChanges();
+        ValidateLiquidClassVersionChanges();
         EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
@@ -127,8 +133,59 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     {
         await ValidateWorkflowVersionChangesAsync(cancellationToken);
         await ValidateCoordinateVersionChangesAsync(cancellationToken);
+        ValidateLiquidClassVersionChanges();
         EnsureWorkflowAssignmentHistoryIsAppendOnly();
         return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void ValidateLiquidClassVersionChanges()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries<LiquidClassVersion>())
+        {
+            if (entry.State is not (EntityState.Modified or EntityState.Deleted))
+            {
+                continue;
+            }
+
+            var originalStatus = entry.Property(x => x.Status).OriginalValue;
+            if (originalStatus == LiquidClassVersionStatus.Draft)
+            {
+                continue;
+            }
+
+            if (entry.State == EntityState.Deleted)
+            {
+                throw new InvalidOperationException("Published or enabled Liquid Class versions cannot be deleted.");
+            }
+
+            var allowed = new HashSet<string>(StringComparer.Ordinal)
+            {
+                nameof(LiquidClassVersion.Status),
+                nameof(LiquidClassVersion.PublishedAtUtc),
+                nameof(LiquidClassVersion.PublishedByUserId),
+                nameof(LiquidClassVersion.EnabledAtUtc),
+                nameof(LiquidClassVersion.EnabledByUserId)
+            };
+            if (entry.Properties.Any(x => x.IsModified && !allowed.Contains(x.Metadata.Name)))
+            {
+                throw new InvalidOperationException("Published or enabled Liquid Class parameters are immutable. Create a new draft version.");
+            }
+
+            var currentStatus = entry.Property(x => x.Status).CurrentValue;
+            var validTransition = (originalStatus == LiquidClassVersionStatus.Published && currentStatus == LiquidClassVersionStatus.Enabled)
+                || (originalStatus == LiquidClassVersionStatus.Enabled && currentStatus == LiquidClassVersionStatus.Published)
+                || originalStatus == currentStatus;
+            if (!validTransition)
+            {
+                throw new InvalidOperationException("Liquid Class lifecycle transition is invalid.");
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<LiquidClassVersionDifference>().Where(x => x.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Liquid Class version differences are append-only.");
+        }
     }
 
     private void ValidateWorkflowVersionChanges()
@@ -951,6 +1008,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         entity.Property(x => x.Code).HasColumnName("code").HasMaxLength(128).IsRequired();
         entity.Property(x => x.Name).HasColumnName("name").HasMaxLength(256).IsRequired();
+        entity.Property(x => x.EnabledVersionId).HasColumnName("enabled_version_id").HasMaxLength(36);
         entity.Property(x => x.AspirateSpeedUlPerSecond).HasColumnName("aspirate_speed_ul_per_second");
         entity.Property(x => x.DispenseSpeedUlPerSecond).HasColumnName("dispense_speed_ul_per_second");
         entity.Property(x => x.LeadingAirGapUl).HasColumnName("leading_air_gap_ul");
@@ -963,6 +1021,81 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
         entity.HasIndex(x => x.Code).IsUnique();
+        entity.HasIndex(x => x.EnabledVersionId).IsUnique();
+        entity.HasOne(x => x.EnabledVersion).WithMany().HasForeignKey(x => x.EnabledVersionId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureLiquidClassVersion(ModelBuilder modelBuilder)
+    {
+        var version = modelBuilder.Entity<LiquidClassVersion>();
+        version.ToTable("liquid_class_versions", table => table.HasCheckConstraint(
+            "ck_liquid_class_versions_status",
+            $"status in ('{LiquidClassVersionStatus.Draft}', '{LiquidClassVersionStatus.Published}', '{LiquidClassVersionStatus.Enabled}')"));
+        version.HasKey(x => x.Id);
+        version.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        version.Property(x => x.LiquidClassProfileId).HasColumnName("liquid_class_profile_id").HasMaxLength(36).IsRequired();
+        version.Property(x => x.VersionNo).HasColumnName("version_no").IsRequired();
+        version.Property(x => x.VersionLabel).HasColumnName("version_label").HasMaxLength(64).IsRequired();
+        version.Property(x => x.Name).HasColumnName("name").HasMaxLength(256).IsRequired();
+        version.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        version.Property(x => x.SourceVersionId).HasColumnName("source_version_id").HasMaxLength(36);
+        version.Property(x => x.ChangeReason).HasColumnName("change_reason").HasMaxLength(2000).IsRequired();
+        version.Property(x => x.ChangeSummaryJson).HasColumnName("change_summary_json").HasMaxLength(16000).IsRequired();
+        version.Property(x => x.LiquidDetectionEnabled).HasColumnName("liquid_detection_enabled").IsRequired();
+        version.Property(x => x.LiquidDetectionSensitivityPercent).HasColumnName("liquid_detection_sensitivity_percent").IsRequired();
+        version.Property(x => x.LiquidDetectionSpeedUmPerSecond).HasColumnName("liquid_detection_speed_um_per_second").IsRequired();
+        version.Property(x => x.AspirateSpeedUlPerSecond).HasColumnName("aspirate_speed_ul_per_second").IsRequired();
+        version.Property(x => x.AspirateDelayMs).HasColumnName("aspirate_delay_ms").IsRequired();
+        version.Property(x => x.DispenseSpeedUlPerSecond).HasColumnName("dispense_speed_ul_per_second").IsRequired();
+        version.Property(x => x.DispenseDelayMs).HasColumnName("dispense_delay_ms").IsRequired();
+        version.Property(x => x.LeadingAirGapUl).HasColumnName("leading_air_gap_ul").IsRequired();
+        version.Property(x => x.TrailingAirGapUl).HasColumnName("trailing_air_gap_ul").IsRequired();
+        version.Property(x => x.BlowoutVolumeUl).HasColumnName("blowout_volume_ul").IsRequired();
+        version.Property(x => x.BlowoutDelayMs).HasColumnName("blowout_delay_ms").IsRequired();
+        version.Property(x => x.VolumeAdjustmentUl).HasColumnName("volume_adjustment_ul").IsRequired();
+        version.Property(x => x.PreWetCycles).HasColumnName("pre_wet_cycles").IsRequired();
+        version.Property(x => x.MixCycles).HasColumnName("mix_cycles").IsRequired();
+        version.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
+        version.Property(x => x.PublishedByUserId).HasColumnName("published_by_user_id").HasMaxLength(36);
+        version.Property(x => x.EnabledByUserId).HasColumnName("enabled_by_user_id").HasMaxLength(36);
+        version.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        version.Property(x => x.PublishedAtUtc).HasColumnName("published_at_utc");
+        version.Property(x => x.EnabledAtUtc).HasColumnName("enabled_at_utc");
+        version.HasIndex(x => new { x.LiquidClassProfileId, x.VersionNo }).IsUnique();
+        version.HasIndex(x => x.LiquidClassProfileId).IsUnique().HasFilter($"status = '{LiquidClassVersionStatus.Enabled}'");
+        version.HasIndex(x => x.SourceVersionId);
+        version.HasOne(x => x.LiquidClassProfile).WithMany(x => x.Versions).HasForeignKey(x => x.LiquidClassProfileId).OnDelete(DeleteBehavior.Restrict);
+        version.HasOne(x => x.SourceVersion).WithMany(x => x.DerivedVersions).HasForeignKey(x => x.SourceVersionId).OnDelete(DeleteBehavior.Restrict);
+        version.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.SetNull);
+        version.HasOne(x => x.PublishedByUser).WithMany().HasForeignKey(x => x.PublishedByUserId).OnDelete(DeleteBehavior.SetNull);
+        version.HasOne(x => x.EnabledByUser).WithMany().HasForeignKey(x => x.EnabledByUserId).OnDelete(DeleteBehavior.SetNull);
+
+        var difference = modelBuilder.Entity<LiquidClassVersionDifference>();
+        difference.ToTable("liquid_class_version_differences");
+        difference.HasKey(x => x.Id);
+        difference.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        difference.Property(x => x.LiquidClassVersionId).HasColumnName("liquid_class_version_id").HasMaxLength(36).IsRequired();
+        difference.Property(x => x.ParameterName).HasColumnName("parameter_name").HasMaxLength(128).IsRequired();
+        difference.Property(x => x.PreviousValue).HasColumnName("previous_value").HasMaxLength(512);
+        difference.Property(x => x.NewValue).HasColumnName("new_value").HasMaxLength(512);
+        difference.Property(x => x.Unit).HasColumnName("unit").HasMaxLength(32).IsRequired();
+        difference.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        difference.HasIndex(x => new { x.LiquidClassVersionId, x.ParameterName }).IsUnique();
+        difference.HasOne(x => x.LiquidClassVersion).WithMany(x => x.Differences).HasForeignKey(x => x.LiquidClassVersionId).OnDelete(DeleteBehavior.Cascade);
+
+        var validation = modelBuilder.Entity<LiquidClassValidationRecord>();
+        validation.ToTable("liquid_class_validation_records");
+        validation.HasKey(x => x.Id);
+        validation.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        validation.Property(x => x.LiquidClassVersionId).HasColumnName("liquid_class_version_id").HasMaxLength(36).IsRequired();
+        validation.Property(x => x.Stage).HasColumnName("stage").HasMaxLength(32).IsRequired();
+        validation.Property(x => x.IsValid).HasColumnName("is_valid").IsRequired();
+        validation.Property(x => x.ResultJson).HasColumnName("result_json").HasMaxLength(16000).IsRequired();
+        validation.Property(x => x.ValidatedByUserId).HasColumnName("validated_by_user_id").HasMaxLength(36);
+        validation.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        validation.HasIndex(x => new { x.LiquidClassVersionId, x.CreatedAtUtc });
+        validation.HasOne(x => x.LiquidClassVersion).WithMany(x => x.ValidationRecords).HasForeignKey(x => x.LiquidClassVersionId).OnDelete(DeleteBehavior.Cascade);
+        validation.HasOne(x => x.ValidatedByUser).WithMany().HasForeignKey(x => x.ValidatedByUserId).OnDelete(DeleteBehavior.SetNull);
     }
 
     private static void ConfigureReagentDefinition(ModelBuilder modelBuilder)
@@ -1321,6 +1454,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         runs.Property(x => x.CurrentMajorStepCode).HasColumnName("current_major_step_code").HasMaxLength(128);
         runs.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
         runs.Property(x => x.CoordinateSnapshotJson).HasColumnName("coordinate_snapshot_json").HasMaxLength(40000).HasDefaultValue("{}").IsRequired();
+        runs.Property(x => x.LiquidClassSnapshotJson).HasColumnName("liquid_class_snapshot_json").HasMaxLength(80000).HasDefaultValue("{}").IsRequired();
+        runs.Property(x => x.LiquidClassSelectionStatus).HasColumnName("liquid_class_selection_status").HasMaxLength(32).HasDefaultValue(LiquidClassSelectionStatus.Unselected).IsRequired();
         runs.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         runs.Property(x => x.StartedAtUtc).HasColumnName("started_at_utc");
         runs.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
@@ -1348,6 +1483,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         batches.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
         batches.Property(x => x.CoordinateSnapshotJson).HasColumnName("coordinate_snapshot_json").HasMaxLength(40000).HasDefaultValue("{}").IsRequired();
         batches.Property(x => x.CoordinateSelectionStatus).HasColumnName("coordinate_selection_status").HasMaxLength(32).HasDefaultValue(CoordinateSelectionStatus.Unselected).IsRequired();
+        batches.Property(x => x.LiquidClassSnapshotJson).HasColumnName("liquid_class_snapshot_json").HasMaxLength(80000).HasDefaultValue("{}").IsRequired();
+        batches.Property(x => x.LiquidClassSelectionStatus).HasColumnName("liquid_class_selection_status").HasMaxLength(32).HasDefaultValue(LiquidClassSelectionStatus.Unselected).IsRequired();
         batches.Property(x => x.WorkflowSelectionStatus).HasColumnName("workflow_selection_status").HasMaxLength(32).IsRequired();
         batches.Property(x => x.NeedsManualResolution).HasColumnName("needs_manual_resolution").IsRequired();
         batches.Property(x => x.ManualResolutionReason).HasColumnName("manual_resolution_reason").HasMaxLength(2000).IsRequired();
@@ -1460,6 +1597,10 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         deviceCommands.Property(x => x.CommandType).HasColumnName("command_type").HasMaxLength(128).IsRequired();
         deviceCommands.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         deviceCommands.Property(x => x.PayloadJson).HasColumnName("payload_json").HasMaxLength(8000).IsRequired();
+        deviceCommands.Property(x => x.LiquidClassVersionId).HasColumnName("liquid_class_version_id").HasMaxLength(36);
+        deviceCommands.Property(x => x.LiquidClassVersionNo).HasColumnName("liquid_class_version_no");
+        deviceCommands.Property(x => x.LiquidClassParametersJson).HasColumnName("liquid_class_parameters_json").HasMaxLength(16000).HasDefaultValue("{}").IsRequired();
+        deviceCommands.Property(x => x.LiquidClassSelectionStatus).HasColumnName("liquid_class_selection_status").HasMaxLength(32).HasDefaultValue(LiquidClassSelectionStatus.NotApplicable).IsRequired();
         deviceCommands.Property(x => x.ResultJson).HasColumnName("result_json").HasMaxLength(8000).IsRequired();
         deviceCommands.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         deviceCommands.Property(x => x.CommandSentAtUtc).HasColumnName("command_sent_at_utc");
@@ -1468,6 +1609,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         deviceCommands.HasIndex(x => x.MachineRunId);
         deviceCommands.HasOne(x => x.MachineRun).WithMany().HasForeignKey(x => x.MachineRunId).OnDelete(DeleteBehavior.Cascade);
         deviceCommands.HasOne(x => x.WorkflowStepExecution).WithMany().HasForeignKey(x => x.WorkflowStepExecutionId).OnDelete(DeleteBehavior.SetNull);
+        deviceCommands.HasOne(x => x.LiquidClassVersion).WithMany().HasForeignKey(x => x.LiquidClassVersionId).OnDelete(DeleteBehavior.Restrict);
 
         ConfigureRuntimeConsumables(modelBuilder);
         ConfigureRuntimeAlarms(modelBuilder);

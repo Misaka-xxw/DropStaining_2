@@ -10,6 +10,7 @@ namespace Stainer.Web.Application.Services;
 
 public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDeviceAdapter deviceAdapter)
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly Channel<MachineExecutorCommand> commands = Channel.CreateUnbounded<MachineExecutorCommand>();
     private readonly ConcurrentDictionary<string, ControlFlags> flags = new(StringComparer.Ordinal);
     private IServiceScopeFactory? scopeFactory;
@@ -254,23 +255,49 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         step.WorkflowExecution.SlideTask!.Status = RuntimeLedgerStatus.Running;
         step.WorkflowExecution.SlideTask.ChannelBatch!.Status = RuntimeLedgerStatus.Running;
 
+        var requiresLiquidClass = IsLiquidClassAction(step.ActionType)
+            || (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0);
+        var liquidClass = requiresLiquidClass
+            ? LiquidClassSnapshotFactory.FindForCommand(step.WorkflowExecution.SlideTask.ChannelBatch.LiquidClassSnapshotJson, step.ReagentCode)
+            : null;
+        var liquidParametersJson = liquidClass is null ? "{}" : JsonSerializer.Serialize(liquidClass.Parameters, JsonOptions);
+
         var command = new DeviceCommandExecution
         {
             MachineRunId = run.Id,
             WorkflowStepExecutionId = step.Id,
             CommandType = step.ActionType,
             Status = DeviceCommandStatus.Planned,
+            LiquidClassVersionId = liquidClass?.LiquidClassVersionId,
+            LiquidClassVersionNo = liquidClass?.VersionNo,
+            LiquidClassParametersJson = liquidParametersJson,
+            LiquidClassSelectionStatus = requiresLiquidClass
+                ? liquidClass is null ? LiquidClassSelectionStatus.NeedsManualResolution : LiquidClassSelectionStatus.Frozen
+                : LiquidClassSelectionStatus.NotApplicable,
             PayloadJson = JsonSerializer.Serialize(new
             {
                 step.StepNo,
                 step.MajorStepCode,
                 step.ReagentCode,
-                step.VolumeUl
+                step.VolumeUl,
+                liquidClassVersionId = liquidClass?.LiquidClassVersionId,
+                liquidClassVersionNo = liquidClass?.VersionNo,
+                liquidClassParameters = liquidClass?.Parameters,
+                liquidOperations = liquidClass is null ? Array.Empty<string>() : new[] { "LiquidDetect", "Aspirate", "Dispense", "Blowout" }
             }),
             CreatedAtUtc = now
         };
         dbContext.DeviceCommandExecutions.Add(command);
         await dbContext.SaveChangesAsync(cancellationToken);
+        if (requiresLiquidClass && liquidClass is null)
+        {
+            command.Status = DeviceCommandStatus.Failed;
+            command.CompletedAtUtc = DateTimeOffset.UtcNow;
+            command.ResultJson = JsonSerializer.Serialize(new { ok = false, errorCode = "liquid_class_snapshot_missing" });
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await FaultRunAsync(dbContext, run.Id, step.Id, "Frozen Liquid Class snapshot is missing for the pipetting command.", cancellationToken, "liquid_class_snapshot_missing");
+            return false;
+        }
         PublishSlideTaskState(run.Id, step.WorkflowExecution.SlideTask, step.StepName);
         PublishWorkflowStep(run.Id, step, MachineEventTypes.WorkflowStepStarted);
 
@@ -415,6 +442,12 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 ["majorStepCode"] = step.MajorStepCode,
                 ["reagentCode"] = step.ReagentCode,
                 ["volumeUl"] = step.VolumeUl,
+                ["adjustedVolumeUl"] = step.VolumeUl + (command.LiquidClassVersionId is null
+                    ? 0
+                    : LiquidClassSnapshotFactory.FindForCommand(step.WorkflowExecution!.SlideTask!.ChannelBatch!.LiquidClassSnapshotJson, step.ReagentCode)?.Parameters.VolumeAdjustmentUl ?? 0),
+                ["liquidClassVersionId"] = command.LiquidClassVersionId,
+                ["liquidClassVersionNo"] = command.LiquidClassVersionNo,
+                ["liquidClassParametersJson"] = command.LiquidClassParametersJson,
                 ["targetTemperatureDeciC"] = 420
             });
 
@@ -462,6 +495,16 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         if (action.Contains("mix")) return DeviceModules.Mixer;
         if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0) return DeviceModules.Pipette;
         return DeviceModules.Workflow;
+    }
+
+    private static bool IsLiquidClassAction(string actionType)
+    {
+        var normalized = actionType.Replace("_", string.Empty, StringComparison.Ordinal).Replace("-", string.Empty, StringComparison.Ordinal);
+        return normalized.Contains("aspirat", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("dispens", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("liquiddetect", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("blowout", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("pipett", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<bool> ConsumeReagentAsync(

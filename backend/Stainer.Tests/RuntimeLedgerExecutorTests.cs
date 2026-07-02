@@ -81,6 +81,17 @@ public sealed class RuntimeLedgerExecutorTests
         Assert.Contains(dabBatches, x => x.PreparedAtUtc.HasValue && x.ExpiresAtUtc == x.PreparedAtUtc.Value.AddHours(3));
         Assert.True(await verifyContext.Alarms.AnyAsync(x => x.MachineRunId == run.RunId && x.Code == "reagent_depleted"));
         Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "run.reagent_consumption"));
+        var pipetteCommands = await verifyContext.DeviceCommandExecutions
+            .Where(x => x.MachineRunId == run.RunId && x.LiquidClassSelectionStatus == LiquidClassSelectionStatus.Frozen)
+            .ToListAsync();
+        Assert.NotEmpty(pipetteCommands);
+        Assert.All(pipetteCommands, command =>
+        {
+            Assert.NotNull(command.LiquidClassVersionId);
+            Assert.True(command.LiquidClassVersionNo > 0);
+            Assert.Contains("aspirateSpeedUlPerSecond", command.LiquidClassParametersJson);
+            Assert.Contains("liquidOperations", command.PayloadJson);
+        });
     }
 
     [Fact]
@@ -811,6 +822,9 @@ public sealed class RuntimeLedgerExecutorTests
         IReadOnlyList<(string MajorStepCode, string ActionType, string? ReagentCode, int? VolumeUl)> steps,
         IReadOnlyList<(string ReagentCode, int RequiredVolumeUl)> requirements)
     {
+        var defaultLiquidClass = await dbContext.LiquidClassProfiles
+            .Include(x => x.EnabledVersion)
+            .SingleAsync(x => x.EnabledVersionId != null);
         foreach (var requirement in requirements)
         {
             if (!await dbContext.ReagentDefinitions.AnyAsync(x => x.ReagentCode == requirement.ReagentCode))
@@ -820,10 +834,12 @@ public sealed class RuntimeLedgerExecutorTests
                     ReagentCode = requirement.ReagentCode,
                     Name = $"Reagent {requirement.ReagentCode}",
                     ReagentType = "test",
+                    LiquidClassProfileId = defaultLiquidClass.Id,
                     CreatedAtUtc = DateTimeOffset.UtcNow
                 });
             }
         }
+        await dbContext.SaveChangesAsync();
 
         var workflowDefinition = new WorkflowDefinition
         {
@@ -879,6 +895,7 @@ public sealed class RuntimeLedgerExecutorTests
             .Select(x => x.Id)
             .SingleAsync();
         var coordinateSnapshot = $$"""{"coordinateProfileVersionId":"{{coordinateVersionId}}","source":"runtime-test"}""";
+        var liquidClassSnapshot = await new LiquidClassSnapshotFactory(dbContext).FreezeForWorkflowAsync(workflowVersion);
         var task = new StainingTask
         {
             TaskCode = $"TASK-{workflowCode}",
@@ -908,6 +925,8 @@ public sealed class RuntimeLedgerExecutorTests
                 CoordinateProfileVersionId = coordinateVersionId,
                 CoordinateSnapshotJson = coordinateSnapshot,
                 CoordinateSelectionStatus = CoordinateSelectionStatus.Frozen,
+                LiquidClassSnapshotJson = liquidClassSnapshot,
+                LiquidClassSelectionStatus = LiquidClassSelectionStatus.Frozen,
                 WorkflowSelectionStatus = WorkflowSelectionStatus.Selected,
                 WorkflowSelectedAtUtc = DateTimeOffset.UtcNow,
                 CreatedAtUtc = DateTimeOffset.UtcNow

@@ -114,4 +114,61 @@ public sealed record LiquidClassResponse(
     int? ExcessVolumeUl,
     int? PreWetCycles,
     int? MixCycles,
-    bool IsEnabled);
+    bool IsEnabled,
+    string? EnabledVersionId,
+    IReadOnlyList<LiquidClassVersionResponse> Versions);
+
+public sealed record LiquidClassVersionResponse(
+    string Id,
+    int VersionNo,
+    string VersionLabel,
+    string Name,
+    string Status,
+    bool IsReferenceable,
+    string? SourceVersionId,
+    string ChangeReason,
+    string ChangeSummaryJson,
+    bool LiquidDetectionEnabled,
+    int LiquidDetectionSensitivityPercent,
+    int LiquidDetectionSpeedUmPerSecond,
+    int AspirateSpeedUlPerSecond,
+    int AspirateDelayMs,
+    int DispenseSpeedUlPerSecond,
+    int DispenseDelayMs,
+    int LeadingAirGapUl,
+    int TrailingAirGapUl,
+    int BlowoutVolumeUl,
+    int BlowoutDelayMs,
+    int VolumeAdjustmentUl,
+    int PreWetCycles,
+    int MixCycles,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset? PublishedAtUtc,
+    DateTimeOffset? EnabledAtUtc,
+    IReadOnlyList<LiquidClassDifferenceResponse> Differences,
+    IReadOnlyList<LiquidClassValidationResponse> ValidationRecords);
+
+public sealed record LiquidClassDifferenceResponse(
+    string ParameterName,
+    string? PreviousValue,
+    string? NewValue,
+    string Unit);
+
+public sealed record LiquidClassValidationResponse(
+    string Stage,
+    bool IsValid,
+    string ResultJson,
+    string? ValidatedByUserId,
+    DateTimeOffset CreatedAtUtc);
+
+public sealed record LiquidClassVersionMutationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string LiquidClassId,
+    string LiquidClassVersionId,
+    int VersionNo,
+    string VersionLabel,
+    string Status,
+    bool IsReferenceable,
+    string Message);

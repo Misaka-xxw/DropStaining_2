@@ -13,6 +13,8 @@ public sealed class ChannelBatch
     public string? CoordinateProfileVersionId { get; set; }
     public string CoordinateSnapshotJson { get; set; } = "{}";
     public string CoordinateSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.CoordinateSelectionStatus.Unselected;
+    public string LiquidClassSnapshotJson { get; set; } = "{}";
+    public string LiquidClassSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.LiquidClassSelectionStatus.Unselected;
     public string WorkflowSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.WorkflowSelectionStatus.Unselected;
     public bool NeedsManualResolution { get; set; }
     public string ManualResolutionReason { get; set; } = string.Empty;
@@ -84,6 +86,8 @@ public sealed class MachineRun
     public string? CurrentMajorStepCode { get; set; }
     public string? CoordinateProfileVersionId { get; set; }
     public string CoordinateSnapshotJson { get; set; } = "{}";
+    public string LiquidClassSnapshotJson { get; set; } = "{}";
+    public string LiquidClassSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.LiquidClassSelectionStatus.Unselected;
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? StartedAtUtc { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
@@ -138,6 +142,10 @@ public sealed class DeviceCommandExecution
     public string CommandType { get; set; } = string.Empty;
     public string Status { get; set; } = DeviceCommandStatus.Planned;
     public string PayloadJson { get; set; } = "{}";
+    public string? LiquidClassVersionId { get; set; }
+    public int? LiquidClassVersionNo { get; set; }
+    public string LiquidClassParametersJson { get; set; } = "{}";
+    public string LiquidClassSelectionStatus { get; set; } = Stainer.Web.Domain.Entities.LiquidClassSelectionStatus.NotApplicable;
     public string ResultJson { get; set; } = "{}";
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? CommandSentAtUtc { get; set; }
@@ -146,6 +154,7 @@ public sealed class DeviceCommandExecution
 
     public MachineRun? MachineRun { get; set; }
     public WorkflowStepExecution? WorkflowStepExecution { get; set; }
+    public LiquidClassVersion? LiquidClassVersion { get; set; }
 }
 
 public sealed class ReagentReservation
@@ -292,6 +301,14 @@ public static class CoordinateSelectionStatus
 {
     public const string Unselected = "Unselected";
     public const string Frozen = "Frozen";
+    public const string NeedsManualResolution = "NeedsManualResolution";
+}
+
+public static class LiquidClassSelectionStatus
+{
+    public const string Unselected = "Unselected";
+    public const string Frozen = "Frozen";
+    public const string NotApplicable = "NotApplicable";
     public const string NeedsManualResolution = "NeedsManualResolution";
 }
 

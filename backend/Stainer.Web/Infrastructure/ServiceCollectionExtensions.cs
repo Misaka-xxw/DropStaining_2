@@ -54,6 +54,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DabLifecycleService>();
         services.AddScoped<CoordinateProfileLifecycleService>();
         services.AddScoped<EngineeringWriteService>();
+        services.AddScoped<LiquidClassSnapshotFactory>();
         services.AddScoped<PreflightValidationService>();
         services.AddScoped<MachineRunService>();
         services.AddScoped<MachineRunQueryService>();

@@ -243,6 +243,24 @@ public sealed record SaveLiquidClassRequest(
     int? PreWetCycles,
     int? MixCycles,
     bool IsEnabled,
+    string Reason,
+    string? SourceVersionId = null,
+    string? VersionLabel = null,
+    bool? LiquidDetectionEnabled = null,
+    int? LiquidDetectionSensitivityPercent = null,
+    int? LiquidDetectionSpeedUmPerSecond = null,
+    int? AspirateDelayMs = null,
+    int? DispenseDelayMs = null,
+    int? BlowoutVolumeUl = null,
+    int? BlowoutDelayMs = null,
+    int? VolumeAdjustmentUl = null);
+
+public sealed record PublishLiquidClassVersionRequest(
+    string CommandId,
+    string Reason);
+
+public sealed record EnableLiquidClassVersionRequest(
+    string CommandId,
     string Reason);
 
 public sealed record SaveDeviceProfileRequest(
