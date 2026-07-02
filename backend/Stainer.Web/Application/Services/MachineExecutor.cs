@@ -983,6 +983,11 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             return washTarget;
         }
 
+        if (step.ActionType.Contains("wash", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
         if (!string.IsNullOrWhiteSpace(step.ReagentCode) && (step.VolumeUl ?? 0) > 0)
         {
             return step.WorkflowExecution?.SlideTask?.SlotCode;
@@ -1016,8 +1021,36 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             return true;
         }
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var placements = await dbContext.ReagentRackPlacements
+        var reservations = await dbContext.ReagentReservations
+            .Include(x => x.ReagentBottle)
+            .Where(x => x.MachineRunId == run.Id
+                && x.ReagentCode == reagentCode
+                && x.ReservationKind == ReagentReservationKind.MachineRun
+                && x.Status == ReagentReservationStatus.Reserved
+                && x.ReagentBottleId != null
+                && x.ReservedVolumeUl > 0)
+            .ToListAsync(cancellationToken);
+        reservations = reservations.OrderBy(x => x.CreatedAtUtc).ToList();
+        var reservedBottleIds = reservations.Select(x => x.ReagentBottleId!).ToList();
+        var reservedPlacements = await dbContext.ReagentRackPlacements
+            .AsNoTracking()
+            .Include(x => x.ReagentRackPosition)
+            .Where(x => x.RemovedAtUtc == null && reservedBottleIds.Contains(x.ReagentBottleId))
+            .ToDictionaryAsync(x => x.ReagentBottleId, x => x.ReagentRackPosition!.Code, cancellationToken);
+
+        var sources = reservations
+            .Where(x => x.ReagentBottle is not null)
+            .Select(x => new ReagentSourceAllocation(
+                x.ReagentBottle!,
+                Math.Min(x.ReservedVolumeUl, x.ReagentBottle!.RemainingVolumeUl),
+                reservedPlacements.GetValueOrDefault(x.ReagentBottleId!),
+                x))
+            .ToList();
+
+        if (sources.Count == 0)
+        {
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var placements = await dbContext.ReagentRackPlacements
             .Where(x => x.RemovedAtUtc == null)
             .Include(x => x.ReagentRackPosition)
             .Include(x => x.ReagentBottle)
@@ -1025,9 +1058,13 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 && x.ReagentBottle.Status == "Available"
                 && x.ReagentBottle.ExpirationDate >= today
                 && x.ReagentBottle.RemainingVolumeUl > 0)
-            .ToListAsync(cancellationToken);
+                .ToListAsync(cancellationToken);
+            sources = placements
+                .Select(x => new ReagentSourceAllocation(x.ReagentBottle!, x.ReagentBottle!.RemainingVolumeUl, x.ReagentRackPosition?.Code, null))
+                .ToList();
+        }
 
-        var available = placements.Sum(x => x.ReagentBottle!.RemainingVolumeUl);
+        var available = sources.Sum(x => x.AvailableVolumeUl);
         if (available < volumeUl)
         {
             await AddAlarmAsync(dbContext, run.Id, "reagent_insufficient", "Critical", $"Reagent {reagentCode} is insufficient. Required {volumeUl} ul, available {available} ul.", cancellationToken);
@@ -1035,18 +1072,27 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
         }
 
         var remaining = volumeUl;
-        foreach (var placement in placements.OrderBy(x => x.ReagentBottle!.RemainingVolumeUl))
+        foreach (var source in sources.OrderBy(x => x.AvailableVolumeUl))
         {
             if (remaining <= 0)
             {
                 break;
             }
 
-            var bottle = placement.ReagentBottle!;
-            var used = Math.Min(remaining, bottle.RemainingVolumeUl);
+            var bottle = source.Bottle;
+            var used = Math.Min(remaining, source.AvailableVolumeUl);
             bottle.RemainingVolumeUl -= used;
             bottle.UpdatedAtUtc = DateTimeOffset.UtcNow;
             remaining -= used;
+            if (source.Reservation is not null)
+            {
+                source.Reservation.ReservedVolumeUl -= used;
+                source.Reservation.UpdatedAtUtc = DateTimeOffset.UtcNow;
+                if (source.Reservation.ReservedVolumeUl == 0)
+                {
+                    source.Reservation.Status = ReagentReservationStatus.Consumed;
+                }
+            }
 
             dbContext.ReagentConsumptions.Add(new ReagentConsumption
             {
@@ -1064,7 +1110,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 ReagentBottleId = bottle.Id,
                 ReagentCode = reagentCode,
                 VolumeUl = used,
-                SourcePositionCode = placement.ReagentRackPosition?.Code,
+                SourcePositionCode = source.PositionCode,
                 TargetSlotCode = step.WorkflowExecution!.SlideTask!.SlotCode,
                 Status = DeviceCommandStatus.Completed,
                 CreatedAtUtc = DateTimeOffset.UtcNow
@@ -1100,6 +1146,12 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
 
         return true;
     }
+
+    private sealed record ReagentSourceAllocation(
+        ReagentBottle Bottle,
+        int AvailableVolumeUl,
+        string? PositionCode,
+        ReagentReservation? Reservation);
 
     private async Task<bool> ApplyDabAsync(
         StainerDbContext dbContext,

@@ -145,7 +145,7 @@ public sealed class MachineRunService(
                     }
                 }
 
-                await AddReservationsAsync(run, cancellationToken);
+                await AddReservationsAsync(run, request.CommandId, actor, cancellationToken);
                 AddAudit(actor, "run.create", run.Id, new { run.RunCode, taskIds = tasks.Select(x => x.Id).ToArray(), coordinateProfileVersionId = run.CoordinateProfileVersionId });
 
                 return new CommandExecutionResult<MachineRunResponse>(
@@ -270,26 +270,103 @@ public sealed class MachineRunService(
         }).ToList();
     }
 
-    private async Task AddReservationsAsync(MachineRun run, CancellationToken cancellationToken)
+    private async Task AddReservationsAsync(
+        MachineRun run,
+        string commandId,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken)
     {
-        var workflowVersionIds = run.WorkflowExecutions.Select(x => x.WorkflowVersionId).Distinct().ToList();
-        var requirements = await dbContext.WorkflowReagentRequirements
-            .AsNoTracking()
-            .Where(x => workflowVersionIds.Contains(x.WorkflowVersionId) && x.IsRequired)
-            .GroupBy(x => x.ReagentCode)
-            .Select(x => new { ReagentCode = x.Key, RequiredVolumeUl = x.Sum(y => y.RequiredVolumeUl ?? 0) })
-            .ToListAsync(cancellationToken);
+        var requirements = run.WorkflowExecutions
+            .SelectMany(x => x.StepExecutions)
+            .Where(x => !string.IsNullOrWhiteSpace(x.ReagentCode)
+                && (x.VolumeUl ?? 0) > 0
+                && !x.ActionType.Equals("Dab", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(x => x.ReagentCode!, StringComparer.OrdinalIgnoreCase)
+            .Select(x => new { ReagentCode = x.Key, RequiredVolumeUl = x.Sum(y => y.VolumeUl!.Value) })
+            .ToList();
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         foreach (var requirement in requirements)
         {
-            dbContext.ReagentReservations.Add(new ReagentReservation
+            var placements = await dbContext.ReagentRackPlacements
+                .AsNoTracking()
+                .Include(x => x.ReagentBottle)
+                .Include(x => x.ReagentRackPosition)
+                .Where(x => x.RemovedAtUtc == null
+                    && x.ReagentBottle!.ReagentCode == requirement.ReagentCode
+                    && x.ReagentBottle.Status == "Available"
+                    && x.ReagentBottle.ExpirationDate >= today
+                    && x.ReagentBottle.RemainingVolumeUl > 0)
+                .OrderBy(x => x.ReagentBottle!.ExpirationDate)
+                .ThenBy(x => x.ReagentRackPosition!.PositionNo)
+                .ToListAsync(cancellationToken);
+            if (placements.Count == 0)
             {
-                MachineRun = run,
-                ReagentCode = requirement.ReagentCode,
-                RequiredVolumeUl = requirement.RequiredVolumeUl,
-                ReservedVolumeUl = requirement.RequiredVolumeUl,
-                CreatedAtUtc = DateTimeOffset.UtcNow
-            });
+                dbContext.ReagentReservations.Add(new ReagentReservation
+                {
+                    MachineRun = run,
+                    ReagentCode = requirement.ReagentCode,
+                    ReservationKind = ReagentReservationKind.MachineRun,
+                    SourceRole = "Workflow",
+                    Status = ReagentReservationStatus.Reserved,
+                    CommandId = commandId,
+                    CreatedByUserId = actor.UserId,
+                    RequiredVolumeUl = requirement.RequiredVolumeUl,
+                    ReservedVolumeUl = requirement.RequiredVolumeUl,
+                    CreatedAtUtc = DateTimeOffset.UtcNow
+                });
+                continue;
+            }
+
+            var bottleIds = placements.Select(x => x.ReagentBottleId).ToList();
+            var alreadyReserved = await dbContext.ReagentReservations
+                .AsNoTracking()
+                .Where(x => bottleIds.Contains(x.ReagentBottleId!) && x.Status == ReagentReservationStatus.Reserved)
+                .GroupBy(x => x.ReagentBottleId!)
+                .Select(x => new { BottleId = x.Key, VolumeUl = x.Sum(y => y.ReservedVolumeUl) })
+                .ToDictionaryAsync(x => x.BottleId, x => x.VolumeUl, cancellationToken);
+
+            var remaining = requirement.RequiredVolumeUl;
+            foreach (var placement in placements)
+            {
+                if (remaining <= 0)
+                {
+                    break;
+                }
+
+                var bottle = placement.ReagentBottle!;
+                var available = Math.Max(0, bottle.RemainingVolumeUl - alreadyReserved.GetValueOrDefault(bottle.Id));
+                var reserved = Math.Min(remaining, available);
+                if (reserved <= 0)
+                {
+                    continue;
+                }
+
+                dbContext.ReagentReservations.Add(new ReagentReservation
+                {
+                    MachineRun = run,
+                    ReagentBottleId = bottle.Id,
+                    ReagentCode = requirement.ReagentCode,
+                    ReservationKind = ReagentReservationKind.MachineRun,
+                    SourceRole = "Workflow",
+                    Status = ReagentReservationStatus.Reserved,
+                    CommandId = commandId,
+                    CreatedByUserId = actor.UserId,
+                    RequiredVolumeUl = reserved,
+                    ReservedVolumeUl = reserved,
+                    CreatedAtUtc = DateTimeOffset.UtcNow
+                });
+                remaining -= reserved;
+            }
+
+            if (remaining > 0)
+            {
+                throw new BusinessRuleException(
+                    "reagent_reservation_insufficient",
+                    $"Reagent {requirement.ReagentCode} cannot reserve {requirement.RequiredVolumeUl} ul from available rack bottles.",
+                    StatusCodes.Status409Conflict);
+            }
         }
     }
 
