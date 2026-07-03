@@ -47,15 +47,78 @@ public sealed class TraceabilityApiIntegrationTests
         Assert.NotNull(noMatch);
         Assert.Empty(noMatch!.Items);
 
-        var detail = await client.GetFromJsonAsync<HistoryRunDetailResponse>($"/api/history/runs/{seeded.MachineRunId}");
-        Assert.NotNull(detail);
-        Assert.Equal(seeded.MachineRunId, detail!.MachineRunId);
-        Assert.Single(detail.ChannelBatches);
-        Assert.Single(detail.WorkflowExecutions);
-        Assert.Single(detail.DeviceCommands);
-        Assert.Single(detail.ReagentConsumptions);
-        Assert.Single(detail.DabUsages);
-        Assert.Equal(2, detail.Alarms.Count);
+        var operatorDetail = await client.GetFromJsonAsync<JsonElement>($"/api/history/runs/{seeded.MachineRunId}");
+        Assert.Equal(seeded.MachineRunId, operatorDetail.GetProperty("machineRunId").GetString());
+        Assert.Single(operatorDetail.GetProperty("channels").EnumerateArray());
+        Assert.False(operatorDetail.TryGetProperty("deviceCommands", out _));
+        Assert.False(operatorDetail.TryGetProperty("coordinateSnapshotJson", out _));
+        Assert.False(operatorDetail.TryGetProperty("liquidClassSnapshotJson", out _));
+
+        using var engineerClient = factory.CreateClient();
+        await LoginAsync(engineerClient, "engineer", "engineer");
+        var engineeringDetail = await engineerClient.GetFromJsonAsync<HistoryRunDetailResponse>($"/api/history/runs/{seeded.MachineRunId}");
+        Assert.NotNull(engineeringDetail);
+        Assert.Single(engineeringDetail!.ChannelBatches);
+        Assert.Single(engineeringDetail.WorkflowExecutions);
+        Assert.Single(engineeringDetail.DeviceCommands);
+        Assert.Single(engineeringDetail.ReagentConsumptions);
+        Assert.Single(engineeringDetail.DabUsages);
+        Assert.Equal(2, engineeringDetail.Alarms.Count);
+    }
+
+    [Fact]
+    public async Task Operator_alarm_surfaces_hide_technical_details_while_engineering_diagnostics_keep_them()
+    {
+        await using var factory = CreateFactory();
+        var seeded = await SeedTraceabilityGraphAsync(factory);
+
+        using var operatorClient = factory.CreateClient();
+        await LoginAsync(operatorClient, "operator", "operator");
+
+        var list = await operatorClient.GetFromJsonAsync<TraceabilityListResponse<TraceAlarmResponse>>(
+            "/api/alarms?alarmCode=database_backup_degraded");
+        var alarm = Assert.Single(list!.Items);
+        Assert.Equal("数据库维护", alarm.Code);
+        Assert.Equal("数据库备份已完成，临时文件清理待工程维护。", alarm.Message);
+        AssertOperatorSafe(JsonSerializer.Serialize(alarm));
+
+        var detail = await operatorClient.GetFromJsonAsync<JsonElement>($"/api/history/runs/{seeded.MachineRunId}");
+        AssertOperatorSafe(detail.GetRawText());
+        var detailAlarm = Assert.Single(detail.GetProperty("alarms").EnumerateArray(),
+            x => x.GetProperty("alarmId").GetString() == seeded.CriticalAlarmId);
+        Assert.Equal("数据库维护", detailAlarm.GetProperty("code").GetString());
+
+        var snapshot = await operatorClient.GetFromJsonAsync<JsonElement>("/api/operator/snapshot");
+        Assert.Contains(snapshot.GetProperty("alarms").EnumerateArray(),
+            x => x.GetString() == "数据库备份已完成，临时文件清理待工程维护。");
+        AssertOperatorSafe(snapshot.GetProperty("alarms").GetRawText());
+        AssertOperatorSafe(snapshot.GetProperty("alarmDetails").GetRawText());
+        AssertOperatorSafe(snapshot.GetProperty("recentEvents").GetRawText());
+
+        var operatorRun = await operatorClient.GetFromJsonAsync<JsonElement>($"/api/runs/{seeded.MachineRunId}");
+        AssertOperatorSafe(operatorRun.GetRawText());
+        Assert.Equal(string.Empty, operatorRun.GetProperty("coordinateSnapshotJson").GetString());
+        Assert.Equal(string.Empty, operatorRun.GetProperty("liquidClassSnapshotJson").GetString());
+
+        var csvResponse = await operatorClient.GetAsync("/api/alarms/export?alarmCode=database_backup_degraded");
+        Assert.Equal(HttpStatusCode.OK, csvResponse.StatusCode);
+        var csv = await csvResponse.Content.ReadAsStringAsync();
+        Assert.Contains("Category", csv.Split('\n')[0]);
+        Assert.DoesNotContain(",Code,", csv.Split('\n')[0]);
+        Assert.Contains("数据库备份已完成，临时文件清理待工程维护。", csv);
+        AssertOperatorSafe(csv);
+
+        using var engineerClient = factory.CreateClient();
+        await LoginAsync(engineerClient, "engineer", "engineer");
+        var engineeringRun = await engineerClient.GetFromJsonAsync<JsonElement>($"/api/runs/{seeded.MachineRunId}");
+        AssertOperatorSafe(engineeringRun.GetProperty("alarms").GetRawText());
+        var diagnostics = await engineerClient.GetFromJsonAsync<TraceabilityListResponse<EngineeringErrorCodeResponse>>(
+            "/api/engineering/diagnostics/errors?code=database_backup_degraded");
+        var engineeringAlarm = Assert.Single(diagnostics!.Items);
+        Assert.Equal("database_backup_degraded", engineeringAlarm.Code);
+        Assert.Contains("AttemptDirectory", engineeringAlarm.Message);
+        Assert.Contains("SQLite", engineeringAlarm.Message);
+        Assert.Contains("StateHash", engineeringAlarm.Message);
     }
 
     [Fact]
@@ -397,9 +460,9 @@ public sealed class TraceabilityApiIntegrationTests
         var criticalAlarm = new Alarm
         {
             MachineRun = machineRun,
-            Code = "TRACE_CRITICAL",
+            Code = "database_backup_degraded",
             Severity = "Critical",
-            Message = "Trace critical alarm.",
+            Message = "Database backup completed. AttemptDirectory=%TEMP%\\stainer-backup-attempts\\attempt-1; FinalBackup=C:\\data\\stainer-backup.db; SQLite error: database is locked; StateHash=ABC123; RequestJson={raw-packet}.",
             Status = "Active",
             CreatedAtUtc = createdAtUtc.AddSeconds(30)
         };
@@ -503,4 +566,15 @@ public sealed class TraceabilityApiIntegrationTests
         string StainingTaskId,
         string CriticalAlarmId,
         DateTimeOffset CreatedAtUtc);
+
+    private static void AssertOperatorSafe(string value)
+    {
+        Assert.DoesNotContain("%TEMP%", value, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("stainer-backup.db", value, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SQLite", value, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AttemptDirectory", value, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("database_backup_degraded", value, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("raw-packet", value, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("StateHash", value, StringComparison.OrdinalIgnoreCase);
+    }
 }

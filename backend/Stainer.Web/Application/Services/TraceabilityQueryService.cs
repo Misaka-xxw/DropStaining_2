@@ -285,11 +285,12 @@ public sealed class TraceabilityQueryService(
         var paged = PageCandidates(candidates, filters, descending: true);
         var rows = await LoadAlarmItemsAsync(paged.Ids, cancellationToken);
         var csv = BuildCsv(
-            ["AlarmId", "RunId", "Code", "Severity", "Status", "Message", "SourceChannels", "AckBy", "AckAtUtc", "AckReason", "CreatedAtUtc"],
+            ["AlarmId", "RunId", "Category", "Severity", "Status", "Summary", "SourceChannels", "AckBy", "AckAtUtc", "CreatedAtUtc"],
             rows.Select(x => new[]
             {
-                x.AlarmId, x.MachineRunId ?? string.Empty, x.Code, x.Severity, x.Status, x.Message, x.SourceChannels ?? string.Empty,
-                x.AckBy ?? string.Empty, Format(x.AckAtUtc), x.AckReason ?? string.Empty, Format(x.CreatedAtUtc)
+                x.AlarmId, x.MachineRunId ?? string.Empty, OperatorAlarmPresentation.Category(x.Code), x.Severity, x.Status,
+                OperatorAlarmPresentation.Summary(x.Code, x.Severity), x.SourceChannels ?? string.Empty,
+                x.AckBy ?? string.Empty, Format(x.AckAtUtc), Format(x.CreatedAtUtc)
             }));
         await AddExportAuditAsync(actor, "alarms", rows.Count, filters, cancellationToken);
         return CsvExport("alarms", csv, rows.Count);

@@ -1,6 +1,7 @@
 namespace Stainer.Web.Infrastructure.Web;
 
 using Microsoft.Extensions.Hosting;
+using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Services;
 using Stainer.Web.Application.Requests;
 using Stainer.Web.Infrastructure.Health;
@@ -28,10 +29,12 @@ public static class WebHostEndpointExtensions
     public static void MapStainerWebHostEndpoints(this WebApplication app)
     {
         app.MapHub<MachineHub>(MachineHub.Route);
+        var legacyRuntimeCompatibilityEnabled = app.Environment.IsDevelopment()
+            || app.Environment.IsEnvironment("Testing");
 
-        var pageRoutes = app.Environment.IsProduction()
-            ? PageRoutes
-            : PageRoutes.Concat(["/mock-timeline"]);
+        var pageRoutes = legacyRuntimeCompatibilityEnabled
+            ? PageRoutes.Concat(["/mock-timeline"])
+            : PageRoutes.Where(x => !x.Equals("/control-console", StringComparison.OrdinalIgnoreCase));
 
         foreach (var route in pageRoutes)
         {
@@ -232,8 +235,11 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.RequestRestoreAsync(request, actor, cancellationToken));
             }));
-        app.MapGet("/api/state", async (RuntimePageBridgeService bridge, CancellationToken cancellationToken) =>
-            Results.Ok(await bridge.GetStateAsync(cancellationToken)));
+        if (legacyRuntimeCompatibilityEnabled)
+        {
+            app.MapGet("/api/state", async (RuntimePageBridgeService bridge, CancellationToken cancellationToken) =>
+                Results.Ok(await bridge.GetStateAsync(cancellationToken)));
+        }
         app.MapGet("/api/operator/snapshot", async (HttpContext context, UserSessionService sessionService, OperatorSnapshotQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -248,10 +254,18 @@ public static class WebHostEndpointExtensions
                     ? Results.Json(new { code = "authentication_required", detail = "Login is required." }, statusCode: StatusCodes.Status401Unauthorized)
                     : Results.Ok(UserSessionService.ToCurrentUser(user));
             }));
-        app.MapGet("/api/users", async (UserQueryService service, CancellationToken cancellationToken) =>
-            Results.Ok(await service.ListUsersAsync(cancellationToken)));
-        app.MapGet("/api/roles", async (UserQueryService service, CancellationToken cancellationToken) =>
-            Results.Ok(await service.ListRolesAsync(cancellationToken)));
+        app.MapGet("/api/users", async (HttpContext context, UserSessionService sessionService, UserQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireRoleAsync(context, "admin", cancellationToken);
+                return Results.Ok(await service.ListUsersAsync(cancellationToken));
+            }));
+        app.MapGet("/api/roles", async (HttpContext context, UserSessionService sessionService, UserQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireRoleAsync(context, "admin", cancellationToken);
+                return Results.Ok(await service.ListRolesAsync(cancellationToken));
+            }));
         app.MapGet("/api/workflows", async (WorkflowQueryService service, CancellationToken cancellationToken) =>
             Results.Ok(await service.ListAsync(cancellationToken)));
         app.MapGet("/api/workflows/{id}", async (string id, WorkflowQueryService service, CancellationToken cancellationToken) =>
@@ -484,10 +498,18 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
                 return ToCsvFile(await service.ExportMockCommunicationsAsync(context.Request.Query, actor, cancellationToken));
             }));
-        app.MapGet("/api/engineering/layout", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
-            Results.Ok(await service.GetLayoutAsync(cancellationToken)));
-        app.MapGet("/api/engineering/coordinate-profiles", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
-            Results.Ok(await service.ListCoordinateProfilesAsync(cancellationToken)));
+        app.MapGet("/api/engineering/layout", async (HttpContext context, UserSessionService sessionService, EngineeringQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.GetLayoutAsync(cancellationToken));
+            }));
+        app.MapGet("/api/engineering/coordinate-profiles", async (HttpContext context, UserSessionService sessionService, EngineeringQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListCoordinateProfilesAsync(cancellationToken));
+            }));
         app.MapGet("/api/engineering/coordinate-profile-versions/{versionId}", async (HttpContext context, string versionId, UserSessionService sessionService, EngineeringConfigService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -529,8 +551,12 @@ public static class WebHostEndpointExtensions
                 await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason, request.Target ?? $"coordinate-version:{versionId}", request.DangerousOperationConfirmed, cancellationToken);
                 return Results.Ok(await service.DeactivateCoordinateVersionAsync(versionId, request, actor, cancellationToken));
             }));
-        app.MapGet("/api/engineering/liquid-classes", async (EngineeringQueryService service, CancellationToken cancellationToken) =>
-            Results.Ok(await service.ListLiquidClassesAsync(cancellationToken)));
+        app.MapGet("/api/engineering/liquid-classes", async (HttpContext context, UserSessionService sessionService, EngineeringQueryService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ListLiquidClassesAsync(cancellationToken));
+            }));
         app.MapGet("/api/engineering/liquid-class-versions/{versionId}", async (HttpContext context, string versionId, UserSessionService sessionService, EngineeringConfigService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -584,7 +610,10 @@ public static class WebHostEndpointExtensions
                 await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason, request.Target ?? $"config-import:{request.ConfigType}:{request.TargetCode}", request.DangerousOperationConfirmed, cancellationToken);
                 return Results.Ok(await service.ApplyImportAsync(request, actor, cancellationToken));
             }));
-        app.MapGet("/api/dab", (MockRuntimeStore store, int? slideCount) => Results.Ok(store.GetDab(slideCount)));
+        if (app.Environment.IsDevelopment())
+        {
+            app.MapGet("/api/dab", (MockRuntimeStore store, int? slideCount) => Results.Ok(store.GetDab(slideCount)));
+        }
         app.MapGet("/api/dab/positions", async (HttpContext context, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -639,11 +668,14 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.ConfirmCleaningAsync(batchId, request, actor, cancellationToken));
             }));
-        app.MapGet("/api/logs", (MockRuntimeStore store) =>
+        if (app.Environment.IsDevelopment())
         {
-            var state = store.GetState();
-            return Results.Ok(new { state.Logs, state.Alarms });
-        });
+            app.MapGet("/api/logs", (MockRuntimeStore store) =>
+            {
+                var state = store.GetState();
+                return Results.Ok(new { state.Logs, state.Alarms });
+            });
+        }
         app.MapGet("/api/history/runs", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -653,9 +685,60 @@ public static class WebHostEndpointExtensions
         app.MapGet("/api/history/runs/{machineRunId}", async (HttpContext context, string machineRunId, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
                 var detail = await service.GetRunDetailAsync(machineRunId, cancellationToken);
-                return detail is null ? Results.NotFound() : Results.Ok(detail);
+                if (detail is null) return Results.NotFound();
+                if (!string.Equals(actor.ActiveRole, "operator", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Results.Ok(detail with { Alarms = detail.Alarms.Select(ToNonTechnicalAlarm).ToList() });
+                }
+                return Results.Ok(new
+                {
+                    detail.MachineRunId,
+                    detail.RunCode,
+                    detail.Status,
+                    detail.CreatedAtUtc,
+                    detail.StartedAtUtc,
+                    detail.CompletedAtUtc,
+                    detail.RequestedBy,
+                    Channels = detail.ChannelBatches.Select(x => new
+                    {
+                        x.ChannelBatchId,
+                        x.DrawerCode,
+                        x.Status,
+                        x.ExperimentType,
+                        x.WorkflowCode,
+                        x.WorkflowName,
+                        x.WorkflowVersionLabel,
+                        x.CreatedAtUtc,
+                        x.StartedAtUtc,
+                        x.CompletedAtUtc,
+                        Slides = x.Slides.Select(s => new
+                        {
+                            s.SlideTaskId,
+                            s.TaskCode,
+                            s.SlotCode,
+                            s.TaskType,
+                            s.Status,
+                            SampleCode = s.NormalizedSampleCode ?? s.RawSampleCode,
+                            s.PrimaryAntibodyCode,
+                            s.CreatedBy,
+                            s.CreatedAtUtc
+                        })
+                    }),
+                    Steps = detail.WorkflowExecutions.SelectMany(x => x.Steps).Select(x => new
+                    {
+                        x.StepNo,
+                        x.StepName,
+                        x.Status,
+                        x.RedoCount,
+                        x.StartedAtUtc,
+                        x.CompletedAtUtc
+                    }),
+                    detail.ReagentConsumptions,
+                    detail.DabUsages,
+                    Alarms = detail.Alarms.Select(ToNonTechnicalAlarm)
+                });
             }));
         app.MapGet("/api/history/reagent-consumptions", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
@@ -667,7 +750,8 @@ public static class WebHostEndpointExtensions
             await ExecuteBusinessAsync(async () =>
             {
                 _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
-                return Results.Ok(await service.ListAlarmsAsync(context.Request.Query, cancellationToken));
+                var result = await service.ListAlarmsAsync(context.Request.Query, cancellationToken);
+                return Results.Ok(result with { Items = result.Items.Select(ToNonTechnicalAlarm).ToList() });
             }));
         app.MapPost("/api/alarms/{alarmId}/acknowledge", async (HttpContext context, string alarmId, AcknowledgeAlarmRequest request, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
@@ -706,19 +790,17 @@ public static class WebHostEndpointExtensions
                 return ToCsvFile(await service.ExportAuditLogsAsync(context.Request.Query, actor, cancellationToken));
             }));
 
-        app.MapPost("/api/login", async (HttpContext context, UserSessionService sessionService, MockRuntimeStore store, LoginRequest request, CancellationToken cancellationToken) =>
+        app.MapPost("/api/login", async (HttpContext context, UserSessionService sessionService, LoginRequest request, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
                 var response = await sessionService.LoginAsync(request.Username, request.Password, request.Role, context, cancellationToken);
-                store.SetActiveUser(new MockUser(response.User.Username, response.User.ActiveRole, response.User.DisplayName, true));
                 return Results.Ok(response);
             }));
 
-        app.MapPost("/api/logout", async (HttpContext context, UserSessionService sessionService, MockRuntimeStore store, CancellationToken cancellationToken) =>
+        app.MapPost("/api/logout", async (HttpContext context, UserSessionService sessionService, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
                 await sessionService.LogoutAsync(context, cancellationToken);
-                store.Logout();
                 return Results.Ok(new { ok = true });
             }));
 
@@ -831,16 +913,26 @@ public static class WebHostEndpointExtensions
         app.MapGet("/api/runs/current", async (HttpContext context, UserSessionService sessionService, MachineRunQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
                 var run = await service.GetCurrentAsync(cancellationToken);
-                return run is null ? Results.NotFound() : Results.Ok(run);
+                var nonTechnicalRun = run is null ? null : ToNonTechnicalRun(run);
+                return run is null
+                    ? Results.NotFound()
+                    : Results.Ok(string.Equals(actor.ActiveRole, "operator", StringComparison.OrdinalIgnoreCase)
+                        ? ToOperatorRun(nonTechnicalRun!)
+                        : nonTechnicalRun!);
             }));
         app.MapGet("/api/runs/{id}", async (HttpContext context, string id, UserSessionService sessionService, MachineRunQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
                 var run = await service.GetAsync(id, cancellationToken);
-                return run is null ? Results.NotFound() : Results.Ok(run);
+                var nonTechnicalRun = run is null ? null : ToNonTechnicalRun(run);
+                return run is null
+                    ? Results.NotFound()
+                    : Results.Ok(string.Equals(actor.ActiveRole, "operator", StringComparison.OrdinalIgnoreCase)
+                        ? ToOperatorRun(nonTechnicalRun!)
+                        : nonTechnicalRun!);
             }));
         app.MapPost("/api/runs/{id}/start", async (HttpContext context, string id, RunCommandRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
@@ -916,43 +1008,49 @@ public static class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
                 return Results.Ok(await seeder.ResetAsync(request, actor, cancellationToken));
             }));
-        app.MapPost("/api/run/start", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
-            await ExecuteBusinessAsync(async () =>
-            {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
-                return Results.Ok(await bridge.RunActionAsync("start", actor, cancellationToken));
-            }));
-        app.MapPost("/api/run/pause", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
-            await ExecuteBusinessAsync(async () =>
-            {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
-                return Results.Ok(await bridge.RunActionAsync("pause", actor, cancellationToken));
-            }));
-        app.MapPost("/api/run/resume", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
-            await ExecuteBusinessAsync(async () =>
-            {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
-                return Results.Ok(await bridge.RunActionAsync("resume", actor, cancellationToken));
-            }));
-        app.MapPost("/api/run/stop", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
-            await ExecuteBusinessAsync(async () =>
-            {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
-                return Results.Ok(await bridge.RunActionAsync("stop", actor, cancellationToken));
-            }));
-        app.MapPost("/api/slides/configure", (MockRuntimeStore store, SlideConfigureRequest request) =>
+        if (legacyRuntimeCompatibilityEnabled)
         {
-            try
+            app.MapPost("/api/run/start", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
+                await ExecuteBusinessAsync(async () =>
+                {
+                    var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                    return Results.Ok(await bridge.RunActionAsync("start", actor, cancellationToken));
+                }));
+            app.MapPost("/api/run/pause", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
+                await ExecuteBusinessAsync(async () =>
+                {
+                    var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                    return Results.Ok(await bridge.RunActionAsync("pause", actor, cancellationToken));
+                }));
+            app.MapPost("/api/run/resume", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
+                await ExecuteBusinessAsync(async () =>
+                {
+                    var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                    return Results.Ok(await bridge.RunActionAsync("resume", actor, cancellationToken));
+                }));
+            app.MapPost("/api/run/stop", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>
+                await ExecuteBusinessAsync(async () =>
+                {
+                    var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                    return Results.Ok(await bridge.RunActionAsync("stop", actor, cancellationToken));
+                }));
+        }
+        if (app.Environment.IsDevelopment())
+        {
+            app.MapPost("/api/slides/configure", (MockRuntimeStore store, SlideConfigureRequest request) =>
             {
-                return Results.Ok(store.ConfigureSlide(request));
-            }
-            catch (KeyNotFoundException ex)
-            {
-                return Results.Json(new { detail = ex.Message }, statusCode: StatusCodes.Status404NotFound);
-            }
-        });
-        app.MapPost("/api/run/add-slide", (MockRuntimeStore store) => Results.Ok(store.GetState()));
-        app.MapPost("/api/engineer/command", (MockRuntimeStore store, EngineerCommandRequest request) => Results.Ok(store.EngineerCommand(request)));
+                try
+                {
+                    return Results.Ok(store.ConfigureSlide(request));
+                }
+                catch (KeyNotFoundException ex)
+                {
+                    return Results.Json(new { detail = ex.Message }, statusCode: StatusCodes.Status404NotFound);
+                }
+            });
+            app.MapPost("/api/run/add-slide", (MockRuntimeStore store) => Results.Ok(store.GetState()));
+            app.MapPost("/api/engineer/command", (MockRuntimeStore store, EngineerCommandRequest request) => Results.Ok(store.EngineerCommand(request)));
+        }
 
         app.MapFallback((HttpContext context, LegacyUiPageRenderer renderer) =>
         {
@@ -976,6 +1074,41 @@ public static class WebHostEndpointExtensions
         {
             return Results.Json(new { code = ex.Code, detail = ex.Message }, statusCode: ex.StatusCode);
         }
+    }
+
+    private static TraceAlarmResponse ToNonTechnicalAlarm(TraceAlarmResponse alarm)
+    {
+        return alarm with
+        {
+            Code = OperatorAlarmPresentation.Category(alarm.Code),
+            Message = OperatorAlarmPresentation.Summary(alarm.Code, alarm.Severity),
+            AckReason = null,
+            Actions = alarm.Actions.Select(x => x with { Message = OperatorAlarmPresentation.ActionSummary(x.Action) }).ToList()
+        };
+    }
+
+    private static MachineRunDetailResponse ToOperatorRun(MachineRunDetailResponse run)
+    {
+        return run with
+        {
+            CoordinateSnapshotJson = string.Empty,
+            LiquidClassSnapshotJson = string.Empty,
+            ChannelBatches = run.ChannelBatches
+                .Select(x => x with { LiquidClassSnapshotJson = string.Empty })
+                .ToList()
+        };
+    }
+
+    private static MachineRunDetailResponse ToNonTechnicalRun(MachineRunDetailResponse run)
+    {
+        return run with
+        {
+            Alarms = run.Alarms.Select(x => x with
+            {
+                Code = OperatorAlarmPresentation.Category(x.Code),
+                Message = OperatorAlarmPresentation.Summary(x.Code, x.Severity)
+            }).ToList()
+        };
     }
 
     private static async Task<T?> ReadOptionalJsonAsync<T>(HttpContext context, CancellationToken cancellationToken)

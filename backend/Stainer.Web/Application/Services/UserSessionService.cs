@@ -1,13 +1,14 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Domain.Entities;
 using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Application.Services;
 
-public sealed class UserSessionService(StainerDbContext dbContext, PasswordHashService passwordHashService)
+public sealed class UserSessionService(StainerDbContext dbContext, PasswordHashService passwordHashService, IHostEnvironment environment)
 {
     public const string SessionCookieName = "stainer_session";
     private static readonly ConcurrentDictionary<string, AuthenticatedUser> Sessions = new(StringComparer.Ordinal);
@@ -65,7 +66,8 @@ public sealed class UserSessionService(StainerDbContext dbContext, PasswordHashS
         });
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        return new LoginResponse(true, ToCurrentUser(principal), "/control-console");
+        var developmentOrTesting = environment.IsDevelopment() || environment.IsEnvironment("Testing");
+        return new LoginResponse(true, ToCurrentUser(principal), developmentOrTesting ? "/control-console" : "/dashboard");
     }
 
     public async Task LogoutAsync(HttpContext httpContext, CancellationToken cancellationToken = default)

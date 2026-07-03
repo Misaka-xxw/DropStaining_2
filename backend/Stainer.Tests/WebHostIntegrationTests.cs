@@ -259,7 +259,9 @@ public sealed class WebHostIntegrationTests
         Assert.Equal(135, projectedNeedle.GetProperty("volumeUl").GetInt32());
         Assert.True(projectedNeedle.GetProperty("needsWash").GetBoolean());
         Assert.Contains(root.GetProperty("recentEvents").EnumerateArray(),
-            x => x.GetProperty("title").GetString() == "operator.ui.formal-snapshot");
+            x => x.GetProperty("title").GetString() == "系统操作"
+                && x.GetProperty("detail").GetString() == "系统操作已记录。");
+        Assert.DoesNotContain("operator.ui.formal-snapshot", root.GetProperty("recentEvents").GetRawText());
     }
 
     [Fact]
@@ -289,7 +291,7 @@ public sealed class WebHostIntegrationTests
     }
 
     [Fact]
-    public async Task Mock_timeline_page_is_hidden_in_production()
+    public async Task Development_only_pages_are_hidden_in_production()
     {
         await using var factory = CreateFactory("Production");
         using var client = factory.CreateClient();
@@ -299,6 +301,14 @@ public sealed class WebHostIntegrationTests
         Assert.Contains("drawerBoard", html);
         Assert.DoesNotContain("mockGanttBoard", html);
         Assert.DoesNotContain("mock-timeline.js", html);
+
+        var legacyConsole = await client.GetStringAsync("/control-console");
+        Assert.Contains("drawerBoard", legacyConsole);
+        Assert.DoesNotContain("controlConsoleFrame", legacyConsole);
+        Assert.DoesNotContain("data-href=\"/control-console\"", legacyConsole);
+
+        var login = await client.PostAsJsonAsync("/api/login", new { username = "operator", password = "123456", role = "operator" });
+        Assert.Equal("/dashboard", (await login.Content.ReadFromJsonAsync<LoginResponse>())?.Redirect);
     }
 
     [Fact]
@@ -661,6 +671,9 @@ public sealed class WebHostIntegrationTests
 
             await dbContext.SaveChangesAsync();
         }
+
+        var login = await client.PostAsJsonAsync("/api/login", new { username = "admin", password = "123456", role = "admin" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
         var workflows = await client.GetFromJsonAsync<List<WorkflowSummaryResponse>>("/api/workflows");
         Assert.Contains(workflows!, x => x.Code == "DB-IHC" && x.Name == "SQLite IHC Workflow");

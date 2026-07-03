@@ -17,7 +17,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
         ["/alerts"] = new("告警中心", "告警中心", "显示告警、影响任务、处理建议和关联日志。", AlertsContent(), null),
         ["/alarms"] = new("告警中心", "告警中心", "显示告警、影响任务、处理建议和关联日志。", AlertsContent(), null),
         ["/history"] = new("历史与导出", "历史、审计与导出", "追踪任务、玻片、试剂、DAB、告警、用户操作和配置版本。", HistoryContent(), null),
-        ["/configure"] = new("协议 / 脚本 / 目录配置", "协议、脚本、流程映射与版本管理", "维护已发布流程、试剂目录、液体类型和配置版本。", ConfigureContent(), "/static/js/configure.js"),
+        ["/configure"] = new("协议 / 脚本 / 目录配置", "协议、脚本、流程映射与版本管理", "维护已发布流程、试剂目录、液体类型和配置版本。", ConfigureContent(), null),
         ["/engineer"] = new("工程师模式", "工程师模式：设备调试、配置与安全边界", "管理员受控工程入口；真实危险动作默认 Mock。", EngineerContent(), "/static/js/engineer.js"),
         ["/admin"] = new("系统管理", "用户管理、审计与导出", "维护用户、角色、启停状态、审计查询和导出。", AdminContent(), null),
         ["/management"] = new("系统管理", "用户管理、审计与导出", "维护用户、角色、启停状态、审计查询和导出。", AdminContent(), null)
@@ -25,13 +25,14 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 
     public IResult Render(string path)
     {
+        var developmentOrTesting = environment.IsDevelopment() || environment.IsEnvironment("Testing");
         if (path == "/" || path.Equals("/login", StringComparison.OrdinalIgnoreCase))
         {
             return Html(LoginPage());
         }
 
         PageDefinition page;
-        if (!environment.IsProduction() && path.Equals("/mock-timeline", StringComparison.OrdinalIgnoreCase))
+        if (developmentOrTesting && path.Equals("/mock-timeline", StringComparison.OrdinalIgnoreCase))
         {
             page = new PageDefinition(
                 "Mock Timeline",
@@ -76,14 +77,19 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 
     private string RenderShell(string path, PageDefinition page)
     {
+        var developmentOrTesting = environment.IsDevelopment() || environment.IsEnvironment("Testing");
         var encodedTitle = WebUtility.HtmlEncode(page.Title);
         var encodedPageLabel = WebUtility.HtmlEncode(PageLabel(path));
         var pageScript = string.IsNullOrWhiteSpace(page.ScriptPath) ? string.Empty : $"""<script src="{VersionedAsset(page.ScriptPath)}"></script>""";
-        var mockNavigation = environment.IsProduction()
-            ? string.Empty
-            : """
+        var mockNavigation = developmentOrTesting
+            ? """
                 <a href="/mock-timeline" class="nav-item admin-only" data-href="/mock-timeline"><i>T</i><span>Timeline</span><small>Mock</small></a>
-""";
+"""
+            : string.Empty;
+        var legacyConsoleNavigation = developmentOrTesting
+            ? """<a href="/control-console" class="nav-item" data-href="/control-console"><i>01</i><span>主控</span><small>旧演示</small></a>"""
+            : string.Empty;
+        var homePath = developmentOrTesting ? "/control-console" : "/dashboard";
         var inlineScript = path switch
         {
             "/engineer" => """<script>function safeMock(name){ if(confirm(name + ' is a dangerous mock action. Continue?')) toast('Mock: ' + name + ' recorded'); }</script>""",
@@ -103,7 +109,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
         <body data-status="idle">
           <div class="app-shell">
             <aside class="side-rail">
-              <div class="brand-card current-page-card" onclick="location.href='/control-console'" title="返回主控台">
+              <div class="brand-card current-page-card" onclick="location.href='{{homePath}}'" title="返回运行总览">
                 <div class="brand-orb">冰</div>
                 <div class="brand-copy">
                   <strong id="currentPageLabel">{{encodedPageLabel}}</strong>
@@ -111,7 +117,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                 </div>
               </div>
               <nav class="nav-stack" aria-label="主导航">
-                <a href="/control-console" class="nav-item" data-href="/control-console"><i>01</i><span>主控</span><small>总台</small></a>
+                {{legacyConsoleNavigation}}
                 <a href="/dashboard" class="nav-item" data-href="/dashboard"><i>02</i><span>检查</span><small>运行</small></a>
                 <a href="/samples" class="nav-item" data-href="/samples"><i>03</i><span>样本</span><small>确认</small></a>
                 <a href="/reagents" class="nav-item" data-href="/reagents"><i>04</i><span>试剂</span><small>扫描</small></a>
@@ -119,7 +125,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                 <a href="/alerts" class="nav-item" data-href="/alerts"><i>06</i><span>告警</span><small>处理</small></a>
                 <a href="/history" class="nav-item" data-href="/history"><i>07</i><span>历史</span><small>导出</small></a>
                 <a href="/configure" class="nav-item admin-only" data-href="/configure"><i>C</i><span>配置</span><small>协议</small></a>
-                <a href="/engineer" class="nav-item admin-only" data-href="/engineer"><i>E</i><span>工程</span><small>调试</small></a>
+                <a href="/engineer" class="nav-item engineer-only" data-href="/engineer"><i>E</i><span>工程</span><small>调试</small></a>
                 <a href="/admin" class="nav-item admin-only" data-href="/admin"><i>A</i><span>管理</span><small>用户</small></a>
                 {{mockNavigation}}
               </nav>
@@ -297,7 +303,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 
     private static string AlertsContent()
     {
-        return """<section class="modern-card"><div class="section-title"><div><h2>告警查询</h2><p>Active / Acknowledged / Resolved 告警均来自正式数据库。</p></div><div class="button-row"><button class="btn btn-soft" onclick="loadTraceAlarms()">查询</button><button class="btn btn-soft" onclick="exportTraceCsv('alarms')">导出告警 CSV</button></div></div><div class="inline-form touch-form"><label>状态<select class="input" id="alarmStatusFilter"><option value="">全部</option><option>Active</option><option>Acknowledged</option><option>Resolved</option></select></label><label>级别<select class="input" id="alarmSeverityFilter"><option value="">全部</option><option>Info</option><option>Warning</option><option>Error</option><option>Critical</option></select></label><label>通道<select class="input" id="alarmChannelFilter"><option value="">全部</option><option>A</option><option>B</option><option>C</option><option>D</option></select></label><label>告警代码<input class="input" id="alarmCodeFilter" placeholder="reagent_insufficient"></label></div><div class="alarm-list" id="alarmList"></div></section><section class="modern-card"><div class="section-title"><h2>告警处理记录</h2><button class="btn btn-soft" onclick="location.href='/history'">历史与导出</button></div><div class="timeline large" id="alertLogs"></div></section>""";
+        return """<section class="modern-card"><div class="section-title"><div><h2>告警查询</h2><p>Active / Acknowledged / Resolved 告警均来自正式数据库。</p></div><div class="button-row"><button class="btn btn-soft" onclick="loadTraceAlarms()">查询</button><button class="btn btn-soft" onclick="exportTraceCsv('alarms')">导出告警 CSV</button></div></div><div class="inline-form touch-form"><label>状态<select class="input" id="alarmStatusFilter"><option value="">全部</option><option>Active</option><option>Acknowledged</option><option>Resolved</option></select></label><label>级别<select class="input" id="alarmSeverityFilter"><option value="">全部</option><option>Info</option><option>Warning</option><option>Error</option><option>Critical</option></select></label><label>通道<select class="input" id="alarmChannelFilter"><option value="">全部</option><option>A</option><option>B</option><option>C</option><option>D</option></select></label></div><div class="alarm-list" id="alarmList"></div></section><section class="modern-card"><div class="section-title"><h2>告警处理记录</h2><button class="btn btn-soft" onclick="location.href='/history'">历史与导出</button></div><div class="timeline large" id="alertLogs"></div></section>""";
     }
 
     private static string HistoryContent()
@@ -312,12 +318,24 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
 
     private static string EngineerContent()
     {
-        return """<section class="modern-card engineer-session"><div class="section-title"><div><h2>ENG-01 工程入口与会话</h2><p>二次认证、工程权限说明、设备是否可调试、剩余会话时间和工程操作日志。</p></div><span class="badge-soft">管理员受控入口</span></div><div class="validation-grid"><div><b>运行中任务</b><span id="engineerRunState">无活动任务</span><em>可模拟</em></div><div><b>二次确认</b><span>危险动作前再次确认</span><em>启用</em></div><div><b>会话剩余</b><span>30 分钟</span><em>Mock</em></div><div><b>真实设备</b><span>P1 未关闭前禁用危险动作</span><em>安全</em></div></div></section><section class="engineer-layout v18-engineer-layout"><article class="modern-card engineer-card"><div class="section-title"><h2>ENG-02 设备连接与通讯</h2><span class="badge-soft">COM / SDK</span></div><div class="form-grid-mini"><label>主控 COM<input id="serialPort" class="input" value="COM1"></label><label>波特率<input id="baudRate" class="input" value="115200"></label><label>SOCON SDK<input class="input" value="Mock Adapter"></label></div><div class="button-row"><button class="btn btn-primary" onclick="engineerCommand('serial','connect')">连接测试</button><button class="btn btn-soft" onclick="engineerCommand('serial','reconnect')">重连</button></div></article><article class="modern-card engineer-card"><div class="section-title"><h2>ENG-07 移液与洗针测试</h2><span class="badge-soft">Mock</span></div><div class="inline-form touch-form"><label>动作<select id="pipetteAction" class="input"><option value="aspirate">吸液</option><option value="dispense">加液</option><option value="detect_liquid">探液</option><option value="wash">洗针/冲洗</option></select></label><label>针<select id="needleSelect" class="input"><option>针1</option><option>针2</option><option>双针同步</option></select></label><label>位置<input id="wellPosition" class="input" value="R1"></label><label>体积 μL<input id="pipetteVolume" class="input" type="number" value="100"></label></div><button class="btn btn-primary full" onclick="testPipette()">执行模拟移液/洗针</button></article><article class="modern-card engineer-card"><div class="section-title"><h2>ENG-08 温控与制冷</h2><span class="badge-soft">4 板 × 4 点</span></div><div class="form-grid-mini"><label>测试通道<input id="heaterChannel" class="input" type="number" min="1" max="4" value="1"></label><label>目标温度 ℃<input id="targetTemp" class="input" type="number" value="42"></label></div><button class="btn btn-soft full" onclick="engineerCommand('heater','set_temperature')">设温测试</button></article><article class="modern-card engineer-card"><div class="section-title"><h2>ENG-09 清洗泵与混匀</h2><span class="badge-soft">PWM -100~+100</span></div><div class="form-grid-mini"><label>清洗泵通道<input id="pumpChannel" class="input" type="number" min="1" max="4" value="1"></label><label>混匀通道<input id="mixChannel" class="input" type="number" min="1" max="4" value="1"></label><label>PWM<input id="pumpPwm" class="input" type="number" min="-100" max="100" value="60"></label><label>时间 s<input id="pumpDuration" class="input" type="number" value="10"></label></div><div class="button-row"><button class="btn btn-primary" onclick="testPump()">通道清洗</button><button class="btn btn-soft" onclick="engineerCommand('pump','stop')">停止泵</button><button class="btn btn-soft" onclick="engineerCommand('mixer','start')">混匀测试</button></div></article></section><section class="modern-card"><div class="section-title"><h2>调试返回 / 原始通讯</h2><button class="btn btn-soft" onclick="engineerResult.textContent='等待命令...'">清空</button></div><pre id="engineerResult" class="terminal">等待命令...</pre></section>""";
+        return """
+        <section class="modern-card engineer-session">
+          <div class="section-title"><div><h2>工程二次认证</h2><p>工程写操作必须先建立有时限的二次认证会话；运行中默认只读。</p></div><span class="badge-soft" id="engineeringSessionBadge">未认证</span></div>
+          <div class="inline-form touch-form"><label>当前密码<input class="input" id="engineeringPassword" type="password" autocomplete="current-password"></label><label>操作原因<input class="input" id="engineeringReason" value="工程诊断与配置维护"></label><label>目标<input class="input" id="engineeringTarget" value="engineering-console"></label><label>时长（分钟）<input class="input" id="engineeringDuration" type="number" min="1" max="60" value="15"></label></div>
+          <div class="button-row"><button class="btn btn-primary" onclick="startEngineeringSession()">二次认证</button><button class="btn btn-soft" onclick="revokeEngineeringSession()">结束会话</button><button class="btn btn-soft" onclick="loadEngineerPage()">刷新正式数据</button></div>
+          <div class="validation-grid"><div><b>运行状态</b><span id="engineerRunState">读取中</span><em>运行中默认只读</em></div><div><b>会话到期</b><span id="engineeringSessionExpiry">--</span><em>服务端校验</em></div><div><b>设备模式</b><span id="engineeringDeviceMode">--</span><em id="engineeringMockBadge">Mock 测试入口</em></div><div><b>Real 安全边界</b><span>未实现适配器拒绝命令</span><em>fail-closed</em></div></div>
+        </section>
+        <section class="modern-card"><div class="section-title"><div><h2>设备诊断</h2><p>设备状态、命令记录、错误码与通讯持久化均来自正式数据库和设备适配器。</p></div><div class="button-row"><button class="btn btn-primary" onclick="runEngineeringAdapterTest()">执行适配器测试 <small>Mock</small></button><button class="btn btn-soft" onclick="loadEngineeringDiagnostics()">刷新</button></div></div><div class="notice-box">Mock 模式执行模拟初始化并记录通讯；Real 模式在真实适配器未实现或健康检查未完成时拒绝动作（fail-closed）。</div><pre id="engineeringDeviceState" class="terminal">读取中...</pre></section>
+        <section class="split-grid"><article class="modern-card"><div class="section-title"><h2>命令记录</h2><button class="btn btn-soft" onclick="exportEngineeringCsv('command')">导出 CSV</button></div><div class="data-table" id="engineeringCommandLog"></div></article><article class="modern-card"><div class="section-title"><h2>错误码</h2></div><div class="data-table" id="engineeringErrors"></div></article></section>
+        <section class="modern-card"><div class="section-title"><div><h2>Mock 通讯记录</h2><p>测试入口明确标识 Mock；请求/响应报文和持久化异常仅本工程页可见。</p></div><button class="btn btn-soft" onclick="exportEngineeringCsv('communications')">导出 CSV</button></div><div class="data-table" id="engineeringCommunications"></div></section>
+        <section class="split-grid"><article class="modern-card"><div class="section-title"><div><h2>坐标版本</h2><p>Draft → Published → Active / Inactive</p></div><button class="btn btn-primary" onclick="createCoordinateVersion()">复制为 Draft</button></div><div class="data-table" id="coordinateVersionTable"></div></article><article class="modern-card"><div class="section-title"><div><h2>Liquid Class 版本</h2><p>Draft → Published → Enabled / Disabled</p></div><button class="btn btn-primary" onclick="createLiquidClassVersion()">复制为 Draft</button></div><div class="data-table" id="liquidClassVersionTable"></div></article></section>
+        <section class="modern-card"><div class="section-title"><div><h2>版本差异与导入导出</h2><p>预览不会写库；正式导入要求有效工程会话和原因。</p></div><div class="button-row"><button class="btn btn-soft" onclick="exportEngineeringConfig()">导出 JSON</button><button class="btn btn-soft" onclick="previewEngineeringImport()">预览导入</button><button class="btn btn-primary" onclick="applyEngineeringImport()">确认导入</button></div></div><div class="inline-form touch-form"><label>配置类型<select class="input" id="engineeringImportType"><option value="coordinate">coordinate</option><option value="liquid-class">liquid-class</option></select></label><label>目标代码<input class="input" id="engineeringImportTarget"></label><label>JSON<textarea class="input" id="engineeringImportPayload" rows="5" placeholder="粘贴单项配置 JSON"></textarea></label></div><pre id="engineeringConfigResult" class="terminal">选择版本查看差异，或预览导入。</pre></section>
+        """;
     }
 
     private static string AdminContent()
     {
-        return """<section class="kpi-grid admin-kpi"><article class="kpi-card"><span>用户账号</span><strong id="adminUserCount">0</strong><small>操作员 / 管理员；工程入口受控</small></article><article class="kpi-card"><span>试剂记录</span><strong id="adminReagentCount">0</strong><small>库存与条码审计</small></article><article class="kpi-card"><span>日志条数</span><strong id="adminLogCount">0</strong><small>动作与异常追溯</small></article><article class="kpi-card"><span>告警</span><strong id="adminAlarmCount">0</strong><small>未处理/历史告警</small></article></section><section class="split-grid"><article class="modern-card"><div class="section-title"><h2>用户管理</h2><div class="button-row"><button class="btn btn-primary">新增用户</button><button class="btn btn-soft">重置密码</button></div></div><div class="data-table user-table" id="userTable"></div></article><article class="modern-card"><div class="section-title"><h2>审计筛选</h2><button class="btn btn-soft" onclick="exportTraceCsv('audit')">导出审计 CSV</button></div><div class="inline-form touch-form"><label>用户<input class="input" id="auditUserFilter" placeholder="admin"></label><label>动作<input class="input" id="auditActionFilter" placeholder="workflow"></label><label>对象<input class="input" id="auditEntityFilter" placeholder="MachineRun"></label><label>通道<input class="input" id="auditChannelFilter" placeholder="A"></label><label>Slot<input class="input" id="auditSlotFilter" placeholder="A-01"></label><label>RunId<input class="input" id="auditRunFilter"></label><label>TaskId<input class="input" id="auditTaskFilter"></label><label>CommandId<input class="input" id="auditCommandFilter"></label><label>CorrelationId<input class="input" id="auditCorrelationFilter"></label></div><button class="btn btn-primary full" onclick="loadTraceAudit()">查询审计</button></article></section><section class="modern-card"><div class="section-title"><h2>审计日志</h2><button class="btn btn-soft" onclick="loadTraceAudit()">刷新</button></div><div class="timeline large" id="adminLogs"></div></section>""";
+        return """<section class="kpi-grid admin-kpi"><article class="kpi-card"><span>用户账号</span><strong id="adminUserCount">0</strong><small id="adminRoleSummary">角色从正式接口读取</small></article><article class="kpi-card"><span>试剂目录</span><strong id="adminReagentCount">0</strong><small>正式目录与 Liquid Class 引用</small></article><article class="kpi-card"><span>流程版本</span><strong id="adminWorkflowCount">0</strong><small>HE / IHC 默认流程</small></article><article class="kpi-card"><span>活动告警</span><strong id="adminAlarmCount">0</strong><small>正式告警中心</small></article></section><section class="split-grid"><article class="modern-card"><div class="section-title"><h2>用户与角色</h2><div class="button-row"><button class="btn btn-primary">新增用户</button><button class="btn btn-soft">重置密码</button></div></div><div class="data-table user-table" id="userTable"></div></article><article class="modern-card"><div class="section-title"><h2>默认 HE / IHC 流程</h2><button class="btn btn-soft" onclick="renderAdmin(window.machineStateSnapshot || {})">刷新</button></div><div class="data-table" id="adminWorkflowTable"></div></article></section><section class="split-grid"><article class="modern-card"><div class="section-title"><h2>一抗映射</h2></div><div class="data-table" id="adminMappingTable"></div></article><article class="modern-card"><div class="section-title"><h2>试剂目录</h2></div><div class="data-table" id="adminCatalogTable"></div></article></section><section class="modern-card"><div class="section-title"><h2>审计筛选</h2><button class="btn btn-soft" onclick="exportTraceCsv('audit')">导出审计 CSV</button></div><div class="inline-form touch-form"><label>用户<input class="input" id="auditUserFilter" placeholder="admin"></label><label>动作<input class="input" id="auditActionFilter" placeholder="workflow"></label><label>对象<input class="input" id="auditEntityFilter" placeholder="MachineRun"></label><label>通道<input class="input" id="auditChannelFilter" placeholder="A"></label><label>Slot<input class="input" id="auditSlotFilter" placeholder="A-01"></label><label>RunId<input class="input" id="auditRunFilter"></label><label>TaskId<input class="input" id="auditTaskFilter"></label><label>CommandId<input class="input" id="auditCommandFilter"></label><label>CorrelationId<input class="input" id="auditCorrelationFilter"></label></div><button class="btn btn-primary full" onclick="loadTraceAudit()">查询审计</button></section><section class="modern-card"><div class="section-title"><h2>审计日志</h2><button class="btn btn-soft" onclick="loadTraceAudit()">刷新</button></div><div class="timeline large" id="adminLogs"></div></section>""";
     }
 
     private static string MockTimelineContent()

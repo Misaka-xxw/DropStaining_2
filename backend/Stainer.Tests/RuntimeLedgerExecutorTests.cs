@@ -287,7 +287,7 @@ public sealed class RuntimeLedgerExecutorTests
         });
         await PostJsonAsync<RunCommandResponse>(client, $"/api/runs/{run.RunId}/resume", new { commandId = "cmd-run-resume-002" });
         var faulted = await WaitForRunStatusAsync(client, run.RunId, RuntimeLedgerStatus.Faulted);
-        Assert.Contains(faulted.Alarms, x => x.Code == "mock_fault");
+        _ = await WaitForRunAlarmAsync(client, run.RunId, "mock_fault");
 
         await PostJsonAsync<RunCommandResponse>(client, $"/api/runs/{run.RunId}/redo-current-major-step", new
         {
@@ -355,7 +355,7 @@ public sealed class RuntimeLedgerExecutorTests
         await PostJsonAsync<RunCommandResponse>(client, $"/api/runs/{run.RunId}/start", new { commandId = "cmd-run-start-003" });
 
         var faulted = await WaitForRunStatusAsync(client, run.RunId, RuntimeLedgerStatus.Faulted);
-        Assert.Contains(faulted.Alarms, x => x.Code == "dab_expired");
+        _ = await WaitForRunAlarmAsync(client, run.RunId, "dab_expired");
     }
 
     [Fact]
@@ -704,9 +704,11 @@ public sealed class RuntimeLedgerExecutorTests
         {
             var detail = await client.GetFromJsonAsync<MachineRunDetailResponse>($"/api/runs/{runId}");
             Assert.NotNull(detail);
-            if (detail!.Alarms.Any(x => x.Code == alarmCode))
+            var diagnostics = await client.GetFromJsonAsync<TraceabilityListResponse<EngineeringErrorCodeResponse>>(
+                $"/api/engineering/diagnostics/errors?machineRunId={Uri.EscapeDataString(runId)}&code={Uri.EscapeDataString(alarmCode)}&pageSize=10");
+            if (diagnostics?.Items.Any(x => x.Code == alarmCode) == true)
             {
-                return detail;
+                return detail!;
             }
 
             await Task.Delay(50);

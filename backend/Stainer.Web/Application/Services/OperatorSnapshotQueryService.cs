@@ -169,7 +169,12 @@ public sealed class OperatorSnapshotQueryService(
             : MapPageStatus(run.Status);
 
         var alarmDetails = alarms
-            .Select(x => new AlarmResponse(x.Id, x.Code, x.Severity, x.Message, x.Status))
+            .Select(x => new AlarmResponse(
+                x.Id,
+                OperatorAlarmPresentation.Category(x.Code),
+                x.Severity,
+                OperatorAlarmPresentation.Summary(x.Code, x.Severity),
+                x.Status))
             .ToList();
         var logs = recentEvents
             .Select(x => $"[{x.OccurredAtUtc.ToLocalTime():HH:mm:ss}] {x.Title} {x.Detail}")
@@ -187,7 +192,7 @@ public sealed class OperatorSnapshotQueryService(
             new OperatorUserResponse(actor.UserId, actor.Username, actor.DisplayName, actor.ActiveRole, actor.Roles),
             ToSystem(initialization, thermal, fluidics),
             channels,
-            alarms.Select(x => $"{x.Code}: {x.Message}").ToList(),
+            alarms.Select(x => OperatorAlarmPresentation.Summary(x.Code, x.Severity)).ToList(),
             alarmDetails,
             logs,
             recentEvents,
@@ -250,14 +255,18 @@ public sealed class OperatorSnapshotQueryService(
         var audit = auditRows
             .OrderByDescending(x => x.CreatedAtUtc)
             .Take(16)
-            .Select(x => new OperatorEventResponse(
-                x.Id,
-                "Audit",
-                x.Action,
-                x.Message,
-                "Recorded",
-                x.CreatedAtUtc,
-                "/history"))
+            .Select(x =>
+            {
+                var summary = OperatorAlarmPresentation.AuditSummary(x.Action);
+                return new OperatorEventResponse(
+                    x.Id,
+                    "Audit",
+                    summary.Title,
+                    summary.Detail,
+                    "Recorded",
+                    x.CreatedAtUtc,
+                    "/history");
+            })
             .ToList();
         var commandEvents = commands.Select(x => new OperatorEventResponse(
             x.Id,

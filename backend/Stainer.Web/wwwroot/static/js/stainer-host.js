@@ -61,6 +61,9 @@ function renderShellState(state){
   document.querySelectorAll('.admin-only').forEach(el => {
     el.style.display = user && user.role === 'admin' ? '' : 'none';
   });
+  document.querySelectorAll('.engineer-only').forEach(el => {
+    el.style.display = user && ['engineer','admin'].includes(user.role) ? '' : 'none';
+  });
 
   const banner = document.getElementById('alertBanner');
   if(banner){
@@ -347,10 +350,9 @@ function renderEngineer(state){
 
 async function renderConfigure(){
   if(!document.getElementById('protocolTable')) return;
-  const [workflows, catalog, dab, mappings] = await Promise.all([
+  const [workflows, catalog, mappings] = await Promise.all([
     api('/api/workflows'),
     api('/api/reagents/catalog'),
-    api('/api/dab'),
     api('/api/primary-antibody-mappings')
   ]);
   window.configureWorkflows = workflows || [];
@@ -359,7 +361,10 @@ async function renderConfigure(){
   renderWorkflowVersionTable(window.configureWorkflows);
   renderPrimaryAntibodyMappings(window.configurePrimaryAntibodyMappings);
   const dabPreview = document.getElementById('dabPreview');
-  if(dabPreview) dabPreview.innerHTML = `<div><span>IHC 张数</span><b>${dab.slideCount}</b></div><div><span>总量</span><b>${dab.totalMl}</b><em>mL</em></div><div><span>A/B/水</span><b>${dab.dabAMl}/${dab.dabBMl}/${dab.pureWaterMl}</b></div>`;
+  if(dabPreview){
+    const publishedIhc = (workflows || []).flatMap(x => (x.versions || []).filter(v => x.workflowType === 'IHC' && v.status === 'Published'));
+    dabPreview.innerHTML = `<div><span>Published IHC</span><b>${publishedIhc.length}</b></div><div><span>一抗映射</span><b>${(mappings || []).filter(x => x.isEnabled).length}</b></div><div><span>计算来源</span><b>运行快照</b></div>`;
+  }
   const catalogTable = document.getElementById('catalogTable');
   if(catalogTable){
     catalogTable.innerHTML = '<div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>报警余量</span><span>液体类型</span></div>'
@@ -539,8 +544,16 @@ function renderRunPage(state){
 
 function appendMachineLog(state, event){
   state.logs = state.logs || [];
-  const message = event.payload?.message || event.type;
-  state.logs.unshift('[' + new Date(event.occurredAtUtc || Date.now()).toLocaleTimeString('zh-CN', {hour12:false}) + '] ' + event.type + ' ' + message);
+  const message = {
+    'alarm.raised':'系统告警已更新，请查看告警摘要。',
+    'alarm.acknowledged':'告警处理状态已更新。',
+    'device.connectionChanged':'设备连接状态已更新。',
+    'device.stateChanged':'设备状态已更新。',
+    'machine.stateChanged':'运行状态已更新。',
+    'workflowStep.started':'染色步骤已开始。',
+    'workflowStep.completed':'染色步骤已完成。'
+  }[event.type] || '系统状态已更新。';
+  state.logs.unshift('[' + new Date(event.occurredAtUtc || Date.now()).toLocaleTimeString('zh-CN', {hour12:false}) + '] ' + message);
   if(state.logs.length > 120) state.logs.length = 120;
 }
 
@@ -605,8 +618,12 @@ function applyMachineEvent(event){
       break;
     case 'alarm.raised':
       state.alarms = state.alarms || [];
-      state.alarms.unshift((payload.code || 'alarm') + ': ' + (payload.message || ''));
-      break;
+      state.alarms.unshift('系统提示需要处理，请按界面指引检查。');
+      loadHostState();
+      return;
+    case 'alarm.acknowledged':
+      loadHostState();
+      return;
     case 'reagent.bottleDepleted':
     case 'dab.batchChanged':
     case 'device.connectionChanged':
@@ -903,14 +920,22 @@ function commandId(prefix){
 
 async function renderAdmin(state){
   if(!document.getElementById('userTable')) return;
-  const users = await api('/api/users');
+  const [users, roles, workflows, mappings, catalog, alarms] = await Promise.all([
+    api('/api/users'), api('/api/roles'), api('/api/workflows'), api('/api/primary-antibody-mappings'),
+    api('/api/reagents/catalog'), api('/api/alarms?status=Active&pageSize=100')
+  ]);
   setText('adminUserCount', users.length);
-  setText('adminReagentCount', (state.reagents || []).length);
-  setText('adminLogCount', (state.logs || []).length);
-  setText('adminAlarmCount', (state.alarms || []).length);
+  setText('adminRoleSummary', `${roles.length} 个角色：${roles.map(x => x.code).join(' / ')}`);
+  setText('adminReagentCount', catalog.length);
+  setText('adminWorkflowCount', workflows.reduce((n, x) => n + (x.versions || []).length, 0));
+  setText('adminAlarmCount', alarms.totalCount || 0);
   wireAdminToolbar(users);
   document.getElementById('userTable').innerHTML = '<div class="table-row head"><span>用户</span><span>显示名</span><span>角色</span><span>启用</span><span>操作</span></div>' + users.map(u => `<div class="table-row"><span>${escapeHtml(u.username)}</span><span>${escapeHtml(u.displayName)}</span><span class="badge-soft">${escapeHtml((u.roles || [u.role]).join(','))}</span><span>${u.enabled ? '是' : '否'}</span><span class="button-row"><button class="btn btn-soft" onclick="adminRenameUser('${u.id}', '${escapeHtml(u.displayName)}')">改名</button><button class="btn btn-soft" onclick="adminToggleUser('${u.id}', ${!u.enabled})">${u.enabled ? '禁用' : '启用'}</button><button class="btn btn-soft" onclick="adminResetPassword('${u.id}')">重置</button><button class="btn btn-soft" onclick="adminSetRoles('${u.id}', '${escapeHtml((u.roles || []).join(','))}')">角色</button><button class="btn btn-soft" onclick="adminDeleteUser('${u.id}')">删除</button></span></div>`).join('');
-  renderTimeline('adminLogs', state.logs || [], 50);
+  const versions = workflows.flatMap(workflow => (workflow.versions || []).map(version => ({workflow, version})));
+  document.getElementById('adminWorkflowTable').innerHTML = '<div class="table-row head"><span>类型</span><span>流程</span><span>版本</span><span>状态</span><span>默认</span></div>' + versions.map(x => `<div class="table-row"><span>${escapeHtml(x.workflow.workflowType)}</span><span>${escapeHtml(x.workflow.code)}<small>${escapeHtml(x.workflow.name)}</small></span><span>${escapeHtml(x.version.versionLabel)}</span><span>${escapeHtml(x.version.status)}</span><span>${escapeHtml(x.version.defaultExperimentType || '--')}</span></div>`).join('');
+  document.getElementById('adminMappingTable').innerHTML = '<div class="table-row head"><span>一抗</span><span>流程</span><span>版本</span><span>状态</span><span>启用</span></div>' + mappings.map(x => `<div class="table-row"><span>${escapeHtml(x.primaryAntibodyCode)}</span><span>${escapeHtml(x.workflowCode)}</span><span>${escapeHtml(x.versionLabel)}</span><span>${escapeHtml(x.workflowStatus)}</span><span>${x.isEnabled ? '是' : '否'}</span></div>`).join('');
+  document.getElementById('adminCatalogTable').innerHTML = '<div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>Liquid Class</span><span>启用</span></div>' + catalog.map(x => `<div class="table-row"><span>${escapeHtml(x.reagentCode)}</span><span>${escapeHtml(x.name)}</span><span>${escapeHtml(x.reagentType)}</span><span>${escapeHtml(x.liquidClassCode || '--')}</span><span>${x.isEnabled ? '是' : '否'}</span></div>`).join('');
+  await loadTraceAudit({silentForbidden:false});
 }
 
 function wireAdminToolbar(users){
@@ -1773,7 +1798,6 @@ function alarmQueryString(){
   appendTraceQuery(params, 'alarmStatus', traceInputValue('alarmStatusFilter'));
   appendTraceQuery(params, 'severity', traceInputValue('alarmSeverityFilter'));
   appendTraceQuery(params, 'channel', traceInputValue('alarmChannelFilter'));
-  appendTraceQuery(params, 'alarmCode', traceInputValue('alarmCodeFilter'));
   params.set('pageSize', '80');
   return params.toString();
 }
@@ -1816,8 +1840,39 @@ async function loadTraceHistory(){
 
 function renderTraceHistoryRuns(root, runs){
   root.innerHTML = '<div class="table-row head"><span>运行</span><span>通道/玻片</span><span>流程</span><span>状态</span><span>时间</span></div>' + ((runs || []).map(run =>
-    `<div class="table-row"><span><b>${escapeHtml(run.runCode || run.machineRunId)}</b><small>${escapeHtml(run.machineRunId)}</small></span><span>${escapeHtml(run.channels || '--')} / ${Number(run.slideTaskCount || 0)} 张</span><span>${escapeHtml(run.workflowNames || '--')}</span><span>${escapeHtml(run.status || '--')}<small>告警 ${Number(run.alarmCount || 0)}</small></span><span>${escapeHtml(formatDateTime(run.createdAtUtc))}<small>${escapeHtml(run.requestedBy || '--')}</small></span></div>`
+    `<div class="table-row" role="button" tabindex="0" onclick="loadTraceRunDetail('${escapeHtml(run.machineRunId)}')"><span><b>${escapeHtml(run.runCode || run.machineRunId)}</b><small>${escapeHtml(run.machineRunId)}</small></span><span>${escapeHtml(run.channels || '--')} / ${Number(run.slideTaskCount || 0)} 张</span><span>${escapeHtml(run.workflowNames || '--')}</span><span>${escapeHtml(run.status || '--')}<small>告警 ${Number(run.alarmCount || 0)}</small></span><span>${escapeHtml(formatDateTime(run.createdAtUtc))}<small>${escapeHtml(run.requestedBy || '--')} · 查看链路</small></span></div>`
   ).join('') || '<div class="empty-state"><b>暂无正式历史运行</b><span>当前筛选条件下没有 MachineRun / ChannelBatch 记录。</span></div>');
+}
+
+async function loadTraceRunDetail(machineRunId){
+  let root = document.getElementById('historyRunDetail');
+  if(!root){
+    const section = document.createElement('section');
+    section.className = 'modern-card';
+    section.innerHTML = '<div class="section-title"><div><h2>运行全链路详情</h2><p>操作员只显示业务摘要；技术报文、路径和持久化异常仅工程页可见。</p></div><span class="badge-soft">正式追溯</span></div><div id="historyRunDetail" class="detail-grid"></div>';
+    document.getElementById('historySlides')?.closest('.split-grid')?.after(section);
+    root = document.getElementById('historyRunDetail');
+  }
+  if(!root) return;
+  root.innerHTML = '<div><span>读取中</span><b>正在加载正式追溯链路...</b></div>';
+  try{
+    const detail = await api(`/api/history/runs/${encodeURIComponent(machineRunId)}`);
+    const channels = detail.channels || detail.channelBatches || [];
+    const slides = channels.flatMap(x => x.slides || []);
+    const steps = detail.steps || (detail.workflowExecutions || []).flatMap(x => x.steps || []);
+    const reagents = detail.reagentConsumptions || [];
+    const dab = detail.dabUsages || [];
+    const alarms = detail.alarms || [];
+    root.innerHTML = [
+      ['运行', `${detail.runCode || detail.machineRunId} / ${detail.status || '--'}`],
+      ['通道与玻片', `${channels.map(x => x.drawerCode).filter(Boolean).join(' / ') || '--'} · ${slides.length} 张`],
+      ['步骤链路', steps.map(x => `${x.stepNo ?? ''} ${x.stepName || x.majorStepCode || ''}(${x.status || '--'})`).join(' → ') || '--'],
+      ['试剂消耗', reagents.map(x => `${x.reagentCode || '--'} ${x.volumeUl || 0}μL`).join(' / ') || '--'],
+      ['DAB', dab.map(x => `${x.positionCode || '--'} ${x.volumeUl || 0}μL`).join(' / ') || '--'],
+      ['告警摘要', alarms.map(x => `${x.severity || '--'} ${x.code || '--'}：${x.message || ''}`).join(' / ') || '无'],
+      ['时间', `${formatDateTime(detail.startedAtUtc)} → ${formatDateTime(detail.completedAtUtc)}`]
+    ].map(([label,value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('');
+  }catch(e){ root.innerHTML = `<div><span>加载失败</span><b>${escapeHtml(e.message || '无法读取追溯详情')}</b></div>`; }
 }
 
 function renderTraceReagentConsumptions(root, rows){
