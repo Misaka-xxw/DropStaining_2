@@ -17,13 +17,30 @@ public static class ServiceCollectionExtensions
         var connectionString = DatabasePathResolver.ResolveConnectionString(configuration, environment);
         DatabaseInitializer.EnsureDatabaseDirectory(connectionString);
 
+        services.AddPersistenceServices(connectionString);
+        services.AddRepositoryServices();
+        services.AddApplicationServices();
+        services.AddDeviceServices(configuration);
+        services.AddRuntimeMessagingServices();
+        services.AddHostedRuntimeServices();
+        services.AddSignalR();
+
+        return services;
+    }
+
+    private static IServiceCollection AddPersistenceServices(this IServiceCollection services, string connectionString)
+    {
         services.AddSingleton(new DatabaseHealthChecker(connectionString));
-        services.AddSingleton<SafetyLogWriter>();
-        services.AddSingleton<MachineExecutorLeaseService>();
         services.AddDbContext<StainerDbContext>(options =>
             options.UseSqlite(connectionString)
                 .AddInterceptors(new SqlitePragmaConnectionInterceptor()));
         services.AddScoped<ReferenceDataSeeder>();
+
+        return services;
+    }
+
+    private static IServiceCollection AddRepositoryServices(this IServiceCollection services)
+    {
         services.AddScoped<IReferenceDataRepository, EfReferenceDataRepository>();
         services.AddScoped<IWorkflowRepository, EfWorkflowRepository>();
         services.AddScoped<IReagentRepository, EfReagentRepository>();
@@ -31,6 +48,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IReagentReadRepository, EfReagentReadRepository>();
         services.AddScoped<IEngineeringReadRepository, EfEngineeringReadRepository>();
         services.AddScoped<IUserReadRepository, EfUserReadRepository>();
+
+        return services;
+    }
+
+    private static IServiceCollection AddApplicationServices(this IServiceCollection services)
+    {
+        services.AddSingleton<SafetyLogWriter>();
+        services.AddSingleton<MachineExecutorLeaseService>();
         services.AddScoped<WorkflowQueryService>();
         services.AddScoped<ReagentQueryService>();
         services.AddScoped<EngineeringQueryService>();
@@ -76,6 +101,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<RunControlService>();
         services.AddScoped<RuntimePageBridgeService>();
         services.AddSingleton<IReagentBarcodeParser, ReagentBarcodeParser>();
+
+        return services;
+    }
+
+    private static IServiceCollection AddDeviceServices(this IServiceCollection services, IConfiguration configuration)
+    {
         services.AddSingleton<MockDeviceStateStore>();
         if (DeviceModes.Normalize(configuration["Device:Mode"]) == DeviceModes.Real)
         {
@@ -85,13 +116,24 @@ public static class ServiceCollectionExtensions
         {
             services.AddSingleton<IDeviceAdapter, MockDeviceAdapter>();
         }
+
+        return services;
+    }
+
+    private static IServiceCollection AddRuntimeMessagingServices(this IServiceCollection services)
+    {
         services.AddSingleton<InMemoryRuntimeEventPublisher>();
         services.AddSingleton<IRuntimeEventPublisher>(serviceProvider => serviceProvider.GetRequiredService<InMemoryRuntimeEventPublisher>());
         services.AddSingleton<MachineExecutor>();
+
+        return services;
+    }
+
+    private static IServiceCollection AddHostedRuntimeServices(this IServiceCollection services)
+    {
         services.AddHostedService<MachineExecutorHostedService>();
         services.AddHostedService<DabExpiryHostedService>();
         services.AddHostedService<MachineEventSignalRDispatcher>();
-        services.AddSignalR();
 
         return services;
     }

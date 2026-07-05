@@ -28,7 +28,7 @@ public sealed class MockRuntimeStore
         lock (syncRoot)
         {
             state.ActiveUser = user;
-            AddLog($"User login: {user.DisplayName} / {user.Role}");
+            AddLog($"用户登录：{user.DisplayName} / {TranslateRole(user.Role)}");
         }
     }
 
@@ -47,7 +47,7 @@ public sealed class MockRuntimeStore
         lock (syncRoot)
         {
             state.ActiveUser = user;
-            AddLog($"User login: {user.DisplayName} / {user.Role}");
+            AddLog($"用户登录：{user.DisplayName} / {TranslateRole(user.Role)}");
         }
 
         return user;
@@ -58,7 +58,7 @@ public sealed class MockRuntimeStore
         lock (syncRoot)
         {
             state.ActiveUser = null;
-            AddLog("User logout");
+            AddLog("用户已退出");
         }
     }
 
@@ -74,7 +74,7 @@ public sealed class MockRuntimeStore
             state.System.LiquidSensor = true;
             state.System.NeedleWash = true;
             state.System.PureWaterOk = true;
-            AddLog("System initialized: arm, cooling, scanner, liquid sensor and needle wash are ready");
+            AddLog("系统已初始化：机械臂、制冷、扫码器、液位传感器和洗针均就绪");
             return state;
         }
     }
@@ -86,7 +86,7 @@ public sealed class MockRuntimeStore
             var activeUser = state.ActiveUser;
             state = CreateDefaultState();
             state.ActiveUser = activeUser;
-            AddLog("Runtime state reset");
+            AddLog("运行状态已重置");
             return state;
         }
     }
@@ -113,11 +113,11 @@ public sealed class MockRuntimeStore
                         PrimaryVolumeUl = 80,
                         TemperatureC = 42,
                         Status = "loaded",
-                        CurrentStep = "Waiting for confirmation",
+                        CurrentStep = "等待确认",
                         Progress = 0
                     });
                     channel.Status = "loaded";
-                    channel.CurrentStep = "Loaded";
+                    channel.CurrentStep = "已装载";
                     slideNo++;
                 }
             }
@@ -127,7 +127,7 @@ public sealed class MockRuntimeStore
                 state.Status = "ready";
             }
 
-            AddLog($"Sample area scan completed: {count} slides");
+            AddLog($"样本区扫码完成：{count} 张玻片");
             return state;
         }
     }
@@ -149,7 +149,7 @@ public sealed class MockRuntimeStore
                 CreateReagent("R9", "C0199926062301001", "WASH", "Wash", "wash", 100),
                 CreateReagent("R10", "S0120026062301002", "SECONDARY", "Secondary B", "secondary", 20)
             ];
-            AddLog($"Reagent rack scan completed: {state.Reagents.Count} positions");
+            AddLog($"试剂架扫码完成：{state.Reagents.Count} 个位置");
             return state;
         }
     }
@@ -161,7 +161,7 @@ public sealed class MockRuntimeStore
             var slide = state.Channels.SelectMany(x => x.Slides).FirstOrDefault(x => x.Id == request.SlideId);
             if (slide is null)
             {
-                throw new KeyNotFoundException($"slide not found: {request.SlideId}");
+                throw new KeyNotFoundException($"未找到玻片：{request.SlideId}");
             }
 
             slide.ProtocolCode = request.ProtocolCode;
@@ -169,8 +169,8 @@ public sealed class MockRuntimeStore
             slide.PrimaryVolumeUl = request.PrimaryVolumeUl;
             slide.TemperatureC = request.TemperatureC;
             slide.Status = "configured";
-            slide.CurrentStep = "Configured";
-            AddLog($"Slide configured: {slide.Id} {slide.ProtocolCode} {slide.AntibodyCode}");
+            slide.CurrentStep = "已配置";
+            AddLog($"玻片已配置：{slide.Id} {slide.ProtocolCode} {slide.AntibodyCode}");
             return state;
         }
     }
@@ -197,10 +197,10 @@ public sealed class MockRuntimeStore
             {
                 channel.Status = state.Status == "running" ? "running" : channel.Status;
                 channel.Progress = state.Status == "running" ? Math.Max(channel.Progress, 8) : channel.Progress;
-                channel.CurrentStep = state.Status == "running" ? "Mock running" : channel.CurrentStep;
+                channel.CurrentStep = state.Status == "running" ? "Mock 运行中" : channel.CurrentStep;
             }
 
-            AddLog($"Run command: {action}");
+            AddLog($"运行命令：{TranslateRunAction(action)}");
             return state;
         }
     }
@@ -209,7 +209,7 @@ public sealed class MockRuntimeStore
     {
         lock (syncRoot)
         {
-            var message = $"Mock command executed: {request.Module}/{request.Action}";
+            var message = $"Mock 命令已执行：{request.Module}/{request.Action}";
             AddLog(message);
             return new
             {
@@ -273,7 +273,7 @@ public sealed class MockRuntimeStore
             Status = "idle",
             Initialized = false,
             Channels = CreateDefaultChannels(),
-            Logs = ["ASP.NET Core web host started"]
+            Logs = ["ASP.NET Core Web 服务已启动"]
         };
     }
 
@@ -316,6 +316,23 @@ public sealed class MockRuntimeStore
             state.Logs.RemoveRange(300, state.Logs.Count - 300);
         }
     }
+
+    private static string TranslateRole(string role) => role switch
+    {
+        "operator" => "操作员",
+        "engineer" => "工程师",
+        "admin" => "管理员",
+        _ => role
+    };
+
+    private static string TranslateRunAction(string action) => action switch
+    {
+        "start" => "启动",
+        "pause" => "暂停",
+        "resume" => "恢复",
+        "stop" => "停止",
+        _ => action
+    };
 }
 
 public sealed class MockRuntimeState

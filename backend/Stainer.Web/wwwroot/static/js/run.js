@@ -11,7 +11,7 @@ async function fetchJsonOrNull(url){
   try{ data = text ? JSON.parse(text) : {}; }catch(e){ data = {raw:text}; }
   if(res.status === 404) return null;
   if(!res.ok){
-    const msg = data.detail || data.message || ('请求失败：' + res.status);
+    const msg = displayLogText(data.detail || data.message || ('请求失败：' + res.status));
     toast(msg, true);
     const error = new Error(msg);
     error.status = res.status;
@@ -91,7 +91,7 @@ async function openValidationModal(autoStart=false){
     }
   }catch(e){
     latestPreflightReport = null;
-    if(body) body.innerHTML = `<div class="validation-issue"><b>预检失败</b><span>${escapeHtml(e.message || '正式预检接口调用失败')}</span><em>Fail</em></div>`;
+    if(body) body.innerHTML = `<div class="validation-issue"><b>预检失败</b><span>${escapeHtml(displayLogText(e.message || '正式预检接口调用失败'))}</span><em>失败</em></div>`;
     if(btn){
       btn.disabled = true;
       btn.textContent = '预检失败，禁止启动';
@@ -113,9 +113,9 @@ function renderPreflightReport(report){
   setText('validationInitState', failures.some(x => x.area === 'Device') ? 'BLOCK' : 'PASS');
 
   if(body){
-    const summary = `<div class="validation-ok"><b>正式预检报告</b><span>预检时间：${escapeHtml(formatDateTime(report.generatedAtUtc))} · 关联任务：${Number(report.taskCount || 0)} · Fail：${failures.length} · Warning：${warnings.length} · 允许启动：${report.ok ? '是' : '否'}</span><small>设备状态来自正式后端快照；预检通过后才允许创建并启动运行。</small></div>`;
+    const summary = `<div class="validation-ok"><b>正式预检报告</b><span>预检时间：${escapeHtml(formatDateTime(report.generatedAtUtc))} · 关联任务：${Number(report.taskCount || 0)} · 失败：${failures.length} · 警告：${warnings.length} · 允许启动：${report.ok ? '是' : '否'}</span><small>设备状态来自正式后端快照；预检通过后才允许创建并启动运行。</small></div>`;
     const grouped = groupBy(issues, x => x.area || 'Other');
-    const rows = Object.entries(grouped).map(([area, items]) => `<div class="validation-group"><h3>${escapeHtml(preflightAreaLabel(area))}</h3>${items.map(item => `<div class="validation-issue ${String(item.severity || '').toLowerCase() === 'warning' ? 'warning' : ''}"><b>${escapeHtml(item.code)}</b><span>${escapeHtml(item.message)}</span><em>${escapeHtml(item.severity || 'Fail')}</em></div>`).join('') || '<div class="validation-ok"><b>Pass</b><span>当前分组无阻断项。</span></div>'}</div>`).join('');
+    const rows = Object.entries(grouped).map(([area, items]) => `<div class="validation-group"><h3>${escapeHtml(preflightAreaLabel(area))}</h3>${items.map(item => `<div class="validation-issue ${String(item.severity || '').toLowerCase() === 'warning' ? 'warning' : ''}"><b>${escapeHtml(displayLogText(item.code))}</b><span>${escapeHtml(displayLogText(item.message))}</span><em>${escapeHtml(severityText(item.severity || 'Fail'))}</em></div>`).join('') || '<div class="validation-ok"><b>通过</b><span>当前分组无阻断项。</span></div>'}</div>`).join('');
     body.innerHTML = summary + (Object.keys(grouped).length ? rows : '<div class="validation-ok"><b>全部关键项通过</b><span>通道脚本、任务、试剂与 Mock 设备状态满足启动条件。</span></div>');
   }
   if(btn){
@@ -288,14 +288,14 @@ function renderChannels(channels){
     const total = workflows.flatMap(x => x.steps || []).length || 1;
     const progress = Math.round(completed * 100 / total);
     return `<div class="runtime-channel ${String(batch.status || '').toLowerCase()}">
-      <div class="runtime-head"><b>${escapeHtml(batch.drawerCode)} 通道</b><span>${escapeHtml(batch.status)}</span></div>
+      <div class="runtime-head"><b>${escapeHtml(batch.drawerCode)} 通道</b><span>${escapeHtml(displayStatusText(batch.status))}</span></div>
       <div class="progress-track"><span style="width:${progress}%"></span></div>
-      <p><b>${progress}%</b> · ${escapeHtml(batch.experimentType || '--')} · ${escapeHtml(batch.workflowSelectionStatus || '--')}</p>
+      <p><b>${progress}%</b> · ${escapeHtml(batch.experimentType || '--')} · ${escapeHtml(displayStatusText(batch.workflowSelectionStatus || '--'))}</p>
       <div class="runtime-slides">
         ${(batch.slides || []).map(slide => {
           const workflow = (currentRunSnapshot?.workflowExecutions || []).find(x => x.slideTaskId === slide.id);
           const step = currentStep(workflow);
-          return `<div class="runtime-slide loaded"><b>${escapeHtml(slide.slotCode)}</b><small>${escapeHtml(slide.taskType)}</small><em>${escapeHtml(slide.status)}</em><small>${escapeHtml(step?.stepName || step?.majorStepCode || 'Waiting')}</small><small>试剂：${escapeHtml(step?.reagentCode || '--')}</small><small>体积：${escapeHtml(step?.volumeUl ?? '--')} uL</small></div>`;
+          return `<div class="runtime-slide loaded"><b>${escapeHtml(slide.slotCode)}</b><small>${escapeHtml(slide.taskType)}</small><em>${escapeHtml(displayStatusText(slide.status))}</em><small>${escapeHtml(displayLogText(step?.stepName || step?.majorStepCode || 'Waiting'))}</small><small>试剂：${escapeHtml(step?.reagentCode || '--')}</small><small>体积：${escapeHtml(step?.volumeUl ?? '--')} uL</small></div>`;
         }).join('') || '<div class="runtime-slide empty"><b>EMPTY</b><small>无任务</small></div>'}
       </div>
     </div>`;
@@ -315,7 +315,7 @@ async function refreshRun(){
   if(status){
     const runStatus = run?.status || 'idle';
     status.className = 'status-chip status-' + String(runStatus).toLowerCase();
-    status.innerHTML = '<i></i><b data-status-label>' + escapeHtml(runStatus) + '</b>';
+    status.innerHTML = '<i></i><b data-status-label>' + escapeHtml(displayStatusText(runStatus)) + '</b>';
   }
   setText('runIdSmall', run ? `${run.runCode || run.id} · ${systemInfoSnapshot?.deviceMode || 'Mock'} · ${majorStepForRun(run)}` : '未生成批号 · Mock');
   renderChannels(run?.channelBatches || []);
@@ -325,7 +325,7 @@ async function refreshRun(){
   if(logRoot){
     const alarms = (operatorRunSnapshot?.alarmDetails || run?.alarms || []).map(x => `[${x.severity}] ${x.code}: ${x.message}`);
     const events = (operatorRunSnapshot?.recentEvents || []).map(x => `${formatDateTime(x.occurredAtUtc)} · ${x.title} · ${x.detail}`);
-    logRoot.innerHTML = alarms.concat(events).slice(0, 30).map(x => `<div>${escapeHtml(x)}</div>`).join('') || '<div>暂无正式运行事件</div>';
+    logRoot.innerHTML = alarms.concat(events).slice(0, 30).map(x => `<div>${escapeHtml(displayLogText(x))}</div>`).join('') || '<div>暂无正式运行事件</div>';
   }
 }
 
@@ -346,27 +346,27 @@ function renderRunResources(snapshot, run){
   const root = document.getElementById('runResourceGrid');
   if(root){
     const rows = [
-      ['当前大步骤', run?.currentMajorStepCode || snapshot.currentMajorStepCode || '--', activeStep?.status || run?.status || '--'],
-      ['原子动作', activeStep?.stepName || activeStep?.actionType || '--', activeStep ? `${activeStep.actionType} · ${activeStep.reagentCode || '无试剂'}` : '--'],
-      ['设备命令', command?.commandType || '--', command?.status || '无命令'],
+      ['当前大步骤', run?.currentMajorStepCode || snapshot.currentMajorStepCode || '--', displayStatusText(activeStep?.status || run?.status || '--')],
+      ['原子动作', displayLogText(activeStep?.stepName || activeStep?.actionType || '--'), activeStep ? `${commandTypeText(activeStep.actionType)} · ${activeStep.reagentCode || '无试剂'}` : '--'],
+      ['设备命令', commandTypeText(command?.commandType || '--'), displayStatusText(command?.status || '无命令')],
       ['温控', points.length ? `${points.length - abnormalPoints.length}/${points.length} 正常` : '--', abnormalPoints.length ? `${abnormalPoints.length} 异常` : '正常'],
-      ['制冷', cooling ? `${(Number(cooling.currentTemperatureDeciC || 0) / 10).toFixed(1)}℃` : '--', cooling?.status || '--'],
-      ['泵 / 混匀', `${pumps.filter(x => x.isConnected).length}/${pumps.length} · ${mixers.filter(x => x.isConnected).length}/${mixers.length}`, snapshot.fluidics?.ready ? 'READY' : 'BLOCK'],
-      ['液位', liquidIssues.length ? `${liquidIssues.length} 项需处理` : '正常', liquidIssues.map(x => x.displayName).join('、') || 'READY'],
-      ['DAB', dab ? `${dab.code} · ${formatVolume(dab.remainingVolumeUl)}` : '无活动批次', dab?.batchStatus || '--'],
-      ['资源等待', waiting.length ? `${waiting.length} 项` : '无', waiting[0]?.waitReason || '未发生抢占']
+      ['制冷', cooling ? `${(Number(cooling.currentTemperatureDeciC || 0) / 10).toFixed(1)}℃` : '--', displayStatusText(cooling?.status || '--')],
+      ['泵 / 混匀', `${pumps.filter(x => x.isConnected).length}/${pumps.length} · ${mixers.filter(x => x.isConnected).length}/${mixers.length}`, snapshot.fluidics?.ready ? '就绪' : '阻断'],
+      ['液位', liquidIssues.length ? `${liquidIssues.length} 项需处理` : '正常', liquidIssues.map(x => displayLogText(x.displayName)).join('、') || '就绪'],
+      ['DAB', dab ? `${dab.code} · ${formatVolume(dab.remainingVolumeUl)}` : '无活动批次', displayStatusText(dab?.batchStatus || '--')],
+      ['资源等待', waiting.length ? `${waiting.length} 项` : '无', displayLogText(waiting[0]?.waitReason || '未发生抢占')]
     ];
     root.innerHTML = rows.map(([label, value, state]) => `<div><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span><em>${escapeHtml(state)}</em></div>`).join('');
   }
 
   const needleRoot = document.getElementById('runNeedles');
   if(needleRoot){
-    needleRoot.innerHTML = (snapshot.needles || []).map(needle => `<div><b>${escapeHtml(needle.needleCode)}</b><span>${escapeHtml(needle.loadedReagentCode || needle.loadedSourceType)} · ${escapeHtml(needle.volumeUl)} uL</span><em>${escapeHtml(needle.status)}${needle.needsWash ? ' · 待洗针' : ''}${needle.lastErrorCode ? ` · ${escapeHtml(needle.lastErrorCode)}` : ''}</em></div>`).join('') || '<div><b>双针状态</b><span>暂无正式针头状态</span><em>UNKNOWN</em></div>';
+    needleRoot.innerHTML = (snapshot.needles || []).map(needle => `<div><b>${escapeHtml(needle.needleCode)}</b><span>${escapeHtml(needle.loadedReagentCode || needle.loadedSourceType)} · ${escapeHtml(needle.volumeUl)} uL</span><em>${escapeHtml(displayStatusText(needle.status))}${needle.needsWash ? ' · 待洗针' : ''}${needle.lastErrorCode ? ` · ${escapeHtml(displayLogText(needle.lastErrorCode))}` : ''}</em></div>`).join('') || '<div><b>双针状态</b><span>暂无正式针头状态</span><em>待人工确认</em></div>';
   }
 
   const commandRoot = document.getElementById('runCommandStages');
   if(commandRoot){
-    commandRoot.innerHTML = (snapshot.deviceCommands || []).slice(0, 8).map(item => `<div><b>${escapeHtml(item.commandType)}</b><span>${escapeHtml(item.status)}</span><em>${escapeHtml(formatDateTime(item.completedAtUtc || item.acknowledgedAtUtc || item.commandSentAtUtc || item.createdAtUtc))}</em></div>`).join('') || '<div><b>暂无设备命令</b><span>Planned → CommandSent → DeviceAcknowledged → Completed / Failed / Unknown</span></div>';
+    commandRoot.innerHTML = (snapshot.deviceCommands || []).slice(0, 8).map(item => `<div><b>${escapeHtml(commandTypeText(item.commandType))}</b><span>${escapeHtml(displayStatusText(item.status))}</span><em>${escapeHtml(formatDateTime(item.completedAtUtc || item.acknowledgedAtUtc || item.commandSentAtUtc || item.createdAtUtc))}</em></div>`).join('') || '<div><b>暂无设备命令</b><span>已计划 → 命令已下发 → 设备已确认 → 已完成 / 失败 / 待人工确认</span></div>';
   }
 }
 
@@ -376,9 +376,9 @@ function renderRunCommandVisibility(run){
   const hasRun = !!run && !['Completed','Stopped','completed','stopped'].includes(run.status);
   const status = String(run?.status || '').toLowerCase();
   setButtonDisabledReason(document.getElementById('runStartButton'), hasRun && !['created','pending'].includes(status), '已有运行正在执行或等待处理');
-  setButtonDisabledReason(document.getElementById('runPauseButton'), status !== 'running', status ? `当前状态 ${run.status} 不能暂停` : '当前没有正式运行');
-  setButtonDisabledReason(document.getElementById('runResumeButton'), status !== 'paused', status ? `当前状态 ${run.status} 不能恢复` : '当前没有正式运行');
-  setButtonDisabledReason(document.getElementById('runStopButton'), !['running','paused'].includes(status), status ? `当前状态 ${run.status} 不能普通停止` : '当前没有正式运行');
+  setButtonDisabledReason(document.getElementById('runPauseButton'), status !== 'running', status ? `当前状态 ${displayStatusText(run.status)} 不能暂停` : '当前没有正式运行');
+  setButtonDisabledReason(document.getElementById('runResumeButton'), status !== 'paused', status ? `当前状态 ${displayStatusText(run.status)} 不能恢复` : '当前没有正式运行');
+  setButtonDisabledReason(document.getElementById('runStopButton'), !['running','paused'].includes(status), status ? `当前状态 ${displayStatusText(run.status)} 不能普通停止` : '当前没有正式运行');
   document.getElementById('mockFaultButton')?.classList.toggle('hidden', !(canEngineer && hasRun && (systemInfoSnapshot?.deviceMode || 'Mock') === 'Mock'));
   document.getElementById('redoMajorStepButton')?.classList.toggle('hidden', !(canEngineer && hasRun));
 }

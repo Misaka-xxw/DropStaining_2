@@ -72,7 +72,7 @@ function renderMockSummary(){
   const root = document.getElementById('mockRunSummary');
   if(!root){ return; }
   root.innerHTML = mockSummary.map(([label, value, note]) =>
-    `<div><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span><em>${escapeHtml(note)}</em></div>`
+    `<div><b>${escapeHtml(displayLogText(label))}</b><span>${escapeHtml(displayLogText(value))}</span><em>${escapeHtml(displayLogText(note))}</em></div>`
   ).join('');
 }
 
@@ -80,14 +80,14 @@ function renderMockTimeline(){
   const root = document.getElementById('mockTimelineList');
   const counter = document.getElementById('mockEventCount');
   if(!root){ return; }
-  if(counter){ counter.textContent = `${mockTimelineEvents.length} events`; }
+  if(counter){ counter.textContent = `${mockTimelineEvents.length} 条事件`; }
   root.innerHTML = mockTimelineEvents.map(event => `
     <article class="mock-event level-${escapeHtml(event.level)}">
       <time>${escapeHtml(event.time)}</time>
       <div>
-        <span>${escapeHtml(event.type)}</span>
-        <b>${escapeHtml(event.title)}</b>
-        <p>${escapeHtml(event.detail)}</p>
+        <span>${escapeHtml(displayLogText(event.type))}</span>
+        <b>${escapeHtml(displayLogText(event.title))}</b>
+        <p>${escapeHtml(displayLogText(event.detail))}</p>
       </div>
     </article>
   `).join('');
@@ -108,7 +108,7 @@ function renderMockGantt(){
       <div class="mock-gantt-track">
         ${row.bars.map(bar => `
           <span class="mock-gantt-bar status-${escapeHtml(bar.status)}" style="left:${bar.start}%;width:${bar.duration}%">
-            ${escapeHtml(bar.label)}
+            ${escapeHtml(displayLogText(bar.label))}
           </span>
         `).join('')}
       </div>

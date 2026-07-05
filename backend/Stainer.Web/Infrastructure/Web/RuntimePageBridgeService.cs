@@ -75,7 +75,7 @@ public sealed class RuntimePageBridgeService(
             "pause" => await runControlService.PauseAsync(run.Id, new RunCommandRequest(NewCommandId("ui-run-pause")), actor, cancellationToken),
             "resume" => await runControlService.ResumeAsync(run.Id, new RunCommandRequest(NewCommandId("ui-run-resume")), actor, cancellationToken),
             "stop" => await runControlService.StopAsync(run.Id, new RunCommandRequest(NewCommandId("ui-run-stop")), actor, cancellationToken),
-            _ => throw new BusinessRuleException("run_action_unknown", $"Unknown run action: {action}", StatusCodes.Status400BadRequest)
+            _ => throw new BusinessRuleException("run_action_unknown", $"未知运行操作：{action}", StatusCodes.Status400BadRequest)
         };
 
         var updated = await machineRunQueryService.GetAsync(run.Id, cancellationToken);
@@ -97,7 +97,7 @@ public sealed class RuntimePageBridgeService(
         state.System = ToSystemCheck(initialization);
         if (!string.IsNullOrWhiteSpace(initialization.Message))
         {
-            state.Logs = new[] { $"[Initialization/{initialization.Status}] {initialization.Message}" }
+            state.Logs = new[] { $"[初始化/{TranslateStatus(initialization.Status)}] {initialization.Message}" }
                 .Concat(state.Logs)
                 .Take(80)
                 .ToList();
@@ -215,7 +215,7 @@ public sealed class RuntimePageBridgeService(
                 Name = $"Channel{index + 1}",
                 DrawerCode = drawer.Code,
                 Status = "empty",
-                CurrentStep = "No active batch",
+                CurrentStep = "无活动批次",
                 WorkflowSelectionStatus = WorkflowSelectionStatus.Unselected,
                 CanSelectWorkflow = true,
                 CanChangeWorkflow = false
@@ -241,7 +241,7 @@ public sealed class RuntimePageBridgeService(
             ChannelBatchId = batch.Id,
             Status = status,
             Progress = slides.Count == 0 ? 0 : (int)Math.Round(slides.Average(x => x.Progress)),
-            CurrentStep = locked ? "Locked" : slides.Count == 0 ? "Waiting for slides" : "Waiting",
+            CurrentStep = locked ? "已锁定" : slides.Count == 0 ? "等待放入玻片" : "等待中",
             ExperimentType = batch.ExperimentType,
             WorkflowVersionId = batch.SelectedWorkflowVersionId,
             WorkflowCode = batch.SelectedWorkflowVersion?.WorkflowDefinition?.Code,
@@ -326,7 +326,7 @@ public sealed class RuntimePageBridgeService(
             Reagents = fallback.Reagents,
             ActiveUser = fallback.ActiveUser,
             Alarms = run.Alarms.Select(x => $"{x.Code}: {x.Message}").ToList(),
-            Logs = run.Alarms.Select(x => $"[{x.Severity}] {x.Code}: {x.Message}")
+            Logs = run.Alarms.Select(x => $"[{TranslateStatus(x.Severity)}] {x.Code}: {x.Message}")
                 .Concat(fallback.Logs)
                 .Take(80)
                 .ToList()
@@ -345,7 +345,7 @@ public sealed class RuntimePageBridgeService(
             SampleIdentifier = slide.Id[^Math.Min(8, slide.Id.Length)..],
             ProtocolCode = slide.TaskType,
             Status = MapPageStatus(slide.Status),
-            CurrentStep = step?.StepName ?? step?.MajorStepCode ?? "Waiting",
+            CurrentStep = step?.StepName ?? step?.MajorStepCode ?? "等待中",
             Progress = CalculateProgress(workflow)
         };
     }
@@ -399,7 +399,7 @@ public sealed class RuntimePageBridgeService(
             }
         }
 
-        return batch.Status == RuntimeLedgerStatus.Completed ? "Completed" : "Waiting";
+        return batch.Status == RuntimeLedgerStatus.Completed ? "已完成" : "等待中";
     }
 
     private static int ParseSlotNo(string slotCode)
@@ -432,13 +432,32 @@ public sealed class RuntimePageBridgeService(
     {
         return status switch
         {
-            RuntimeLedgerStatus.Pending => "Waiting",
-            RuntimeLedgerStatus.Running => "Running",
-            RuntimeLedgerStatus.Paused => "Paused",
-            RuntimeLedgerStatus.Completed => "Completed",
-            RuntimeLedgerStatus.WaitingUnload => "Waiting unload",
-            RuntimeLedgerStatus.Faulted or RuntimeLedgerStatus.Failed => "Fault",
+            RuntimeLedgerStatus.Pending => "等待中",
+            RuntimeLedgerStatus.Running => "运行中",
+            RuntimeLedgerStatus.Paused => "已暂停",
+            RuntimeLedgerStatus.Completed => "已完成",
+            RuntimeLedgerStatus.WaitingUnload => "等待卸载",
+            RuntimeLedgerStatus.Faulted or RuntimeLedgerStatus.Failed => "故障",
             _ => status
+        };
+    }
+
+    private static string TranslateStatus(string? status)
+    {
+        return status switch
+        {
+            "Active" => "活动中",
+            "Acknowledged" => "已确认",
+            "Resolved" => "已处理",
+            "Warning" => "警告",
+            "Error" => "错误",
+            "Critical" => "严重",
+            "Information" => "信息",
+            "Succeeded" => "成功",
+            "Failed" => "失败",
+            "Running" => "运行中",
+            "Pending" => "等待中",
+            _ => status ?? "--"
         };
     }
 

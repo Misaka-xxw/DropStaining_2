@@ -69,7 +69,7 @@ function renderShellState(state){
   if(banner){
     const hasAlarm = (state.alarms || []).length > 0;
     banner.classList.toggle('hidden', !hasAlarm);
-    setText('alertText', hasAlarm ? state.alarms[0] : '');
+    setText('alertText', hasAlarm ? displayLogText(state.alarms[0]) : '');
   }
 }
 
@@ -88,7 +88,7 @@ function renderDashboardEvents(events){
   if(!root) return;
   const list = (events || []).slice(0, 20);
   const latest = list[0];
-  root.innerHTML = `<button type="button" class="operator-event-entry" onclick="openDashboardEventList()"><b>查看事件</b><span>${latest ? escapeHtml(latest.title || latest.type || '最近事件') : '暂无正式事件'}</span><em>${list.length} 条</em></button>`;
+  root.innerHTML = `<button type="button" class="operator-event-entry" onclick="openDashboardEventList()"><b>查看事件</b><span>${latest ? escapeHtml(displayLogText(latest.title || latest.type || '最近事件')) : '暂无正式事件'}</span><em>${list.length} 条</em></button>`;
 }
 
 function openDashboardEventList(){
@@ -99,7 +99,7 @@ function openDashboardEventList(){
     body.classList.remove('detail-grid');
     body.classList.add('operator-event-list');
     body.innerHTML = events.length
-      ? events.map(event => `<button type="button" class="operator-event-row" onclick="openDashboardEvent('${escapeHtml(event.id)}')"><span>${escapeHtml(formatDateTime(event.occurredAtUtc))}</span><b>${escapeHtml(event.title)}</b><em>${escapeHtml(event.status || event.type)}</em></button>`).join('')
+      ? events.map(event => `<button type="button" class="operator-event-row" onclick="openDashboardEvent('${escapeHtml(event.id)}')"><span>${escapeHtml(formatDateTime(event.occurredAtUtc))}</span><b>${escapeHtml(displayLogText(event.title))}</b><em>${escapeHtml(displayStatusText(event.status || event.type))}</em></button>`).join('')
       : '<div class="empty-state"><b>暂无正式事件</b><span>初始化、命令和运行事件会在这里显示。</span></div>';
   }
   const link = document.getElementById('dashboardEventLink');
@@ -115,7 +115,7 @@ function openDashboardEvent(eventId){
   if(body){
     body.classList.add('detail-grid');
     body.classList.remove('operator-event-list');
-    body.innerHTML = `<div><span>时间</span><b>${escapeHtml(formatDateTime(event.occurredAtUtc))}</b></div><div><span>类型</span><b>${escapeHtml(event.type || '--')}</b></div><div><span>状态</span><b>${escapeHtml(event.status || '--')}</b></div><div><span>详情</span><b>${escapeHtml(event.detail || '--')}</b></div>`;
+    body.innerHTML = `<div><span>时间</span><b>${escapeHtml(formatDateTime(event.occurredAtUtc))}</b></div><div><span>类型</span><b>${escapeHtml(displayLogText(event.type || '--'))}</b></div><div><span>状态</span><b>${escapeHtml(displayStatusText(event.status || '--'))}</b></div><div><span>详情</span><b>${escapeHtml(displayLogText(event.detail || '--'))}</b></div>`;
   }
   const link = document.getElementById('dashboardEventLink');
   if(link) link.onclick = () => { location.href = event.href || '/history'; };
@@ -208,7 +208,7 @@ function renderReagentScanSessionOverview(overview){
   }
 
   const stateLabel = active ? '进行中' : '已完成';
-  const warning = session.hasWarning ? ` · Warning：${escapeHtml(session.message || '')}` : '';
+  const warning = session.hasWarning ? ` · 警告：${escapeHtml(displayLogText(session.message || ''))}` : '';
   root.innerHTML = [
     `扫码会话：${stateLabel}`,
     `会话编号：${escapeHtml(session.sessionCode || session.scanSessionId || '--')}`,
@@ -324,7 +324,7 @@ function renderHistoryLegacySnapshot(state){
   if(!document.getElementById('historySlides')) return;
   const slideRows = (state.channels || []).flatMap((channel, index) => {
     const letter = ['A','B','C','D'][index] || channel.id;
-    return (channel.slides || []).map(slide => `<div class="table-row"><span>${escapeHtml(slide.barcode)}</span><span>${letter}-${String(slide.slot).padStart(2,'0')}</span><span>${escapeHtml(slide.protocolCode)}</span><span>${escapeHtml(slide.status)}</span><span>${escapeHtml(slide.currentStep)}</span></div>`);
+    return (channel.slides || []).map(slide => `<div class="table-row"><span>${escapeHtml(slide.barcode)}</span><span>${letter}-${String(slide.slot).padStart(2,'0')}</span><span>${escapeHtml(slide.protocolCode)}</span><span>${escapeHtml(displayStatusText(slide.status))}</span><span>${escapeHtml(displayLogText(slide.currentStep))}</span></div>`);
   });
   document.getElementById('historySlides').innerHTML = '<div class="table-row head"><span>玻片</span><span>Slot</span><span>流程</span><span>状态</span><span>当前步骤</span></div>' + (slideRows.join('') || '<div class="empty-state"><b>暂无样本记录</b><span>请先扫描样本区。</span></div>');
   const reagentRows = (state.reagents || []).slice(0,20).map(r => `<div class="table-row"><span>${escapeHtml(r.position)}</span><span>${escapeHtml(r.code)}</span><span>${escapeHtml(r.lotNo || '--')}</span><span>${r.volumeMl}mL</span><span>${escapeHtml(r.expireDate || '--')}</span></div>`);
@@ -523,7 +523,7 @@ function workflowRequirementRows(requirements, editable){
 function renderTimeline(id, items, limit){
   const root = document.getElementById(id);
   if(!root) return;
-  root.innerHTML = (items || []).slice(0, limit).map(item => `<div><i></i><span>${escapeHtml(item)}</span></div>`).join('') || '<div><i></i><span>暂无日志</span></div>';
+  root.innerHTML = (items || []).slice(0, limit).map(item => `<div><i></i><span>${escapeHtml(displayLogText(item))}</span></div>`).join('') || '<div><i></i><span>暂无日志</span></div>';
 }
 
 function renderRunPage(state){
@@ -538,7 +538,7 @@ function renderRunPage(state){
   }
   const logRoot = document.getElementById('logList');
   if(logRoot){
-    logRoot.innerHTML = (state.logs || []).slice(0,30).map(x => `<div>${escapeHtml(x)}</div>`).join('') || '<div>No events</div>';
+    logRoot.innerHTML = (state.logs || []).slice(0,30).map(x => `<div>${escapeHtml(displayLogText(x))}</div>`).join('') || '<div>暂无事件</div>';
   }
 }
 
@@ -779,7 +779,7 @@ function showReagentDetail(pos){
   const position = rackPositionByCode(pos);
   const bottle = position?.bottle;
   const state = scanStateOf(position);
-  body.innerHTML = `<div><span>位置</span><b>${escapeHtml(pos)}</b></div><div><span>状态</span><b>${escapeHtml(bottle?.status || scanStateLabel(state))}</b></div><div><span>错误</span><b>${escapeHtml(state === 'INVALID' ? position?.validationMessage || '扫码校验失败' : '--')}</b></div><div><span>完整条码</span><b>${escapeHtml(bottle?.fullBarcode || position?.rawBarcode || '--')}</b><small>${escapeHtml(bottle?.barcodeSummary || position?.barcodeSummary || '--')}</small></div><div><span>试剂名称</span><b>${escapeHtml(bottle?.name || scanStateTitle(state))}</b></div><div><span>试剂代码</span><b>${escapeHtml(bottle?.reagentCode || position?.parsedReagentCode || '--')}</b></div><div><span>剩余量</span><b>${escapeHtml(bottle ? formatVolume(bottle.remainingVolumeUl) : '--')}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle?.lotNo, bottle?.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle?.expirationDate))}</b></div><div><span>最后扫码时间</span><b>${escapeHtml(formatDateTime(position?.lastScannedAtUtc || bottle?.lastScannedAtUtc))}</b></div><div><span>扫码会话</span><b>${escapeHtml(position?.lastScanSessionCode || '--')}</b><small>${escapeHtml(position?.lastScanSessionStatus || '--')}</small></div>`;
+  body.innerHTML = `<div><span>位置</span><b>${escapeHtml(pos)}</b></div><div><span>状态</span><b>${escapeHtml(displayStatusText(bottle?.status || scanStateLabel(state)))}</b></div><div><span>错误</span><b>${escapeHtml(state === 'INVALID' ? displayLogText(position?.validationMessage || '扫码校验失败') : '--')}</b></div><div><span>完整条码</span><b>${escapeHtml(bottle?.fullBarcode || position?.rawBarcode || '--')}</b><small>${escapeHtml(bottle?.barcodeSummary || position?.barcodeSummary || '--')}</small></div><div><span>试剂名称</span><b>${escapeHtml(bottle?.name || scanStateTitle(state))}</b></div><div><span>试剂代码</span><b>${escapeHtml(bottle?.reagentCode || position?.parsedReagentCode || '--')}</b></div><div><span>剩余量</span><b>${escapeHtml(bottle ? formatVolume(bottle.remainingVolumeUl) : '--')}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle?.lotNo, bottle?.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle?.expirationDate))}</b></div><div><span>最后扫码时间</span><b>${escapeHtml(formatDateTime(position?.lastScannedAtUtc || bottle?.lastScannedAtUtc))}</b></div><div><span>扫码会话</span><b>${escapeHtml(position?.lastScanSessionCode || '--')}</b><small>${escapeHtml(displayStatusText(position?.lastScanSessionStatus || '--'))}</small></div>`;
   document.getElementById('reagentDetail')?.classList.remove('hidden');
 }
 
@@ -800,14 +800,14 @@ function openReagentScanModal(pos, fromGuide=false){
       `<div><span>当前扫码会话</span><b>${escapeHtml(active.sessionCode || active.scanSessionId)}</b><small>${escapeHtml(formatDateTime(active.startedAtUtc))}</small></div>`,
       `<div><span>当前位置</span><b>${escapeHtml(pos)}</b></div>`,
       `<div><span>所属扫描通道</span><b>${escapeHtml(position?.scannerChannelCode || ('ch' + (position?.scannerChannelNo || '--')))}</b></div>`,
-      `<div><span>当前结果</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || invalidOrScanMessage(position))}</small></div>`
+      `<div><span>当前结果</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(displayLogText(position?.validationMessage || invalidOrScanMessage(position)))}</small></div>`
     ].join('');
   }
   const result = document.getElementById('reagentScanResult');
   if(result){
     result.innerHTML = bottle
       ? `<div><span>试剂代码</span><b>${escapeHtml(bottle.reagentCode)}</b></div><div><span>试剂名称</span><b>${escapeHtml(bottle.name || '--')}</b></div><div><span>余量</span><b>${escapeHtml(formatVolume(bottle.remainingVolumeUl))}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle.lotNo, bottle.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle.expirationDate))}</b></div>`
-      : `<div><span>后端结果</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || '等待确认')}</small></div>`;
+      : `<div><span>后端结果</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(displayLogText(position?.validationMessage || '等待确认'))}</small></div>`;
   }
   const mode = document.getElementById('reagentScanMode');
   const barcode = document.getElementById('reagentBarcodeInput');
@@ -896,8 +896,8 @@ function renderReagentPositionResult(position, response){
   const bottle = position?.bottle;
   const state = scanStateOf(position);
   result.innerHTML = bottle
-    ? `<div><span>后端状态</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || response?.validationMessage || '--')}</small></div><div><span>试剂代码</span><b>${escapeHtml(bottle.reagentCode)}</b></div><div><span>试剂名称</span><b>${escapeHtml(bottle.name || '--')}</b></div><div><span>余量</span><b>${escapeHtml(formatVolume(bottle.remainingVolumeUl))}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle.lotNo, bottle.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle.expirationDate))}</b></div>`
-    : `<div><span>后端状态</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(position?.validationMessage || response?.validationMessage || '--')}</small></div>`;
+    ? `<div><span>后端状态</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(displayLogText(position?.validationMessage || response?.validationMessage || '--'))}</small></div><div><span>试剂代码</span><b>${escapeHtml(bottle.reagentCode)}</b></div><div><span>试剂名称</span><b>${escapeHtml(bottle.name || '--')}</b></div><div><span>余量</span><b>${escapeHtml(formatVolume(bottle.remainingVolumeUl))}</b></div><div><span>批号 / 序列号</span><b>${escapeHtml([bottle.lotNo, bottle.serialNo].filter(Boolean).join(' / ') || '--')}</b></div><div><span>有效期</span><b>${escapeHtml(formatDate(bottle.expirationDate))}</b></div>`
+    : `<div><span>后端状态</span><b>${escapeHtml(scanStateLabel(state))}</b><small>${escapeHtml(displayLogText(position?.validationMessage || response?.validationMessage || '--'))}</small></div>`;
 }
 
 function advanceReagentScanGuide(pos){
@@ -932,7 +932,7 @@ async function renderAdminLegacyInitial(state){
   wireAdminToolbar(users);
   document.getElementById('userTable').innerHTML = '<div class="table-row head"><span>用户</span><span>显示名</span><span>角色</span><span>启用</span><span>操作</span></div>' + users.map(u => `<div class="table-row"><span>${escapeHtml(u.username)}</span><span>${escapeHtml(u.displayName)}</span><span class="badge-soft">${escapeHtml((u.roles || [u.role]).join(','))}</span><span>${u.enabled ? '是' : '否'}</span><span class="button-row"><button class="btn btn-soft" onclick="adminRenameUser('${u.id}', '${escapeHtml(u.displayName)}')">改名</button><button class="btn btn-soft" onclick="adminToggleUser('${u.id}', ${!u.enabled})">${u.enabled ? '禁用' : '启用'}</button><button class="btn btn-soft" onclick="adminResetPassword('${u.id}')">重置</button><button class="btn btn-soft" onclick="adminSetRoles('${u.id}', '${escapeHtml((u.roles || []).join(','))}')">角色</button><button class="btn btn-soft" onclick="adminDeleteUser('${u.id}')">删除</button></span></div>`).join('');
   const versions = workflows.flatMap(workflow => (workflow.versions || []).map(version => ({workflow, version})));
-  document.getElementById('adminWorkflowTable').innerHTML = '<div class="table-row head"><span>类型</span><span>流程</span><span>版本</span><span>状态</span><span>默认</span></div>' + versions.map(x => `<div class="table-row"><span>${escapeHtml(x.workflow.workflowType)}</span><span>${escapeHtml(x.workflow.code)}<small>${escapeHtml(x.workflow.name)}</small></span><span>${escapeHtml(x.version.versionLabel)}</span><span>${escapeHtml(x.version.status)}</span><span>${escapeHtml(x.version.defaultExperimentType || '--')}</span></div>`).join('');
+  document.getElementById('adminWorkflowTable').innerHTML = '<div class="table-row head"><span>类型</span><span>流程</span><span>版本</span><span>状态</span><span>默认</span></div>' + versions.map(x => `<div class="table-row"><span>${escapeHtml(x.workflow.workflowType)}</span><span>${escapeHtml(x.workflow.code)}<small>${escapeHtml(x.workflow.name)}</small></span><span>${escapeHtml(x.version.versionLabel)}</span><span>${escapeHtml(displayStatusText(x.version.status))}</span><span>${escapeHtml(x.version.defaultExperimentType || '--')}</span></div>`).join('');
   document.getElementById('adminMappingTable').innerHTML = '<div class="table-row head"><span>一抗</span><span>流程</span><span>版本</span><span>状态</span><span>启用</span></div>' + mappings.map(x => `<div class="table-row"><span>${escapeHtml(x.primaryAntibodyCode)}</span><span>${escapeHtml(x.workflowCode)}</span><span>${escapeHtml(x.versionLabel)}</span><span>${escapeHtml(x.workflowStatus)}</span><span>${x.isEnabled ? '是' : '否'}</span></div>`).join('');
   document.getElementById('adminCatalogTable').innerHTML = '<div class="table-row head"><span>代码</span><span>名称</span><span>类别</span><span>Liquid Class</span><span>启用</span></div>' + catalog.map(x => `<div class="table-row"><span>${escapeHtml(x.reagentCode)}</span><span>${escapeHtml(x.name)}</span><span>${escapeHtml(x.reagentType)}</span><span>${escapeHtml(x.liquidClassCode || '--')}</span><span>${x.isEnabled ? '是' : '否'}</span></div>`).join('');
   await loadTraceAudit({silentForbidden:false});
@@ -1053,7 +1053,7 @@ function renderSampleSlot(channel, letter, slot){
     slide.workflowName || channel.workflowName || slide.protocolCode || channel.workflowCode,
     slide.workflowVersionLabel || channel.workflowVersionLabel
   ].filter(Boolean).join(' / ');
-  return `<div class="sample-slot occupied"><div class="slot-no">${escapeHtml(code)}</div><div><b>${escapeHtml(slide.sampleIdentifier || slide.barcode || slide.id)}</b><span>${escapeHtml(statusText(slide.status || 'loaded'))} / ${escapeHtml(slide.currentStep || '')}</span><small>继承通道脚本：${escapeHtml(inherited || '--')}</small></div><em>${escapeHtml(slide.protocolCode || channel.workflowCode || channel.experimentType || '--')}</em></div>`;
+  return `<div class="sample-slot occupied"><div class="slot-no">${escapeHtml(code)}</div><div><b>${escapeHtml(slide.sampleIdentifier || slide.barcode || slide.id)}</b><span>${escapeHtml(displayStatusText(slide.status || 'loaded'))} / ${escapeHtml(displayLogText(slide.currentStep || ''))}</span><small>继承通道脚本：${escapeHtml(inherited || '--')}</small></div><em>${escapeHtml(slide.protocolCode || channel.workflowCode || channel.experimentType || '--')}</em></div>`;
 }
 
 function renderChannelWorkflowPicker(channel, letter, workflow){
@@ -1619,7 +1619,7 @@ function renderPublishValidation(validation){
     root.innerHTML = '<div class="validation-ok"><b>校验通过</b><span>该 Draft 可发布。</span></div>';
     return;
   }
-  root.innerHTML = `<div class="validation-ok"><b>${escapeHtml(validation.result)}</b><span>Fail ${validation.failCount} / Warning ${validation.warningCount}</span></div>` + issues.map(issue => `<div class="validation-issue"><b>${escapeHtml(issue.severity)}</b><em>${escapeHtml(issue.area)} · ${escapeHtml(issue.code)}</em><span>${escapeHtml(issue.message)}</span></div>`).join('');
+  root.innerHTML = `<div class="validation-ok"><b>${escapeHtml(displayStatusText(validation.result))}</b><span>失败 ${validation.failCount} / 警告 ${validation.warningCount}</span></div>` + issues.map(issue => `<div class="validation-issue"><b>${escapeHtml(severityText(issue.severity))}</b><em>${escapeHtml(displayLogText(issue.area))} · ${escapeHtml(displayLogText(issue.code))}</em><span>${escapeHtml(displayLogText(issue.message))}</span></div>`).join('');
 }
 
 async function validateWorkflowPublish(){
@@ -1638,7 +1638,7 @@ async function publishWorkflowVersion(){
     toast('发布校验未通过，不能发布。', true);
     return;
   }
-  if(validation.result === 'Warning' && !confirm('存在 Warning，仍然发布？')) return;
+  if(validation.result === 'Warning' && !confirm('存在警告，仍然发布？')) return;
   await api(`/api/workflow-versions/${encodeURIComponent(workflowVersionId)}/publish`, {
     method:'POST',
     body: JSON.stringify({commandId: commandId('workflow-publish')})
@@ -1840,7 +1840,7 @@ async function loadTraceHistory(){
 
 function renderTraceHistoryRuns(root, runs){
   root.innerHTML = '<div class="table-row head"><span>运行</span><span>通道/玻片</span><span>流程</span><span>状态</span><span>时间</span></div>' + ((runs || []).map(run =>
-    `<div class="table-row" role="button" tabindex="0" onclick="loadTraceRunDetail('${escapeHtml(run.machineRunId)}')"><span><b>${escapeHtml(run.runCode || run.machineRunId)}</b><small>${escapeHtml(run.machineRunId)}</small></span><span>${escapeHtml(run.channels || '--')} / ${Number(run.slideTaskCount || 0)} 张</span><span>${escapeHtml(run.workflowNames || '--')}</span><span>${escapeHtml(run.status || '--')}<small>告警 ${Number(run.alarmCount || 0)}</small></span><span>${escapeHtml(formatDateTime(run.createdAtUtc))}<small>${escapeHtml(run.requestedBy || '--')} · 查看链路</small></span></div>`
+    `<div class="table-row" role="button" tabindex="0" onclick="loadTraceRunDetail('${escapeHtml(run.machineRunId)}')"><span><b>${escapeHtml(run.runCode || run.machineRunId)}</b><small>${escapeHtml(run.machineRunId)}</small></span><span>${escapeHtml(run.channels || '--')} / ${Number(run.slideTaskCount || 0)} 张</span><span>${escapeHtml(run.workflowNames || '--')}</span><span>${escapeHtml(displayStatusText(run.status || '--'))}<small>告警 ${Number(run.alarmCount || 0)}</small></span><span>${escapeHtml(formatDateTime(run.createdAtUtc))}<small>${escapeHtml(run.requestedBy || '--')} · 查看链路</small></span></div>`
   ).join('') || '<div class="empty-state"><b>暂无正式历史运行</b><span>当前筛选条件下没有 MachineRun / ChannelBatch 记录。</span></div>');
 }
 
@@ -1864,12 +1864,12 @@ async function loadTraceRunDetail(machineRunId){
     const dab = detail.dabUsages || [];
     const alarms = detail.alarms || [];
     root.innerHTML = [
-      ['运行', `${detail.runCode || detail.machineRunId} / ${detail.status || '--'}`],
+      ['运行', `${detail.runCode || detail.machineRunId} / ${displayStatusText(detail.status || '--')}`],
       ['通道与玻片', `${channels.map(x => x.drawerCode).filter(Boolean).join(' / ') || '--'} · ${slides.length} 张`],
-      ['步骤链路', steps.map(x => `${x.stepNo ?? ''} ${x.stepName || x.majorStepCode || ''}(${x.status || '--'})`).join(' → ') || '--'],
+      ['步骤链路', steps.map(x => `${x.stepNo ?? ''} ${x.stepName || x.majorStepCode || ''}(${displayStatusText(x.status || '--')})`).join(' → ') || '--'],
       ['试剂消耗', reagents.map(x => `${x.reagentCode || '--'} ${x.volumeUl || 0}μL`).join(' / ') || '--'],
       ['DAB', dab.map(x => `${x.positionCode || '--'} ${x.volumeUl || 0}μL`).join(' / ') || '--'],
-      ['告警摘要', alarms.map(x => `${x.severity || '--'} ${x.code || '--'}：${x.message || ''}`).join(' / ') || '无'],
+      ['告警摘要', alarms.map(x => alarmDisplayText(x)).join(' / ') || '无'],
       ['时间', `${formatDateTime(detail.startedAtUtc)} → ${formatDateTime(detail.completedAtUtc)}`]
     ].map(([label,value]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('');
   }catch(e){ root.innerHTML = `<div><span>加载失败</span><b>${escapeHtml(e.message || '无法读取追溯详情')}</b></div>`; }
@@ -1892,7 +1892,7 @@ async function loadTraceAlarms(){
       const level = String(alarm.severity || '').toLowerCase();
       const canAck = alarm.status === 'Active';
       const ackButton = canAck ? `<button class="btn btn-soft" onclick="acknowledgeTraceAlarm('${escapeHtml(alarm.alarmId)}','${escapeHtml(alarm.severity)}')">确认</button>` : '';
-      return `<div class="alarm-row level-${escapeHtml(level || 'warning')}"><b>${escapeHtml(alarm.severity || '--')}</b><span>${escapeHtml(alarm.code || '--')} · ${escapeHtml(alarm.message || '')}</span><em>${escapeHtml(alarm.status || '--')} · 通道 ${escapeHtml(alarm.sourceChannels || '--')} · ${escapeHtml(formatDateTime(alarm.createdAtUtc))}</em><small>${alarm.ackBy ? `确认：${escapeHtml(alarm.ackBy)} / ${escapeHtml(formatDateTime(alarm.ackAtUtc))} / ${escapeHtml(alarm.ackReason || '--')}` : '未确认'} ${ackButton}</small></div>`;
+      return `<div class="alarm-row level-${escapeHtml(level || 'warning')}"><b>${escapeHtml(severityText(alarm.severity || '--'))}</b><span>${escapeHtml(displayLogText(alarm.code || '--'))} · ${escapeHtml(displayLogText(alarm.message || ''))}</span><em>${escapeHtml(displayStatusText(alarm.status || '--'))} · 通道 ${escapeHtml(alarm.sourceChannels || '--')} · ${escapeHtml(formatDateTime(alarm.createdAtUtc))}</em><small>${alarm.ackBy ? `确认：${escapeHtml(alarm.ackBy)} / ${escapeHtml(formatDateTime(alarm.ackAtUtc))} / ${escapeHtml(displayLogText(alarm.ackReason || '--'))}` : '未确认'} ${ackButton}</small></div>`;
     }).join('') : '<div class="empty-state"><b>暂无告警</b><span>当前筛选条件下没有告警记录。</span></div>';
     renderTraceAlarmActions(alarms);
   }catch(e){
@@ -1906,7 +1906,7 @@ function renderTraceAlarmActions(alarms){
   const actions = (alarms || []).flatMap(alarm => (alarm.actions || []).map(action => ({alarm, action})))
     .sort((a, b) => String(b.action.createdAtUtc || '').localeCompare(String(a.action.createdAtUtc || '')));
   root.innerHTML = actions.length ? actions.map(x =>
-    `<div><i></i><span>${escapeHtml(formatDateTime(x.action.createdAtUtc))} · ${escapeHtml(x.alarm.code)} · ${escapeHtml(x.action.action)} · ${escapeHtml(x.action.actor || '--')} · ${escapeHtml(x.action.message || '--')}</span></div>`
+    `<div><i></i><span>${escapeHtml(formatDateTime(x.action.createdAtUtc))} · ${escapeHtml(alarmActionLogText(x))}</span></div>`
   ).join('') : '<div><i></i><span>暂无告警处理记录</span></div>';
 }
 
@@ -1949,7 +1949,7 @@ async function loadTraceAudit(options={}){
     const result = await api('/api/audit/logs' + (query ? '?' + query : ''));
     const rows = result.items || [];
     const html = rows.length ? rows.map(item =>
-      `<div><i></i><span>${escapeHtml(formatDateTime(item.createdAtUtc))} · ${escapeHtml(item.actor || '--')} · ${escapeHtml(item.action || '--')} · ${escapeHtml(item.entityType || '--')} ${escapeHtml(item.entityId || '')}<small>${escapeHtml(item.summary || item.message || '--')}</small></span></div>`
+      `<div><i></i><span>${escapeHtml(formatDateTime(item.createdAtUtc))} · ${escapeHtml(item.actor || '--')} · ${escapeHtml(actionText(item.action || '--'))} · ${escapeHtml(entityTypeText(item.entityType || '--'))} ${escapeHtml(item.entityId || '')}<small>${escapeHtml(auditLogText(item))}</small></span></div>`
     ).join('') : '<div><i></i><span>暂无审计记录</span></div>';
     roots.forEach(root => { root.innerHTML = html; });
     setText('adminLogCount', rows.length);
