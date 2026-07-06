@@ -19,6 +19,20 @@ public sealed record ClearMockDeviceFaultRequest(
     string Reason,
     string? ModuleCode = null);
 
+public sealed record ReagentQrCommandRequest(
+    string CommandId,
+    string? Position = null,
+    string? RawBarcode = null,
+    string? Text = null,
+    string? ScanSessionId = null);
+
+public sealed record ReportReagentQrTextRequest(
+    string CommandId,
+    string? Text = null,
+    string? Position = null,
+    string? ScanSessionId = null,
+    DateOnly? ExpirationDate = null);
+
 public sealed record SetThermalPointRequest(
     string CommandId,
     int TargetTemperatureDeciC,

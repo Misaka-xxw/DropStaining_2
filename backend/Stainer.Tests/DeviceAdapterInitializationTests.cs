@@ -18,6 +18,23 @@ namespace Stainer.Tests;
 public sealed class DeviceAdapterInitializationTests
 {
     [Fact]
+    public void Ice_immuno_serial_protocol_uses_crc16_modbus()
+    {
+        var check = IceImmunoSerialProtocol.CalculateCrc16Modbus(System.Text.Encoding.ASCII.GetBytes("123456789"));
+        Assert.Equal(0x4B37, check);
+
+        var startFrame = IceImmunoSerialProtocol.BuildRequestFrame(0x08, 0x04);
+        Assert.Equal(0xA5, startFrame[0]);
+        Assert.Equal(0x01, startFrame[1]);
+        Assert.Equal(0x03, startFrame[2]);
+        Assert.Equal(0x00, startFrame[3]);
+        Assert.Equal<byte>([0x08, 0x04, 0x01], startFrame[4..7]);
+        Assert.Equal(0x5A, startFrame[^1]);
+        var crc = (ushort)(startFrame[7] | (startFrame[8] << 8));
+        Assert.Equal(IceImmunoSerialProtocol.CalculateCrc16Modbus(startFrame.AsSpan(4, 3)), crc);
+    }
+
+    [Fact]
     public async Task Mock_scanners_share_device_state_and_fault_plans()
     {
         var stateStore = new MockDeviceStateStore();
@@ -309,6 +326,82 @@ public sealed class DeviceAdapterInitializationTests
         Assert.NotNull(state);
         Assert.True(state!.Ready);
         Assert.Equal(nameof(MockDeviceOperations), state.AdapterName);
+    }
+
+    [Fact]
+    public async Task Reagent_qr_device_operations_follow_required_flow_and_sync_database()
+    {
+        var context = CreateFactory();
+        await using var factory = context.Factory;
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "operator", "operator");
+
+        var rawBarcode = "HEM05020270101001";
+        var reset = await PostJsonAsync<ReagentQrDeviceOperationResponse>(
+            client,
+            "/api/device/reagent-scanner/qr/reset",
+            new { commandId = "cmd-reagent-qr-reset" });
+        Assert.True(reset.Ok, reset.Message);
+        Assert.Equal(ReagentQrCommands.ResetScan, reset.Command);
+
+        var started = await PostJsonAsync<ReagentQrDeviceOperationResponse>(
+            client,
+            "/api/device/reagent-scanner/qr/start",
+            new { commandId = "cmd-reagent-qr-start", position = "R1", rawBarcode });
+        Assert.True(started.Ok, started.Message);
+        Assert.Equal(ReagentQrCommands.StartScan, started.Command);
+        Assert.Equal(ReagentQrScanStatusCodes.Scanning, started.ScanStatusCode);
+        Assert.Equal($"ch1:{rawBarcode}", started.Text);
+
+        var text = await PostJsonAsync<ReagentQrDeviceOperationResponse>(
+            client,
+            "/api/device/reagent-scanner/qr/text",
+            new { commandId = "cmd-reagent-qr-text" });
+        Assert.True(text.Ok, text.Message);
+        Assert.Equal(ReagentQrCommands.GetText, text.Command);
+        Assert.Equal(ReagentQrScanStatusCodes.Idle, text.ScanStatusCode);
+        Assert.Equal(started.Text, text.Text);
+
+        var status = await PostJsonAsync<ReagentQrDeviceOperationResponse>(
+            client,
+            "/api/device/reagent-scanner/qr/status",
+            new { commandId = "cmd-reagent-qr-status" });
+        Assert.True(status.Ok, status.Message);
+        Assert.Equal(ReagentQrCommands.GetScanStatus, status.Command);
+        Assert.Equal(ReagentQrScanStatusCodes.Idle, status.ScanStatusCode);
+
+        var reported = await PostJsonAsync<ReagentQrReportResponse>(
+            client,
+            "/api/device/reagent-scanner/qr/report",
+            new { commandId = "cmd-reagent-qr-report", text = text.Text });
+        Assert.True(reported.Ok, reported.Message);
+        Assert.True(reported.ScanSynced);
+        Assert.Equal(ReagentQrCommands.PutText, reported.Command);
+        Assert.Equal("R1", reported.Position);
+        Assert.Equal("ch1", reported.ChannelCode);
+        Assert.Equal(rawBarcode, reported.RawBarcode);
+        Assert.Equal(ReagentScanResult.Valid, reported.ScanResult);
+        Assert.True(reported.ChannelResolvedByMock);
+
+        var cleared = await PostJsonAsync<ReagentQrDeviceOperationResponse>(
+            client,
+            "/api/device/reagent-scanner/qr/clear",
+            new { commandId = "cmd-reagent-qr-clear" });
+        Assert.True(cleared.Ok, cleared.Message);
+        Assert.Equal(ReagentQrCommands.ClearText, cleared.Command);
+        Assert.Equal(string.Empty, cleared.Text);
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var item = await dbContext.ReagentScanItems.SingleAsync(x => x.RawBarcode == rawBarcode);
+        Assert.Equal("R1", item.LocatorCode);
+        Assert.Equal("ch1", item.ScannerChannelCode);
+        Assert.Equal(ReagentScanResult.Valid, item.ScanResult);
+        Assert.True(item.IsValidationPassed);
+        Assert.True(await dbContext.ReagentBottles.AnyAsync(x => x.FullBarcode == rawBarcode));
+        Assert.True(await dbContext.DeviceCommunicationRecords.CountAsync(x =>
+            x.ModuleCode == DeviceModules.ReagentScanner
+            && x.Action.StartsWith("TL_QR_")) >= 6);
     }
 
     private static DeviceOperationRequest Request(string moduleCode, string action)

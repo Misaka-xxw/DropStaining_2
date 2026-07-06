@@ -20,6 +20,7 @@ public sealed class MockDeviceStateStore
     private readonly Dictionary<string, MutableModuleState> modules = DeviceModules.All
         .ToDictionary(x => x, x => new MutableModuleState(x), StringComparer.OrdinalIgnoreCase);
     private readonly List<MutableFaultPlan> faultPlans = [];
+    private readonly MutableReagentQrState reagentQr = new();
     private long version;
     private DateTimeOffset updatedAtUtc = DateTimeOffset.UtcNow;
 
@@ -178,6 +179,89 @@ public sealed class MockDeviceStateStore
         }
     }
 
+    internal ReagentQrStateSnapshot ResetReagentQr()
+    {
+        lock (syncRoot)
+        {
+            reagentQr.IsOnline = true;
+            reagentQr.IsScanning = false;
+            reagentQr.Text = string.Empty;
+            reagentQr.ChannelCode = null;
+            reagentQr.Position = null;
+            reagentQr.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            Touch(GetOrCreateModule(DeviceModules.ReagentScanner));
+            return reagentQr.ToSnapshot();
+        }
+    }
+
+    internal ReagentQrStateSnapshot StartReagentQr(string? plannedText, string? channelCode, string? position)
+    {
+        lock (syncRoot)
+        {
+            reagentQr.IsOnline = true;
+            reagentQr.IsScanning = true;
+            reagentQr.Text = plannedText?.Trim() ?? reagentQr.Text;
+            reagentQr.ChannelCode = string.IsNullOrWhiteSpace(channelCode) ? reagentQr.ChannelCode : channelCode.Trim();
+            reagentQr.Position = string.IsNullOrWhiteSpace(position) ? reagentQr.Position : position.Trim();
+            reagentQr.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            Touch(GetOrCreateModule(DeviceModules.ReagentScanner));
+            return reagentQr.ToSnapshot();
+        }
+    }
+
+    internal ReagentQrStateSnapshot ReadReagentQrText()
+    {
+        lock (syncRoot)
+        {
+            reagentQr.IsOnline = true;
+            reagentQr.IsScanning = false;
+            reagentQr.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            Touch(GetOrCreateModule(DeviceModules.ReagentScanner));
+            return reagentQr.ToSnapshot();
+        }
+    }
+
+    internal ReagentQrStateSnapshot GetReagentQrStatus()
+    {
+        lock (syncRoot)
+        {
+            reagentQr.IsOnline = true;
+            reagentQr.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            Touch(GetOrCreateModule(DeviceModules.ReagentScanner));
+            return reagentQr.ToSnapshot();
+        }
+    }
+
+    internal ReagentQrStateSnapshot PutReagentQrText(string text, string? channelCode, string? position)
+    {
+        lock (syncRoot)
+        {
+            reagentQr.IsOnline = true;
+            reagentQr.IsScanning = false;
+            reagentQr.Text = text.Trim();
+            reagentQr.ChannelCode = string.IsNullOrWhiteSpace(channelCode) ? reagentQr.ChannelCode : channelCode.Trim();
+            reagentQr.Position = string.IsNullOrWhiteSpace(position) ? reagentQr.Position : position.Trim();
+            reagentQr.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            Touch(GetOrCreateModule(DeviceModules.ReagentScanner));
+            return reagentQr.ToSnapshot();
+        }
+    }
+
+    internal ReagentQrStateSnapshot ClearReagentQrText()
+    {
+        lock (syncRoot)
+        {
+            reagentQr.IsOnline = true;
+            reagentQr.IsScanning = false;
+            reagentQr.Text = string.Empty;
+            reagentQr.ChannelCode = null;
+            reagentQr.Position = null;
+            reagentQr.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            Touch(GetOrCreateModule(DeviceModules.ReagentScanner));
+            return reagentQr.ToSnapshot();
+        }
+    }
+
     private MutableModuleState GetOrCreateModule(string moduleCode)
     {
         if (!modules.TryGetValue(moduleCode, out var module))
@@ -276,4 +360,30 @@ public sealed class MockDeviceStateStore
             CreatedAtUtc,
             ClearedAtUtc);
     }
+
+    private sealed class MutableReagentQrState
+    {
+        public bool IsOnline { get; set; } = true;
+        public bool IsScanning { get; set; }
+        public string Text { get; set; } = string.Empty;
+        public string? ChannelCode { get; set; }
+        public string? Position { get; set; }
+        public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+        public ReagentQrStateSnapshot ToSnapshot() => new(
+            IsOnline,
+            IsScanning ? ReagentQrScanStatusCodes.Scanning : ReagentQrScanStatusCodes.Idle,
+            Text,
+            ChannelCode,
+            Position,
+            UpdatedAtUtc);
+    }
 }
+
+internal sealed record ReagentQrStateSnapshot(
+    bool IsOnline,
+    ushort StatusCode,
+    string Text,
+    string? ChannelCode,
+    string? Position,
+    DateTimeOffset UpdatedAtUtc);

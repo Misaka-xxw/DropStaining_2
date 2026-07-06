@@ -197,3 +197,29 @@ public static class DeviceModules
         Workflow
     ];
 }
+
+public static class ReagentQrCommands
+{
+    public const string StartScan = "TL_QR_START_SCAN";
+    public const string ResetScan = "TL_QR_RESET_SCAN";
+    public const string GetScanStatus = "TL_QR_GET_SCAN_STATUS";
+    public const string GetText = "TL_QR_GET_TEXT";
+    public const string ClearText = "TL_QR_CLEAR_TEXT";
+    public const string PutText = "TL_QR_PUT_TEXT";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        StartScan,
+        ResetScan,
+        GetScanStatus,
+        GetText,
+        ClearText,
+        PutText
+    };
+}
+
+public static class ReagentQrScanStatusCodes
+{
+    public const ushort Idle = 0;
+    public const ushort Scanning = 1;
+}

@@ -91,6 +91,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TraceabilityQueryService>();
         services.AddScoped<DeviceModeService>();
         services.AddScoped<DeviceControlService>();
+        services.AddScoped<ReagentQrScannerDeviceOperationService>();
         services.AddScoped<ThermalControlService>();
         services.AddScoped<FluidicsControlService>();
         services.AddScoped<MotionControlService>();

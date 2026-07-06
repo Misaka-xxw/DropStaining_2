@@ -35,6 +35,46 @@ public sealed record DeviceFaultMutationResponse(
     string Message,
     DeviceStatusSnapshot State);
 
+public sealed record ReagentQrDeviceOperationResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string Command,
+    string Status,
+    string? ErrorCode,
+    string Message,
+    bool Online,
+    ushort ScanStatusCode,
+    string ScanStatus,
+    string? Text,
+    string? Position,
+    string? ChannelCode,
+    string DeviceMode,
+    string AdapterName);
+
+public sealed record ReagentQrReportResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string Command,
+    string Status,
+    string? ErrorCode,
+    string Message,
+    bool Online,
+    ushort ScanStatusCode,
+    string ScanStatus,
+    string? Text,
+    string? Position,
+    string? ChannelCode,
+    string? RawBarcode,
+    string? ScanSessionId,
+    bool ScanSynced,
+    string? ScanResult,
+    string? ValidationMessage,
+    bool ChannelResolvedByMock,
+    string DeviceMode,
+    string AdapterName);
+
 public sealed record ThermalStateResponse(
     bool Ready,
     IReadOnlyList<ThermalPointResponse> Points,

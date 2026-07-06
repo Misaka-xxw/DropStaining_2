@@ -154,6 +154,42 @@ public static partial class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
                 return Results.Ok(await service.ClearFaultsAsync(request, actor, cancellationToken));
             }));
+        app.MapPost("/api/device/reagent-scanner/qr/reset", async (HttpContext context, ReagentQrCommandRequest request, UserSessionService sessionService, ReagentQrScannerDeviceOperationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ResetAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/device/reagent-scanner/qr/start", async (HttpContext context, ReagentQrCommandRequest request, UserSessionService sessionService, ReagentQrScannerDeviceOperationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.StartAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/device/reagent-scanner/qr/text", async (HttpContext context, ReagentQrCommandRequest request, UserSessionService sessionService, ReagentQrScannerDeviceOperationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ReadTextAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/device/reagent-scanner/qr/status", async (HttpContext context, ReagentQrCommandRequest request, UserSessionService sessionService, ReagentQrScannerDeviceOperationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.GetStatusAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/device/reagent-scanner/qr/report", async (HttpContext context, ReportReagentQrTextRequest request, UserSessionService sessionService, ReagentQrScannerDeviceOperationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ReportTextAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/device/reagent-scanner/qr/clear", async (HttpContext context, ReagentQrCommandRequest request, UserSessionService sessionService, ReagentQrScannerDeviceOperationService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                return Results.Ok(await service.ClearTextAsync(request, actor, cancellationToken));
+            }));
         app.MapGet("/api/device-initialization", async (HttpContext context, UserSessionService sessionService, DeviceInitializationService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

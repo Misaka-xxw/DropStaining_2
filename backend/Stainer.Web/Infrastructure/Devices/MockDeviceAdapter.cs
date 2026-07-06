@@ -86,11 +86,50 @@ public class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceScopeFac
         return ExecuteAsync(request, InitializationData(request.ModuleCode), cancellationToken);
     }
 
+    private IReadOnlyDictionary<string, object?> ExecuteReagentQrAction(DeviceOperationRequest request)
+    {
+        var snapshot = request.Action switch
+        {
+            ReagentQrCommands.ResetScan => stateStore.ResetReagentQr(),
+            ReagentQrCommands.StartScan => stateStore.StartReagentQr(
+                Convert.ToString(request.Parameters.GetValueOrDefault("text")),
+                Convert.ToString(request.Parameters.GetValueOrDefault("channelCode")),
+                Convert.ToString(request.Parameters.GetValueOrDefault("position"))),
+            ReagentQrCommands.GetText => stateStore.ReadReagentQrText(),
+            ReagentQrCommands.GetScanStatus => stateStore.GetReagentQrStatus(),
+            ReagentQrCommands.PutText => stateStore.PutReagentQrText(
+                Convert.ToString(request.Parameters.GetValueOrDefault("text")) ?? string.Empty,
+                Convert.ToString(request.Parameters.GetValueOrDefault("channelCode")),
+                Convert.ToString(request.Parameters.GetValueOrDefault("position"))),
+            ReagentQrCommands.ClearText => stateStore.ClearReagentQrText(),
+            _ => stateStore.GetReagentQrStatus()
+        };
+
+        return new Dictionary<string, object?>
+        {
+            ["scanSource"] = "MockQrScanner",
+            ["online"] = snapshot.IsOnline,
+            ["statusCode"] = snapshot.StatusCode,
+            ["status"] = snapshot.StatusCode == ReagentQrScanStatusCodes.Scanning ? "Scanning" : "Idle",
+            ["text"] = snapshot.Text,
+            ["channelCode"] = snapshot.ChannelCode,
+            ["position"] = snapshot.Position,
+            ["updatedAtUtc"] = snapshot.UpdatedAtUtc
+        };
+    }
+
     public Task<DeviceCommandResult> ScanSampleAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
         ExecuteAsync(request, new Dictionary<string, object?> { ["scanSource"] = "Mock", ["rawCode"] = request.Parameters.GetValueOrDefault("rawCode") }, cancellationToken);
 
-    public Task<DeviceCommandResult> ScanReagentAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
-        ExecuteAsync(request, new Dictionary<string, object?> { ["scanSource"] = "Mock", ["rawBarcode"] = request.Parameters.GetValueOrDefault("rawBarcode") }, cancellationToken);
+    public Task<DeviceCommandResult> ScanReagentAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default)
+    {
+        if (ReagentQrCommands.All.Contains(request.Action))
+        {
+            return ExecuteAsync(request, () => ExecuteReagentQrAction(request), cancellationToken);
+        }
+
+        return ExecuteAsync(request, new Dictionary<string, object?> { ["scanSource"] = "Mock", ["rawBarcode"] = request.Parameters.GetValueOrDefault("rawBarcode") }, cancellationToken);
+    }
 
     public Task<DeviceCommandResult> QueryLisAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
         ExecuteAsync(request, new Dictionary<string, object?> { ["source"] = "MockLIS", ["readOnly"] = true }, cancellationToken);
@@ -155,7 +194,7 @@ public class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceScopeFac
         }, cancellationToken);
 
     public Task<DeviceCommandResult> ExecuteWorkflowActionAsync(DeviceOperationRequest request, CancellationToken cancellationToken = default) =>
-        ExecuteAsync(request, null, cancellationToken);
+        ExecuteAsync(request, (IReadOnlyDictionary<string, object?>?)null, cancellationToken);
 
     public Task<DeviceFaultControlResult> ConfigureFaultAsync(DeviceFaultCommand command, CancellationToken cancellationToken = default)
     {
@@ -179,6 +218,14 @@ public class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceScopeFac
     private async Task<DeviceCommandResult> ExecuteAsync(
         DeviceOperationRequest request,
         IReadOnlyDictionary<string, object?>? successData,
+        CancellationToken cancellationToken)
+    {
+        return await ExecuteAsync(request, () => successData ?? new Dictionary<string, object?>(), cancellationToken);
+    }
+
+    private async Task<DeviceCommandResult> ExecuteAsync(
+        DeviceOperationRequest request,
+        Func<IReadOnlyDictionary<string, object?>> successDataFactory,
         CancellationToken cancellationToken)
     {
         var startedAtUtc = DateTimeOffset.UtcNow;
@@ -212,7 +259,7 @@ public class MockDeviceAdapter(MockDeviceStateStore stateStore, IServiceScopeFac
         }
 
         await Task.Delay(CommandDelay, cancellationToken);
-        var data = successData ?? new Dictionary<string, object?>();
+        var data = successDataFactory();
         var currentJson = JsonSerializer.Serialize(data, JsonOptions);
         stateStore.CompleteOperation(request.ModuleCode, DeviceConnectionStatuses.Connected, currentJson, null, null);
         return new DeviceCommandResult(
