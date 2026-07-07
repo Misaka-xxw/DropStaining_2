@@ -122,7 +122,12 @@ public static class ServiceCollectionExtensions
         }
         else
         {
-            services.AddSingleton<IDeviceAdapter, UnavailableRealDeviceAdapter>();
+            services.AddSingleton<UnavailableRealDeviceAdapter>(serviceProvider =>
+                new UnavailableRealDeviceAdapter(serviceProvider.GetService<IDeviceByteTransport>()));
+            services.AddSingleton<IDeviceAdapter>(serviceProvider =>
+                serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
+            services.AddSingleton<IRealDeviceReadAdapter>(serviceProvider =>
+                serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
         }
 
         return services;

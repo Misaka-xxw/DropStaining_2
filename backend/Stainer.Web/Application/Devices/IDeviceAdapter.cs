@@ -132,6 +132,8 @@ public static class DeviceCommandStatuses
     public const string TimedOut = "TimedOut";
     public const string Unknown = "Unknown";
     public const string NotSupported = "NotSupported";
+    public const string Offline = "Offline";
+    public const string NotConfigured = "NotConfigured";
 }
 
 public static class DeviceConnectionStatuses
@@ -140,6 +142,8 @@ public static class DeviceConnectionStatuses
     public const string Connected = "Connected";
     public const string Disconnected = "Disconnected";
     public const string Faulted = "Faulted";
+    public const string Offline = "Offline";
+    public const string NotConfigured = "NotConfigured";
 }
 
 public static class DeviceFaultTypes
