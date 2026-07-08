@@ -120,7 +120,7 @@ public sealed class OfflineRealDeviceAdapterTests
     }
 
     [Fact]
-    public async Task Dcr55_boundary_prepares_only_explicit_terminators_and_receives_single_multiple_and_timeout()
+    public async Task Dcr55_boundary_prepares_only_explicit_terminators_and_receives_success_invalid_and_timeout()
     {
         var fake = new InMemoryFakeDeviceByteTransport();
         var adapter = new UnavailableRealDeviceAdapter(fake);
@@ -149,13 +149,15 @@ public sealed class OfflineRealDeviceAdapterTests
             new DeviceByteTransportResult(DeviceByteTransportStatuses.TimedOut, [], "dcr55_timeout", "No barcode."));
 
         var single = await adapter.ReceiveDcr55ResultAsync();
-        Assert.Equal(["SAMPLE-001"], single.Value!.Barcodes);
+        Assert.Equal("SAMPLE-001", single.Value!.Barcode);
+        Assert.Equal(Dcr55ScanStatus.Success, single.Value.Status);
         var multiple = await adapter.ReceiveDcr55ResultAsync();
-        Assert.Equal(["SAMPLE-002", "SAMPLE-003"], multiple.Value!.Barcodes);
+        Assert.False(multiple.Ok);
+        Assert.Equal(Dcr55ScanStatus.InvalidResponse, multiple.Value!.Status);
         var timeout = await adapter.ReceiveDcr55ResultAsync();
         Assert.False(timeout.Ok);
         Assert.Equal(DeviceCommandStatuses.TimedOut, timeout.Status);
-        Assert.Equal(Dcr55ScanOutcome.NoBarcodeTimeout, timeout.Value!.Outcome);
+        Assert.Equal(Dcr55ScanStatus.Timeout, timeout.Value!.Status);
     }
 
     [Fact]

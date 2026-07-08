@@ -22,33 +22,44 @@ public static class Dcr55Protocol
         return Encoding.ASCII.GetBytes(GetCommandText(mode)).Concat(configuredTerminator).ToArray();
     }
 
-    public static Dcr55ScanResult ParseBarcodeResult(string rawResult)
+    public static Dcr55ScanResult ParseBarcodeResult(string rawText, DateTimeOffset? timestamp = null)
     {
-        ArgumentNullException.ThrowIfNull(rawResult);
-        if (rawResult.Length == 0)
+        ArgumentNullException.ThrowIfNull(rawText);
+        var observedAt = timestamp ?? DateTimeOffset.UtcNow;
+        if (rawText.Length == 0 || !rawText.EndsWith("\r\n", StringComparison.Ordinal))
         {
-            return new Dcr55ScanResult(Dcr55ScanOutcome.Pending, [], rawResult, null, 0);
+            return Invalid(rawText, observedAt);
         }
 
-        var hasCompleteSuffix = rawResult.EndsWith("\r\n", StringComparison.Ordinal);
-        var segments = rawResult.Split("\r\n", StringSplitOptions.None);
-        var completedCount = segments.Length - 1;
-        var completedRecords = segments.Take(completedCount).ToArray();
-        var barcodes = completedRecords
+        var records = rawText
+            .Split("\r\n", StringSplitOptions.None)
             .Where(value => value.Length > 0)
             .ToArray();
-        var pendingFragment = hasCompleteSuffix ? null : segments[^1];
+        if (records.Length != 1
+            || string.IsNullOrWhiteSpace(records[0])
+            || records[0].Any(char.IsControl))
+        {
+            return Invalid(rawText, observedAt);
+        }
 
-        return new Dcr55ScanResult(
-            hasCompleteSuffix && barcodes.Length > 0 ? Dcr55ScanOutcome.Completed : Dcr55ScanOutcome.Pending,
-            barcodes,
-            rawResult,
-            pendingFragment,
-            completedRecords.Count(value => value.Length == 0));
+        return new Dcr55ScanResult(records[0], rawText, Dcr55ScanStatus.Success, observedAt);
     }
 
-    public static Dcr55ScanResult NoBarcodeTimeout(string rawResult = "") =>
-        new(Dcr55ScanOutcome.NoBarcodeTimeout, [], rawResult, rawResult.Length == 0 ? null : rawResult, 0);
+    public static Dcr55ScanResult FromTransportStatus(
+        Dcr55ScanStatus status,
+        string rawText,
+        DateTimeOffset? timestamp = null)
+    {
+        if (status is Dcr55ScanStatus.Success)
+        {
+            throw new ArgumentOutOfRangeException(nameof(status), "A successful result must be produced by parsing barcode text.");
+        }
+
+        return new Dcr55ScanResult(null, rawText, status, timestamp ?? DateTimeOffset.UtcNow);
+    }
+
+    private static Dcr55ScanResult Invalid(string rawText, DateTimeOffset timestamp) =>
+        new(null, rawText, Dcr55ScanStatus.InvalidResponse, timestamp);
 }
 
 public enum Dcr55TriggerMode
@@ -57,17 +68,3 @@ public enum Dcr55TriggerMode
     Stop,
     Continuous
 }
-
-public enum Dcr55ScanOutcome
-{
-    Pending,
-    Completed,
-    NoBarcodeTimeout
-}
-
-public sealed record Dcr55ScanResult(
-    Dcr55ScanOutcome Outcome,
-    IReadOnlyList<string> Barcodes,
-    string RawResult,
-    string? PendingFragment,
-    int EmptyRecordCount);

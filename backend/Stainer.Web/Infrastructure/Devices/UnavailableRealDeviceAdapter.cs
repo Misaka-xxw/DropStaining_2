@@ -203,7 +203,9 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
                 exchange.Message ?? "DCR55 returned no barcode before the offline transport timed out.",
                 [],
                 responseBytes,
-                Dcr55Protocol.NoBarcodeTimeout(System.Text.Encoding.ASCII.GetString(responseBytes)));
+                Dcr55Protocol.FromTransportStatus(
+                    Dcr55ScanStatus.Timeout,
+                    System.Text.Encoding.ASCII.GetString(responseBytes)));
         }
 
         var transportFailure = TransportFailure<Dcr55ScanResult>(exchange, [], responseBytes);
@@ -213,7 +215,7 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
         }
 
         var value = Dcr55Protocol.ParseBarcodeResult(System.Text.Encoding.ASCII.GetString(responseBytes));
-        return value.Outcome == Dcr55ScanOutcome.Completed
+        return value.Status == Dcr55ScanStatus.Success
             ? Success(value, [], responseBytes)
             : Failure(
                 DeviceCommandStatuses.Unknown,

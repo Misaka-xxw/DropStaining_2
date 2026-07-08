@@ -187,28 +187,28 @@ public sealed class OfflineHardwareProtocolTests
     }
 
     [Fact]
-    public void Dcr55_parses_crlf_single_multiple_pending_and_no_barcode_timeout_results()
+    public void Dcr55_parses_crlf_and_rejects_empty_partial_and_ambiguous_results()
     {
+        var timestamp = new DateTimeOffset(2026, 7, 8, 1, 2, 3, TimeSpan.Zero);
         var single = Dcr55Protocol.ParseBarcodeResult("SAMPLE-001\r\n");
-        Assert.Equal(Dcr55ScanOutcome.Completed, single.Outcome);
-        Assert.Equal(["SAMPLE-001"], single.Barcodes);
+        Assert.Equal(Dcr55ScanStatus.Success, single.Status);
+        Assert.Equal("SAMPLE-001", single.Barcode);
 
         var multiple = Dcr55Protocol.ParseBarcodeResult("SAMPLE-001\r\nSAMPLE-002\r\n");
-        Assert.Equal(Dcr55ScanOutcome.Completed, multiple.Outcome);
-        Assert.Equal(["SAMPLE-001", "SAMPLE-002"], multiple.Barcodes);
+        Assert.Equal(Dcr55ScanStatus.InvalidResponse, multiple.Status);
+        Assert.Null(multiple.Barcode);
 
         var partial = Dcr55Protocol.ParseBarcodeResult("SAMPLE-003");
-        Assert.Equal(Dcr55ScanOutcome.Pending, partial.Outcome);
-        Assert.Empty(partial.Barcodes);
-        Assert.Equal("SAMPLE-003", partial.PendingFragment);
+        Assert.Equal(Dcr55ScanStatus.InvalidResponse, partial.Status);
+        Assert.Equal("SAMPLE-003", partial.RawText);
 
         var unclassifiedEmpty = Dcr55Protocol.ParseBarcodeResult("\r\n");
-        Assert.Equal(Dcr55ScanOutcome.Pending, unclassifiedEmpty.Outcome);
-        Assert.Equal(1, unclassifiedEmpty.EmptyRecordCount);
+        Assert.Equal(Dcr55ScanStatus.InvalidResponse, unclassifiedEmpty.Status);
 
-        var timedOut = Dcr55Protocol.NoBarcodeTimeout();
-        Assert.Equal(Dcr55ScanOutcome.NoBarcodeTimeout, timedOut.Outcome);
-        Assert.Empty(timedOut.Barcodes);
+        var timedOut = Dcr55Protocol.FromTransportStatus(Dcr55ScanStatus.Timeout, string.Empty, timestamp);
+        Assert.Equal(Dcr55ScanStatus.Timeout, timedOut.Status);
+        Assert.Equal(timestamp, timedOut.Timestamp);
+        Assert.Null(timedOut.Barcode);
     }
 
     [Fact]

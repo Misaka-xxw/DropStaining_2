@@ -122,6 +122,14 @@ public static class ServiceCollectionExtensions
         }
         else
         {
+            var dcr55Configuration = configuration
+                .GetSection("Device:Dcr55")
+                .Get<Dcr55ConnectionOptions>() ?? new Dcr55ConnectionOptions();
+            services.AddSingleton(dcr55Configuration);
+            services.AddSingleton<IDcr55Adapter>(serviceProvider =>
+                new Dcr55RealAdapter(
+                    serviceProvider.GetService<IDeviceByteTransport>(),
+                    serviceProvider.GetRequiredService<Dcr55ConnectionOptions>()));
             services.AddSingleton<UnavailableRealDeviceAdapter>(serviceProvider =>
                 new UnavailableRealDeviceAdapter(serviceProvider.GetService<IDeviceByteTransport>()));
             services.AddSingleton<IDeviceAdapter>(serviceProvider =>
