@@ -69,27 +69,29 @@
 
 ## P1：真实设备接入与实验闭环
 
-### 🚧 P1-01｜验证 SOCON SDK 运行时部署并保持进程隔离（进行中）
+### ✅ P1-01｜验证 SOCON SDK 运行时部署并保持进程隔离（已完成 / ready-to-close）
 
-- **目标**：在 Bridge 内验证厂商 SDK 的实际运行时依赖与隔离行为，为后续真实连接做准备。
-- **当前状态**：**进行中**。
-  - P0-02 已完成：Bridge 正式 net452 x86 构建通过（59 checks passed）。
-  - 当前工作区已有 4 个 Bridge 源码变更（`Stainer.SoconBridge.csproj`、`BridgeRequestProcessor.cs`、`SdkDeploymentValidator.cs`、`SelfTestRunner.cs`），新增 `ReflectionOnlyManagedAssemblyLoadProbe` / `Assembly.ReflectionOnlyLoadFrom()` 相关诊断能力。
-  - 该能力覆盖 `SOCON.API.dll` / `SOCON.Utility.dll` 的仅反射元数据加载，并检查 5 个 SOCON 核心类型（`SCDevice`、`SCDeviceMA`、`Utility+e_ConnectType`、`Utility+DeviceTypeEnum`、`Utility+ProtocolTypeEnum`）。
-  - **该能力属于 P1-01，不能归入 P0-02**（P0-02 完成标准要求“不反射加载 SDK”，该边界仅对 HEAD 代码成立）。
-- **后续仍需验证**：
-  - 在合法 SDK 部署目录下验证 `ReflectionOnlyLoadFrom()` 的运行时依赖解析行为（.NET Framework 4.5.2 下 ReflectionOnly 上下文仍会解析依赖项）。
-  - 确认不会因 SOCON 托管 DLL 的模块初始化器或 native P/Invoke 依赖导致意外副作用。
-- **仍禁止**：`Connect`/`OpenPort`、SDK 实例化、设备连接和真实动作。
-- **前置条件**：P0-02 完成；获得合法 SDK 部署目录及缺失依赖的合法来源/部署说明。
-- **完成标准**：
-  - SDK 仅部署在本机受控目录，不进入 Git。
-  - Bridge 能报告 SDK 核心文件、运行时依赖和启动异常。
-  - SDK 运行时异常不会影响 Stainer 主进程。
-  - 本阶段仍不得连接 USB2CAN、调用 `Connect`/`OpenPort` 或任何设备动作。
-  - 输出可复现的部署验证记录。
-  - **风险备注**：`ReflectionOnlyLoadFrom()` 虽不执行设备动作，但会把 SOCON 托管 DLL 加载到 Bridge 进程地址空间，可能触发依赖解析；必须单独作为 P1-01 验收，不得写成真实设备可用。
-- **建议下一步**：先验证最小运行时依赖与异常隔离，再允许接入真实通讯。
+- **完成时间**：2026-07-08 最终有效验证轮通过。
+- **验证方式**：由执行进程在自身 PowerShell 会话内设置进程级环境变量 `STAINER_SOCON_SDK_DIR` 指向本机受控 SDK 部署目录，并在同一会话内继承给 Rebuild 与 `--self-test` 子进程；全程未连接硬件、未扫描 USB/COM/CAN、未打开端口、未实例化 SDK 类型、未调用任何真实动作方法。报告与文档均不写入 SDK 绝对路径。
+- **完成证据（运行时部署验证）**：
+  - `SdkPathConfigured = configured`；`SdkDirectoryExists = yes`；SDK 来源仅记录为环境变量名 `STAINER_SOCON_SDK_DIR`（不含绝对路径）。
+  - 核心文件齐：`SOCON.API.dll`、`SOCON.Utility.dll`、`can_bootloader.dll` 均 exists。
+  - `can_bootloader.dll` PE Machine = `x86 (0x014C)`，与 Bridge x86 目标不冲突。
+  - SOCON.API / SOCON.Utility 托管元数据加载 = `PASS`（`Assembly.ReflectionOnlyLoadFrom()` 仅反射上下文）。
+  - 必要类型 5/5 available：`SOCON.API.SCDevice`、`SOCON.API.SCDeviceMA`、`SOCON.API.Utility+e_ConnectType`、`SOCON.API.Utility+DeviceTypeEnum`、`SOCON.API.Utility+ProtocolTypeEnum`。
+  - `--self-test`：**60 checks passed**，`Result: PASS`，无异常。
+  - 无路径泄露、无越界行为；git 工作区验证前后干净。
+- **Optional dependency warning（非阻塞，交人工判断）**：
+  - `SOCON.ScEventBus.dll` missing
+  - `C1.C1Zip.4.dll` missing
+  - 当前不阻塞 P1-01；后续进入真实连接/动作前（即 P1-02 起）继续评估是否需要补齐。
+- **边界限定（重要）**：
+  - P1-01 通过 **不等于** 真实机械臂已连接或可用。
+  - 未连接真实硬件；未打开 COM/CAN/TCP；未实例化 SDK 类型；未调用 `Connect`/`OpenPort`/`Init`/`Move`/`Aspirate`/`Dispense`/`WaitActionDone` 等任何真实动作方法。
+  - `--self-test` 中出现的 Connect/OpenPort/Move 等仅为 IPC 命令路由层演练，未触达 SDK 真实实现。
+  - P1-02（真实连接与只读状态）仍需单独启动，并经过只读/连接边界审批；P1-01 关闭不自动放行后续真实通讯。
+  - `ReflectionOnlyLoadFrom()` 虽不执行设备动作，但会把 SOCON 托管 DLL 加载到 Bridge 进程地址空间；本次验证确认其运行时依赖解析未产生意外副作用，但仍不得据此写成真实设备可用。
+- **说明**：本条目已完成，仅保留作为追溯记录。
 
 ### P1-02｜接入 SOCON/USB2CAN 的真实连接与只读状态
 
