@@ -125,3 +125,4 @@ data/communication-patch-migration.db*
 /bridges/Stainer.SoconBridge/SoconBridge.config.local.json
 /bridges/Stainer.SoconBridge/bin/
 /bridges/Stainer.SoconBridge/obj/
+.omc/
