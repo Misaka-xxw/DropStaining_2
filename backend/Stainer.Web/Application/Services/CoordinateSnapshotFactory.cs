@@ -37,6 +37,7 @@ internal static class CoordinateSnapshotFactory
                     x.CalibratedZUm,
                     x.SafeZUm,
                     liquidDetectZUm = x.LiquidDetectZUm,
+                    aspirateEndZUm = x.AspirateEndZUm,
                     x.DispenseZUm,
                     x.ActionOffsetXUm,
                     x.ActionOffsetYUm,

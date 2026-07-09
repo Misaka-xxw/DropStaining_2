@@ -472,6 +472,11 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
                 VolumeAdjustmentUl = 0,
                 PreWetCycles = 1,
                 MixCycles = 0,
+                LiquidFollowingDepthUm = 2000,
+                RetractSpeedUmPerSecond = 1000,
+                ConditioningVolumeUl = 0,
+                BreakoffSpeedUlPerSecond = 0,
+                PostDispenseAirGapUl = 0,
                 CreatedAtUtc = now,
                 PublishedAtUtc = now,
                 EnabledAtUtc = now

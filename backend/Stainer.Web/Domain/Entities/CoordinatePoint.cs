@@ -12,8 +12,14 @@ public sealed class CoordinatePoint
     public long? CalibratedXUm { get; set; }
     public long? CalibratedYUm { get; set; }
     public long? CalibratedZUm { get; set; }
+    // Z semantic set (absolute Z heights, micrometers):
+    //   Z-Travel  -> SafeZUm         travel height while moving between positions
+    //   Z-Start   -> LiquidDetectZUm where liquid detection / aspiration begins (alias AspirateZUm)
+    //   Z-End     -> AspirateEndZUm  lowest Z reached while tracking the liquid surface during aspiration
+    //   Z-Dispense-> DispenseZUm     height at the dispense target
     public long? SafeZUm { get; set; }
     public long? LiquidDetectZUm { get; set; }
+    public long? AspirateEndZUm { get; set; }
     public long? DispenseZUm { get; set; }
     public long? ActionOffsetXUm { get; set; }
     public long? ActionOffsetYUm { get; set; }

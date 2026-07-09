@@ -80,6 +80,7 @@ public sealed record CoordinatePointResponse(
     long? CalibratedZUm,
     long? SafeZUm,
     long? AspirateZUm,
+    long? AspirateEndZUm,
     long? DispenseZUm,
     long? ActionOffsetXUm,
     long? ActionOffsetYUm,
@@ -142,6 +143,11 @@ public sealed record LiquidClassVersionResponse(
     int VolumeAdjustmentUl,
     int PreWetCycles,
     int MixCycles,
+    int LiquidFollowingDepthUm,
+    int RetractSpeedUmPerSecond,
+    int ConditioningVolumeUl,
+    int BreakoffSpeedUlPerSecond,
+    int PostDispenseAirGapUl,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? PublishedAtUtc,
     DateTimeOffset? EnabledAtUtc,
@@ -265,6 +271,37 @@ public sealed record EngineeringConfigDiffItemResponse(
     string? Before,
     string? After,
     string ChangeType);
+
+public sealed record EngineeringPipettingTestTypeResponse(
+    string OperationType,
+    string Endpoint,
+    bool RequiresPosition,
+    bool RequiresVolume,
+    bool RequiresLiquidClass,
+    bool IsExecutable,
+    string Description);
+
+public sealed record EngineeringPipettingTestCatalogResponse(
+    IReadOnlyList<EngineeringPipettingTestTypeResponse> Operations,
+    IReadOnlyList<string> UnsupportedOperations,
+    DateTimeOffset GeneratedAtUtc);
+
+public sealed record EngineeringPipettingTestResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string PipettingOperationId,
+    string OperationType,
+    string Status,
+    string Channel,
+    string NeedleCode,
+    string Position,
+    int VolumeUl,
+    string? LiquidClassVersionId,
+    int? LiquidClassVersionNo,
+    string Message,
+    string? ErrorCode,
+    IReadOnlyDictionary<string, object?> State);
 
 public sealed record DigitalTwinCoordinateImportResponse(
     bool Ok,

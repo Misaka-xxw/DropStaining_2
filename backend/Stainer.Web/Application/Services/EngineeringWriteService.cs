@@ -84,6 +84,11 @@ public sealed class EngineeringWriteService(
                     VolumeAdjustmentUl = request.VolumeAdjustmentUl ?? request.ExcessVolumeUl ?? source?.VolumeAdjustmentUl ?? liquidClass.ExcessVolumeUl ?? 0,
                     PreWetCycles = request.PreWetCycles ?? source?.PreWetCycles ?? liquidClass.PreWetCycles ?? 0,
                     MixCycles = request.MixCycles ?? source?.MixCycles ?? liquidClass.MixCycles ?? 0,
+                    LiquidFollowingDepthUm = request.LiquidFollowingDepthUm ?? source?.LiquidFollowingDepthUm ?? 0,
+                    RetractSpeedUmPerSecond = request.RetractSpeedUmPerSecond ?? source?.RetractSpeedUmPerSecond ?? 0,
+                    ConditioningVolumeUl = request.ConditioningVolumeUl ?? source?.ConditioningVolumeUl ?? 0,
+                    BreakoffSpeedUlPerSecond = request.BreakoffSpeedUlPerSecond ?? source?.BreakoffSpeedUlPerSecond ?? 0,
+                    PostDispenseAirGapUl = request.PostDispenseAirGapUl ?? source?.PostDispenseAirGapUl ?? 0,
                     CreatedByUserId = actor.UserId,
                     CreatedAtUtc = now
                 };
@@ -342,7 +347,12 @@ public sealed class EngineeringWriteService(
             version.BlowoutDelayMs,
             version.VolumeAdjustmentUl,
             version.PreWetCycles,
-            version.MixCycles
+            version.MixCycles,
+            version.LiquidFollowingDepthUm,
+            version.RetractSpeedUmPerSecond,
+            version.ConditioningVolumeUl,
+            version.BreakoffSpeedUlPerSecond,
+            version.PostDispenseAirGapUl
         };
     }
 
@@ -362,6 +372,11 @@ public sealed class EngineeringWriteService(
         CheckRange(errors, nameof(version.VolumeAdjustmentUl), version.VolumeAdjustmentUl, -1_000, 1_000, "uL");
         CheckRange(errors, nameof(version.PreWetCycles), version.PreWetCycles, 0, 20, "cycles");
         CheckRange(errors, nameof(version.MixCycles), version.MixCycles, 0, 20, "cycles");
+        CheckRange(errors, nameof(version.LiquidFollowingDepthUm), version.LiquidFollowingDepthUm, 0, 50_000, "um");
+        CheckRange(errors, nameof(version.RetractSpeedUmPerSecond), version.RetractSpeedUmPerSecond, 0, 100_000, "um/s");
+        CheckRange(errors, nameof(version.ConditioningVolumeUl), version.ConditioningVolumeUl, 0, 1_000, "uL");
+        CheckRange(errors, nameof(version.BreakoffSpeedUlPerSecond), version.BreakoffSpeedUlPerSecond, 0, 10_000, "uL/s");
+        CheckRange(errors, nameof(version.PostDispenseAirGapUl), version.PostDispenseAirGapUl, 0, 1_000, "uL");
         if (errors.Count > 0)
         {
             throw new BusinessRuleException("liquid_class_validation_failed", string.Join(" ", errors), StatusCodes.Status400BadRequest);
@@ -439,7 +454,12 @@ public sealed class EngineeringWriteService(
             [nameof(version.BlowoutDelayMs)] = (version.BlowoutDelayMs.ToString(), "ms"),
             [nameof(version.VolumeAdjustmentUl)] = (version.VolumeAdjustmentUl.ToString(), "uL"),
             [nameof(version.PreWetCycles)] = (version.PreWetCycles.ToString(), "cycles"),
-            [nameof(version.MixCycles)] = (version.MixCycles.ToString(), "cycles")
+            [nameof(version.MixCycles)] = (version.MixCycles.ToString(), "cycles"),
+            [nameof(version.LiquidFollowingDepthUm)] = (version.LiquidFollowingDepthUm.ToString(), "um"),
+            [nameof(version.RetractSpeedUmPerSecond)] = (version.RetractSpeedUmPerSecond.ToString(), "um/s"),
+            [nameof(version.ConditioningVolumeUl)] = (version.ConditioningVolumeUl.ToString(), "uL"),
+            [nameof(version.BreakoffSpeedUlPerSecond)] = (version.BreakoffSpeedUlPerSecond.ToString(), "uL/s"),
+            [nameof(version.PostDispenseAirGapUl)] = (version.PostDispenseAirGapUl.ToString(), "uL")
         };
     }
 

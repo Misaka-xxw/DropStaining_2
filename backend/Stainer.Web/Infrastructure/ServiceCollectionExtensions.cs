@@ -81,6 +81,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DigitalTwinCoordinateImportService>();
         services.AddScoped<EngineeringSessionService>();
         services.AddScoped<EngineeringDiagnosticService>();
+        services.AddScoped<EngineeringPipettingService>();
         services.AddScoped<DeviceCommunicationPersistenceService>();
         services.AddScoped<EngineeringConfigService>();
         services.AddScoped<EngineeringWriteService>();

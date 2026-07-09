@@ -178,6 +178,48 @@ public static partial class WebHostEndpointExtensions
                 return Results.Ok(await service.ApplyImportAsync(request, actor, cancellationToken));
             }));
 
+        app.MapGet("/api/engineering/pipetting-tests/types", async (HttpContext context, UserSessionService sessionService, EngineeringPipettingService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                return Results.Ok(service.ListTestTypes());
+            }));
+        app.MapPost("/api/engineering/pipetting-tests/liquid-detect", async (HttpContext context, EngineeringPipettingTestRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, EngineeringPipettingService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason ?? string.Empty, request.Target ?? $"pipetting-test:liquid-detect:{request.Position ?? request.CoordinatePointCode}", request.DangerousOperationConfirmed, cancellationToken);
+                return Results.Ok(await service.LiquidDetectAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/pipetting-tests/aspirate", async (HttpContext context, EngineeringPipettingTestRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, EngineeringPipettingService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason ?? string.Empty, request.Target ?? $"pipetting-test:aspirate:{request.Position ?? request.CoordinatePointCode}", request.DangerousOperationConfirmed, cancellationToken);
+                return Results.Ok(await service.AspirateAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/pipetting-tests/dispense", async (HttpContext context, EngineeringPipettingTestRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, EngineeringPipettingService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason ?? string.Empty, request.Target ?? $"pipetting-test:dispense:{request.Position ?? request.CoordinatePointCode}", request.DangerousOperationConfirmed, cancellationToken);
+                return Results.Ok(await service.DispenseAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/pipetting-tests/wash", async (HttpContext context, EngineeringPipettingTestRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, EngineeringPipettingService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason ?? string.Empty, request.Target ?? $"pipetting-test:wash:{request.Position ?? request.CoordinatePointCode}", request.DangerousOperationConfirmed, cancellationToken);
+                return Results.Ok(await service.WashAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/pipetting-tests/flush", async (HttpContext context, EngineeringPipettingTestRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, EngineeringPipettingService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason ?? string.Empty, request.Target ?? $"pipetting-test:flush:{request.Position ?? request.CoordinatePointCode}", request.DangerousOperationConfirmed, cancellationToken);
+                return Results.Ok(await service.FlushAsync(request, actor, cancellationToken));
+            }));
+
         app.MapPost("/api/engineering/coordinates/digital-twin/import/preview", async (HttpContext context, PreviewDigitalTwinCoordinateImportRequest request, UserSessionService sessionService, DigitalTwinCoordinateImportService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

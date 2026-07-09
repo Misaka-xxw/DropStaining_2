@@ -139,6 +139,11 @@ public sealed class EngineeringConfigService(
                 liquidPayload.BlowoutVolumeUl,
                 liquidPayload.BlowoutDelayMs,
                 liquidPayload.VolumeAdjustmentUl,
+                liquidPayload.LiquidFollowingDepthUm,
+                liquidPayload.RetractSpeedUmPerSecond,
+                liquidPayload.ConditioningVolumeUl,
+                liquidPayload.BreakoffSpeedUlPerSecond,
+                liquidPayload.PostDispenseAirGapUl,
                 request.Target,
                 request.DangerousOperationConfirmed),
             actor,
@@ -433,6 +438,7 @@ public sealed class EngineeringConfigService(
             AddDiff(diffs, $"targetPoints.{pointCode}.zUm", before.CalibratedZUm?.ToString(), input.ZUm?.ToString());
             AddDiff(diffs, $"targetPoints.{pointCode}.safeZUm", before.SafeZUm?.ToString(), input.SafeZUm?.ToString());
             AddDiff(diffs, $"targetPoints.{pointCode}.liquidDetectZUm", before.LiquidDetectZUm?.ToString(), input.LiquidDetectZUm?.ToString());
+            AddDiff(diffs, $"targetPoints.{pointCode}.aspirateEndZUm", before.AspirateEndZUm?.ToString(), input.AspirateEndZUm?.ToString());
             AddDiff(diffs, $"targetPoints.{pointCode}.dispenseZUm", before.DispenseZUm?.ToString(), input.DispenseZUm?.ToString());
             AddDiff(diffs, $"targetPoints.{pointCode}.isEnabled", before.IsEnabled.ToString(), input.IsEnabled?.ToString());
         }
@@ -474,6 +480,11 @@ public sealed class EngineeringConfigService(
         AddDiff(diffs, "volumeAdjustmentUl", source?.VolumeAdjustmentUl.ToString(), payload.VolumeAdjustmentUl?.ToString());
         AddDiff(diffs, "preWetCycles", source?.PreWetCycles.ToString(), payload.PreWetCycles?.ToString());
         AddDiff(diffs, "mixCycles", source?.MixCycles.ToString(), payload.MixCycles?.ToString());
+        AddDiff(diffs, "liquidFollowingDepthUm", source?.LiquidFollowingDepthUm.ToString(), payload.LiquidFollowingDepthUm?.ToString());
+        AddDiff(diffs, "retractSpeedUmPerSecond", source?.RetractSpeedUmPerSecond.ToString(), payload.RetractSpeedUmPerSecond?.ToString());
+        AddDiff(diffs, "conditioningVolumeUl", source?.ConditioningVolumeUl.ToString(), payload.ConditioningVolumeUl?.ToString());
+        AddDiff(diffs, "breakoffSpeedUlPerSecond", source?.BreakoffSpeedUlPerSecond.ToString(), payload.BreakoffSpeedUlPerSecond?.ToString());
+        AddDiff(diffs, "postDispenseAirGapUl", source?.PostDispenseAirGapUl.ToString(), payload.PostDispenseAirGapUl?.ToString());
         return diffs;
     }
 
@@ -488,6 +499,11 @@ public sealed class EngineeringConfigService(
         AddDiff(diffs, "volumeAdjustmentUl", source?.VolumeAdjustmentUl.ToString(), target.VolumeAdjustmentUl.ToString());
         AddDiff(diffs, "preWetCycles", source?.PreWetCycles.ToString(), target.PreWetCycles.ToString());
         AddDiff(diffs, "mixCycles", source?.MixCycles.ToString(), target.MixCycles.ToString());
+        AddDiff(diffs, "liquidFollowingDepthUm", source?.LiquidFollowingDepthUm.ToString(), target.LiquidFollowingDepthUm.ToString());
+        AddDiff(diffs, "retractSpeedUmPerSecond", source?.RetractSpeedUmPerSecond.ToString(), target.RetractSpeedUmPerSecond.ToString());
+        AddDiff(diffs, "conditioningVolumeUl", source?.ConditioningVolumeUl.ToString(), target.ConditioningVolumeUl.ToString());
+        AddDiff(diffs, "breakoffSpeedUlPerSecond", source?.BreakoffSpeedUlPerSecond.ToString(), target.BreakoffSpeedUlPerSecond.ToString());
+        AddDiff(diffs, "postDispenseAirGapUl", source?.PostDispenseAirGapUl.ToString(), target.PostDispenseAirGapUl.ToString());
         return diffs;
     }
 
@@ -620,7 +636,12 @@ public sealed class EngineeringConfigService(
         int? BlowoutDelayMs,
         int? VolumeAdjustmentUl,
         int? PreWetCycles,
-        int? MixCycles);
+        int? MixCycles,
+        int? LiquidFollowingDepthUm,
+        int? RetractSpeedUmPerSecond,
+        int? ConditioningVolumeUl,
+        int? BreakoffSpeedUlPerSecond,
+        int? PostDispenseAirGapUl);
 
     private static class EngineeringConfigTypes
     {

@@ -52,6 +52,7 @@ public sealed class PipettingOperation
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string OperationType { get; set; } = string.Empty;
     public string Status { get; set; } = DeviceCommandStatus.Planned;
+    public string? ChannelCode { get; set; }
     public string? NeedleCode { get; set; }
     public string ExecutionMode { get; set; } = PipettingExecutionModes.Single;
     public string? TargetPointCode { get; set; }
@@ -70,6 +71,8 @@ public sealed class PipettingOperation
     public string? MachineRunId { get; set; }
     public string? WorkflowStepExecutionId { get; set; }
     public string? DeviceCommandExecutionId { get; set; }
+    public string ParametersJson { get; set; } = "{}";
+    public string? ActorUserId { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;

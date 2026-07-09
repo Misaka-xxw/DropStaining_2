@@ -13,6 +13,8 @@ public sealed class CoordinateCalibrationHistory
     public long? NewZUm { get; set; }
     public long? SafeZUm { get; set; }
     public long? LiquidDetectZUm { get; set; }
+    // Z-End: lowest Z reached while tracking the liquid surface during aspiration.
+    public long? AspirateEndZUm { get; set; }
     public long? DispenseZUm { get; set; }
     public long? ActionOffsetXUm { get; set; }
     public long? ActionOffsetYUm { get; set; }

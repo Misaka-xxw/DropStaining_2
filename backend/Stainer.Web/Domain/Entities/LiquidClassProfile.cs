@@ -48,6 +48,18 @@ public sealed class LiquidClassVersion
     public int VolumeAdjustmentUl { get; set; }
     public int PreWetCycles { get; set; }
     public int MixCycles { get; set; }
+    // Aspiration tracking parameters.
+    //   LiquidFollowingDepthUm  depth below the detected surface the tip tracks while aspirating (um); 0 = fixed depth.
+    //   RetractSpeedUmPerSecond tip retract speed after aspiration completes (um/s); 0 = device default.
+    //   ConditioningVolumeUl    tip conditioning / pre-coating volume aspirated and discarded before the run (uL).
+    public int LiquidFollowingDepthUm { get; set; }
+    public int RetractSpeedUmPerSecond { get; set; }
+    public int ConditioningVolumeUl { get; set; }
+    // Dispense shaping parameters.
+    //   BreakoffSpeedUlPerSecond final high-speed dispense used to break off the droplet (uL/s); 0 = no breakoff stage.
+    //   PostDispenseAirGapUl    air gap aspirated after dispense to clear the tip and prevent dripping (uL).
+    public int BreakoffSpeedUlPerSecond { get; set; }
+    public int PostDispenseAirGapUl { get; set; }
     public string? CreatedByUserId { get; set; }
     public string? PublishedByUserId { get; set; }
     public string? EnabledByUserId { get; set; }

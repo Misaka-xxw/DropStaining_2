@@ -1009,6 +1009,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.CalibratedZUm).HasColumnName("calibrated_z_um");
         entity.Property(x => x.SafeZUm).HasColumnName("safe_z_um");
         entity.Property(x => x.LiquidDetectZUm).HasColumnName("liquid_detect_z_um");
+        entity.Property(x => x.AspirateEndZUm).HasColumnName("aspirate_end_z_um");
         entity.Property(x => x.DispenseZUm).HasColumnName("dispense_z_um");
         entity.Property(x => x.ActionOffsetXUm).HasColumnName("action_offset_x_um");
         entity.Property(x => x.ActionOffsetYUm).HasColumnName("action_offset_y_um");
@@ -1042,6 +1043,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.NewZUm).HasColumnName("new_z_um");
         entity.Property(x => x.SafeZUm).HasColumnName("safe_z_um");
         entity.Property(x => x.LiquidDetectZUm).HasColumnName("liquid_detect_z_um");
+        entity.Property(x => x.AspirateEndZUm).HasColumnName("aspirate_end_z_um");
         entity.Property(x => x.DispenseZUm).HasColumnName("dispense_z_um");
         entity.Property(x => x.ActionOffsetXUm).HasColumnName("action_offset_x_um");
         entity.Property(x => x.ActionOffsetYUm).HasColumnName("action_offset_y_um");
@@ -1221,6 +1223,11 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         version.Property(x => x.VolumeAdjustmentUl).HasColumnName("volume_adjustment_ul").IsRequired();
         version.Property(x => x.PreWetCycles).HasColumnName("pre_wet_cycles").IsRequired();
         version.Property(x => x.MixCycles).HasColumnName("mix_cycles").IsRequired();
+        version.Property(x => x.LiquidFollowingDepthUm).HasColumnName("liquid_following_depth_um").IsRequired();
+        version.Property(x => x.RetractSpeedUmPerSecond).HasColumnName("retract_speed_um_per_second").IsRequired();
+        version.Property(x => x.ConditioningVolumeUl).HasColumnName("conditioning_volume_ul").IsRequired();
+        version.Property(x => x.BreakoffSpeedUlPerSecond).HasColumnName("breakoff_speed_ul_per_second").IsRequired();
+        version.Property(x => x.PostDispenseAirGapUl).HasColumnName("post_dispense_air_gap_ul").IsRequired();
         version.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
         version.Property(x => x.PublishedByUserId).HasColumnName("published_by_user_id").HasMaxLength(36);
         version.Property(x => x.EnabledByUserId).HasColumnName("enabled_by_user_id").HasMaxLength(36);
@@ -2238,6 +2245,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ops.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
         ops.Property(x => x.OperationType).HasColumnName("operation_type").HasMaxLength(64).IsRequired();
         ops.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
+        ops.Property(x => x.ChannelCode).HasColumnName("channel_code").HasMaxLength(16);
         ops.Property(x => x.NeedleCode).HasColumnName("needle_code").HasMaxLength(16);
         ops.Property(x => x.ExecutionMode).HasColumnName("execution_mode").HasMaxLength(32).IsRequired();
         ops.Property(x => x.TargetPointCode).HasColumnName("target_point_code").HasMaxLength(128);
@@ -2256,12 +2264,15 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ops.Property(x => x.MachineRunId).HasColumnName("machine_run_id").HasMaxLength(36);
         ops.Property(x => x.WorkflowStepExecutionId).HasColumnName("workflow_step_execution_id").HasMaxLength(36);
         ops.Property(x => x.DeviceCommandExecutionId).HasColumnName("device_command_execution_id").HasMaxLength(36);
+        ops.Property(x => x.ParametersJson).HasColumnName("parameters_json").HasMaxLength(16000).HasDefaultValue("{}").IsRequired();
+        ops.Property(x => x.ActorUserId).HasColumnName("actor_user_id").HasMaxLength(36);
         ops.Property(x => x.ErrorCode).HasColumnName("error_code").HasMaxLength(128);
         ops.Property(x => x.ErrorMessage).HasColumnName("error_message").HasMaxLength(2000);
         ops.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         ops.Property(x => x.CompletedAtUtc).HasColumnName("completed_at_utc");
         ops.HasIndex(x => new { x.MachineRunId, x.WorkflowStepExecutionId });
         ops.HasIndex(x => x.DeviceCommandExecutionId);
+        ops.HasIndex(x => x.ActorUserId);
 
         var leases = modelBuilder.Entity<MachineResourceLease>();
         leases.ToTable("machine_resource_leases");

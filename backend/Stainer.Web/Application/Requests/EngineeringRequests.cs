@@ -56,3 +56,19 @@ public sealed record DisableLiquidClassVersionRequest(
     string Reason,
     string? Target = null,
     bool DangerousOperationConfirmed = false);
+
+public sealed record EngineeringPipettingTestRequest(
+    string CommandId,
+    string Channel,
+    string? Position = null,
+    string? CoordinatePointCode = null,
+    string? CoordinateProfileVersionId = null,
+    int? Volume = null,
+    int? VolumeUl = null,
+    string? NeedleCode = null,
+    string? LiquidClassVersionId = null,
+    string? LiquidClassCode = null,
+    JsonElement? OperationParameters = null,
+    string? Reason = null,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);

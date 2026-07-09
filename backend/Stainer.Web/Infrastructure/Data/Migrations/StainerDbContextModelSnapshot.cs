@@ -448,6 +448,10 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("action_offset_z_um");
 
+                    b.Property<long?>("AspirateEndZUm")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("aspirate_end_z_um");
+
                     b.Property<string>("CalibratedByUserId")
                         .HasMaxLength(36)
                         .HasColumnType("TEXT")
@@ -554,6 +558,10 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                     b.Property<long?>("ActionOffsetZUm")
                         .HasColumnType("INTEGER")
                         .HasColumnName("action_offset_z_um");
+
+                    b.Property<long?>("AspirateEndZUm")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("aspirate_end_z_um");
 
                     b.Property<long?>("CalibratedXUm")
                         .HasColumnType("INTEGER")
@@ -2255,6 +2263,10 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("blowout_volume_ul");
 
+                    b.Property<int>("BreakoffSpeedUlPerSecond")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("breakoff_speed_ul_per_second");
+
                     b.Property<string>("ChangeReason")
                         .IsRequired()
                         .HasMaxLength(2000)
@@ -2266,6 +2278,10 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasMaxLength(16000)
                         .HasColumnType("TEXT")
                         .HasColumnName("change_summary_json");
+
+                    b.Property<int>("ConditioningVolumeUl")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("conditioning_volume_ul");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
                         .HasColumnType("TEXT")
@@ -2315,6 +2331,10 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("liquid_detection_speed_um_per_second");
 
+                    b.Property<int>("LiquidFollowingDepthUm")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("liquid_following_depth_um");
+
                     b.Property<int>("MixCycles")
                         .HasColumnType("INTEGER")
                         .HasColumnName("mix_cycles");
@@ -2324,6 +2344,10 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT")
                         .HasColumnName("name");
+
+                    b.Property<int>("PostDispenseAirGapUl")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("post_dispense_air_gap_ul");
 
                     b.Property<int>("PreWetCycles")
                         .HasColumnType("INTEGER")
@@ -2337,6 +2361,10 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasMaxLength(36)
                         .HasColumnType("TEXT")
                         .HasColumnName("published_by_user_id");
+
+                    b.Property<int>("RetractSpeedUmPerSecond")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("retract_speed_um_per_second");
 
                     b.Property<string>("SourceVersionId")
                         .HasMaxLength(36)
@@ -3138,6 +3166,16 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("completed_at_utc");
 
+                    b.Property<string>("ActorUserId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("actor_user_id");
+
+                    b.Property<string>("ChannelCode")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("channel_code");
+
                     b.Property<string>("CoordinateProfileVersionId")
                         .HasMaxLength(36)
                         .HasColumnType("TEXT")
@@ -3206,6 +3244,14 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("operation_type");
 
+                    b.Property<string>("ParametersJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16000)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}")
+                        .HasColumnName("parameters_json");
+
                     b.Property<string>("ReagentBottleId")
                         .HasMaxLength(36)
                         .HasColumnType("TEXT")
@@ -3258,6 +3304,8 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnName("workflow_step_execution_id");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ActorUserId");
 
                     b.HasIndex("DeviceCommandExecutionId");
 

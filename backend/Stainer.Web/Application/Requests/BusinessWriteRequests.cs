@@ -196,6 +196,7 @@ public sealed record CalibrateCoordinatePointRequest(
     long? CalibratedZUm,
     long? SafeZUm,
     long? AspirateZUm,
+    long? AspirateEndZUm,
     long? DispenseZUm,
     string Reason,
     string? Target = null,
@@ -209,6 +210,7 @@ public sealed record CoordinateTargetPointInput(
     long? ZUm,
     long? SafeZUm,
     long? LiquidDetectZUm,
+    long? AspirateEndZUm,
     long? DispenseZUm,
     long? ActionOffsetXUm,
     long? ActionOffsetYUm,
@@ -262,6 +264,11 @@ public sealed record SaveLiquidClassRequest(
     int? BlowoutVolumeUl = null,
     int? BlowoutDelayMs = null,
     int? VolumeAdjustmentUl = null,
+    int? LiquidFollowingDepthUm = null,
+    int? RetractSpeedUmPerSecond = null,
+    int? ConditioningVolumeUl = null,
+    int? BreakoffSpeedUlPerSecond = null,
+    int? PostDispenseAirGapUl = null,
     string? Target = null,
     bool DangerousOperationConfirmed = false);
 

@@ -171,6 +171,7 @@ public sealed class DigitalTwinCoordinateImportService(
                         CalibratedZUm = null,
                         SafeZUm = null,
                         LiquidDetectZUm = null,
+                        AspirateEndZUm = null,
                         DispenseZUm = null,
                         ActionOffsetXUm = null,
                         ActionOffsetYUm = null,

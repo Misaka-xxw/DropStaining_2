@@ -344,6 +344,7 @@ public sealed class CoordinateProfileLifecycleService(
                         target.CalibratedZUm = request.CalibratedZUm;
                         target.SafeZUm = request.SafeZUm;
                         target.LiquidDetectZUm = request.AspirateZUm;
+                        target.AspirateEndZUm = request.AspirateEndZUm;
                         target.DispenseZUm = request.DispenseZUm;
                         target.RequiresCalibration = false;
                         target.ValidationStatus = CoordinateTargetPointValidationStatus.Validated;
@@ -373,6 +374,7 @@ public sealed class CoordinateProfileLifecycleService(
                     NewZUm = request.CalibratedZUm,
                     SafeZUm = request.SafeZUm,
                     LiquidDetectZUm = request.AspirateZUm,
+                    AspirateEndZUm = request.AspirateEndZUm,
                     DispenseZUm = request.DispenseZUm,
                     ChangeSummaryJson = version.ChangeSummaryJson,
                     ValidationResultJson = version.ValidationResultJson,
@@ -456,6 +458,7 @@ public sealed class CoordinateProfileLifecycleService(
             CalibratedZUm = source.CalibratedZUm,
             SafeZUm = source.SafeZUm,
             LiquidDetectZUm = source.LiquidDetectZUm,
+            AspirateEndZUm = source.AspirateEndZUm,
             DispenseZUm = source.DispenseZUm,
             ActionOffsetXUm = source.ActionOffsetXUm,
             ActionOffsetYUm = source.ActionOffsetYUm,
@@ -490,6 +493,7 @@ public sealed class CoordinateProfileLifecycleService(
         point.CalibratedZUm = input.ZUm;
         point.SafeZUm = input.SafeZUm;
         point.LiquidDetectZUm = input.LiquidDetectZUm;
+        point.AspirateEndZUm = input.AspirateEndZUm;
         point.DispenseZUm = input.DispenseZUm;
         point.ActionOffsetXUm = input.ActionOffsetXUm;
         point.ActionOffsetYUm = input.ActionOffsetYUm;
@@ -515,6 +519,7 @@ public sealed class CoordinateProfileLifecycleService(
                 before.CalibratedZUm,
                 before.SafeZUm,
                 before.LiquidDetectZUm,
+                before.AspirateEndZUm,
                 before.DispenseZUm,
                 before.ActionOffsetXUm,
                 before.ActionOffsetYUm,
@@ -528,6 +533,7 @@ public sealed class CoordinateProfileLifecycleService(
                 after.CalibratedZUm,
                 after.SafeZUm,
                 after.LiquidDetectZUm,
+                after.AspirateEndZUm,
                 after.DispenseZUm,
                 after.ActionOffsetXUm,
                 after.ActionOffsetYUm,
