@@ -194,6 +194,8 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             CoordinateProfileVersionMutationResponse x => x with { Replayed = true } as T ?? response,
             LiquidClassVersionMutationResponse x => x with { Replayed = true } as T ?? response,
             ScannerConfigurationMutationResponse x => x with { Replayed = true } as T ?? response,
+            ScannerControlResponse x => x with { Replayed = true } as T ?? response,
+            ReagentCoordinateGenerationResultResponse x => x with { Replayed = true } as T ?? response,
             MachineRunResponse x => x with { Replayed = true } as T ?? response,
             RunCommandResponse x => x with { Replayed = true } as T ?? response,
             CommandResponse x => x with { Replayed = true } as T ?? response,

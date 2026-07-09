@@ -25,9 +25,11 @@ public sealed class ScannerProfile
 public sealed class ScannerRegion
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
+    public int RegionNo { get; set; }
     public string Name { get; set; } = string.Empty;
     public string RegionType { get; set; } = ScannerRegionTypes.Sample;
     public string ScannerProfileId { get; set; } = string.Empty;
+    public int ScanOrder { get; set; }
     public string ScanPathJson { get; set; } = "[]";
     public string? CoordinateProfileId { get; set; }
     public string? CoordinateProfileVersionId { get; set; }

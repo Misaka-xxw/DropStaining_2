@@ -168,9 +168,11 @@ public sealed class ScannerConfigurationService(
                 var now = DateTimeOffset.UtcNow;
                 var region = new ScannerRegion
                 {
+                    RegionNo = ValidateRegionNo(request.RegionNo),
                     Name = RequireValue(request.Name, "name", 128),
                     RegionType = RequireValue(request.RegionType, "regionType", 64),
                     ScannerProfileId = scannerProfileId,
+                    ScanOrder = ValidateScanOrder(request.ScanOrder),
                     ScanPathJson = NormalizeJson(request.ScanPath, "scanPath", "[]", 40000, allowArray: true),
                     CoordinateProfileId = coordinateProfileId,
                     CoordinateProfileVersionId = coordinateProfileVersionId,
@@ -183,6 +185,60 @@ public sealed class ScannerConfigurationService(
 
                 return new CommandExecutionResult<ScannerConfigurationMutationResponse>(
                     new ScannerConfigurationMutationResponse(true, request.CommandId, false, "ScannerRegion", region.Id, "Scanner region created."),
+                    "ScannerRegion",
+                    region.Id);
+            },
+            cancellationToken);
+    }
+
+    public Task<ScannerConfigurationMutationResponse> UpdateRegionAsync(
+        string id,
+        SaveScannerRegionRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedId = NormalizeId(id);
+        return idempotencyService.RunAsync(
+            request.CommandId,
+            "scanner_region.update",
+            new { id = normalizedId, request },
+            actor,
+            async () =>
+            {
+                RequireReason(request.Reason);
+                var scannerProfileId = RequireValue(request.ScannerProfileId, "scannerProfileId", 36);
+                var profileExists = await dbContext.ScannerProfiles
+                    .AsNoTracking()
+                    .AnyAsync(x => x.Id == scannerProfileId, cancellationToken);
+                if (!profileExists)
+                {
+                    throw new BusinessRuleException("scanner_profile_not_found", "Scanner profile was not found.", StatusCodes.Status404NotFound);
+                }
+
+                var coordinateProfileId = NormalizeOptionalValue(request.CoordinateProfileId, "coordinateProfileId", 36);
+                var coordinateProfileVersionId = NormalizeOptionalValue(request.CoordinateProfileVersionId, "coordinateProfileVersionId", 36);
+                await ValidateCoordinateReferenceAsync(coordinateProfileId, coordinateProfileVersionId, cancellationToken);
+
+                var region = await dbContext.ScannerRegions
+                    .SingleOrDefaultAsync(x => x.Id == normalizedId, cancellationToken)
+                    ?? throw new BusinessRuleException("scanner_region_not_found", "Scanner region was not found.", StatusCodes.Status404NotFound);
+
+                var before = ToRegionAudit(region);
+                region.RegionNo = ValidateRegionNo(request.RegionNo);
+                region.Name = RequireValue(request.Name, "name", 128);
+                region.RegionType = RequireValue(request.RegionType, "regionType", 64);
+                region.ScannerProfileId = scannerProfileId;
+                region.ScanOrder = ValidateScanOrder(request.ScanOrder);
+                region.ScanPathJson = NormalizeJson(request.ScanPath, "scanPath", "[]", 40000, allowArray: true);
+                region.CoordinateProfileId = coordinateProfileId;
+                region.CoordinateProfileVersionId = coordinateProfileVersionId;
+                region.CoordinatePointCodesJson = JsonSerializer.Serialize(NormalizeCoordinatePointCodes(request.CoordinatePointCodes), JsonOptions);
+                region.UpdatedAtUtc = DateTimeOffset.UtcNow;
+
+                AddAudit(actor, "scanner_region.update", "ScannerRegion", region.Id, before, ToRegionAudit(region), request.Reason);
+
+                return new CommandExecutionResult<ScannerConfigurationMutationResponse>(
+                    new ScannerConfigurationMutationResponse(true, request.CommandId, false, "ScannerRegion", region.Id, "Scanner region updated."),
                     "ScannerRegion",
                     region.Id);
             },
@@ -346,9 +402,11 @@ public sealed class ScannerConfigurationService(
     {
         return new ScannerRegionResponse(
             region.Id,
+            region.RegionNo,
             region.Name,
             region.RegionType,
             region.ScannerProfileId,
+            region.ScanOrder,
             region.ScanPathJson,
             region.CoordinateProfileId,
             region.CoordinateProfileVersionId,
@@ -381,14 +439,36 @@ public sealed class ScannerConfigurationService(
     {
         return new
         {
+            region.RegionNo,
             region.Name,
             region.RegionType,
             region.ScannerProfileId,
+            region.ScanOrder,
             region.ScanPathJson,
             region.CoordinateProfileId,
             region.CoordinateProfileVersionId,
             region.CoordinatePointCodesJson
         };
+    }
+
+    private static int ValidateRegionNo(int regionNo)
+    {
+        if (regionNo < 1 || regionNo > 99)
+        {
+            throw new BusinessRuleException("region_no_invalid", "regionNo must be between 1 and 99.", StatusCodes.Status400BadRequest);
+        }
+
+        return regionNo;
+    }
+
+    private static int ValidateScanOrder(int scanOrder)
+    {
+        if (scanOrder < 1 || scanOrder > 999)
+        {
+            throw new BusinessRuleException("scan_order_invalid", "scanOrder must be between 1 and 999.", StatusCodes.Status400BadRequest);
+        }
+
+        return scanOrder;
     }
 
     private static int? ValidatePositive(int? value, string fieldName, int maximum)

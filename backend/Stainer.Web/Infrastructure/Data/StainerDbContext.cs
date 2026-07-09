@@ -23,6 +23,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<CoordinateProfile> CoordinateProfiles => Set<CoordinateProfile>();
     public DbSet<CoordinateProfileVersion> CoordinateProfileVersions => Set<CoordinateProfileVersion>();
     public DbSet<CoordinatePoint> CoordinatePoints => Set<CoordinatePoint>();
+    public DbSet<ReagentCoordinateAnchor> ReagentCoordinateAnchors => Set<ReagentCoordinateAnchor>();
     public DbSet<CoordinateCalibrationHistory> CoordinateCalibrationHistory => Set<CoordinateCalibrationHistory>();
     public DbSet<WorkflowDefinition> WorkflowDefinitions => Set<WorkflowDefinition>();
     public DbSet<WorkflowVersion> WorkflowVersions => Set<WorkflowVersion>();
@@ -99,6 +100,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureCoordinateProfile(modelBuilder);
         ConfigureCoordinateProfileVersion(modelBuilder);
         ConfigureCoordinatePoint(modelBuilder);
+        ConfigureReagentCoordinateAnchor(modelBuilder);
         ConfigureCoordinateCalibrationHistory(modelBuilder);
         ConfigureWorkflowDefinition(modelBuilder);
         ConfigureWorkflowVersion(modelBuilder);
@@ -886,9 +888,11 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.ToTable("scanner_regions");
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.RegionNo).HasColumnName("region_no").IsRequired();
         entity.Property(x => x.Name).HasColumnName("name").HasMaxLength(128).IsRequired();
         entity.Property(x => x.RegionType).HasColumnName("region_type").HasMaxLength(64).IsRequired();
         entity.Property(x => x.ScannerProfileId).HasColumnName("scanner_profile_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.ScanOrder).HasColumnName("scan_order").IsRequired();
         entity.Property(x => x.ScanPathJson).HasColumnName("scan_path_json").HasMaxLength(40000).IsRequired();
         entity.Property(x => x.CoordinateProfileId).HasColumnName("coordinate_profile_id").HasMaxLength(36);
         entity.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
@@ -899,8 +903,38 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.HasIndex(x => x.RegionType);
         entity.HasIndex(x => x.CoordinateProfileId);
         entity.HasIndex(x => x.CoordinateProfileVersionId);
+        entity.HasIndex(x => new { x.ScannerProfileId, x.RegionNo }).IsUnique();
+        entity.HasIndex(x => new { x.ScannerProfileId, x.ScanOrder }).IsUnique();
         entity.HasOne(x => x.ScannerProfile).WithMany(x => x.Regions).HasForeignKey(x => x.ScannerProfileId).OnDelete(DeleteBehavior.Cascade);
         entity.HasOne(x => x.CoordinateProfile).WithMany().HasForeignKey(x => x.CoordinateProfileId).OnDelete(DeleteBehavior.SetNull);
+        entity.HasOne(x => x.CoordinateProfileVersion).WithMany().HasForeignKey(x => x.CoordinateProfileVersionId).OnDelete(DeleteBehavior.SetNull);
+    }
+
+    private static void ConfigureReagentCoordinateAnchor(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<ReagentCoordinateAnchor>();
+        entity.ToTable("reagent_coordinate_anchors");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.CoordinateProfileId).HasColumnName("coordinate_profile_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
+        entity.Property(x => x.ColumnNo).HasColumnName("column_no").IsRequired();
+        entity.Property(x => x.ColumnCode).HasColumnName("column_code").HasMaxLength(32);
+        entity.Property(x => x.SlotCount).HasColumnName("slot_count").IsRequired();
+        entity.Property(x => x.StartXUm).HasColumnName("start_x_um");
+        entity.Property(x => x.StartYUm).HasColumnName("start_y_um");
+        entity.Property(x => x.StartZUm).HasColumnName("start_z_um");
+        entity.Property(x => x.EndXUm).HasColumnName("end_x_um");
+        entity.Property(x => x.EndYUm).HasColumnName("end_y_um");
+        entity.Property(x => x.EndZUm).HasColumnName("end_z_um");
+        entity.Property(x => x.IsEnabled).HasColumnName("is_enabled").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.CoordinateProfileId);
+        entity.HasIndex(x => x.CoordinateProfileVersionId);
+        entity.HasIndex(x => new { x.CoordinateProfileId, x.ColumnNo }).IsUnique();
+        entity.HasIndex(x => new { x.CoordinateProfileVersionId, x.ColumnNo });
+        entity.HasOne(x => x.CoordinateProfile).WithMany().HasForeignKey(x => x.CoordinateProfileId).OnDelete(DeleteBehavior.Cascade);
         entity.HasOne(x => x.CoordinateProfileVersion).WithMany().HasForeignKey(x => x.CoordinateProfileVersionId).OnDelete(DeleteBehavior.SetNull);
     }
 
