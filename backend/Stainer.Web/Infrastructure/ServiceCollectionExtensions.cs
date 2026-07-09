@@ -93,6 +93,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DeviceModeService>();
         services.AddScoped<DeviceControlService>();
         services.AddScoped<ReagentQrScannerDeviceOperationService>();
+        services.AddScoped<ScannerConfigurationService>();
         services.AddScoped<ThermalControlService>();
         services.AddScoped<FluidicsControlService>();
         services.AddScoped<MotionControlService>();

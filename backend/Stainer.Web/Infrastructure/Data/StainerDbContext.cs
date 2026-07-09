@@ -18,6 +18,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<DabMixPosition> DabMixPositions => Set<DabMixPosition>();
     public DbSet<WashPosition> WashPositions => Set<WashPosition>();
     public DbSet<DeviceProfile> DeviceProfiles => Set<DeviceProfile>();
+    public DbSet<ScannerProfile> ScannerProfiles => Set<ScannerProfile>();
+    public DbSet<ScannerRegion> ScannerRegions => Set<ScannerRegion>();
     public DbSet<CoordinateProfile> CoordinateProfiles => Set<CoordinateProfile>();
     public DbSet<CoordinateProfileVersion> CoordinateProfileVersions => Set<CoordinateProfileVersion>();
     public DbSet<CoordinatePoint> CoordinatePoints => Set<CoordinatePoint>();
@@ -92,6 +94,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureDabMixPosition(modelBuilder);
         ConfigureWashPosition(modelBuilder);
         ConfigureDeviceProfile(modelBuilder);
+        ConfigureScannerProfile(modelBuilder);
+        ConfigureScannerRegion(modelBuilder);
         ConfigureCoordinateProfile(modelBuilder);
         ConfigureCoordinateProfileVersion(modelBuilder);
         ConfigureCoordinatePoint(modelBuilder);
@@ -850,6 +854,54 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.IsActive).HasColumnName("is_active").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.HasIndex(x => x.Code).IsUnique();
+    }
+
+    private static void ConfigureScannerProfile(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<ScannerProfile>();
+        entity.ToTable("scanner_profiles");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.Name).HasColumnName("name").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.ScannerType).HasColumnName("scanner_type").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
+        entity.Property(x => x.Port).HasColumnName("port").HasMaxLength(128);
+        entity.Property(x => x.BaudRate).HasColumnName("baud_rate");
+        entity.Property(x => x.TimeoutMilliseconds).HasColumnName("timeout_milliseconds");
+        entity.Property(x => x.TriggerMode).HasColumnName("trigger_mode").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.RoiX).HasColumnName("roi_x");
+        entity.Property(x => x.RoiY).HasColumnName("roi_y");
+        entity.Property(x => x.RoiWidth).HasColumnName("roi_width");
+        entity.Property(x => x.RoiHeight).HasColumnName("roi_height");
+        entity.Property(x => x.CheckLightEnabled).HasColumnName("check_light_enabled");
+        entity.Property(x => x.SpecialParametersJson).HasColumnName("special_parameters_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => new { x.ScannerType, x.Enabled });
+    }
+
+    private static void ConfigureScannerRegion(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<ScannerRegion>();
+        entity.ToTable("scanner_regions");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.Name).HasColumnName("name").HasMaxLength(128).IsRequired();
+        entity.Property(x => x.RegionType).HasColumnName("region_type").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.ScannerProfileId).HasColumnName("scanner_profile_id").HasMaxLength(36).IsRequired();
+        entity.Property(x => x.ScanPathJson).HasColumnName("scan_path_json").HasMaxLength(40000).IsRequired();
+        entity.Property(x => x.CoordinateProfileId).HasColumnName("coordinate_profile_id").HasMaxLength(36);
+        entity.Property(x => x.CoordinateProfileVersionId).HasColumnName("coordinate_profile_version_id").HasMaxLength(36);
+        entity.Property(x => x.CoordinatePointCodesJson).HasColumnName("coordinate_point_codes_json").HasMaxLength(8000).IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.ScannerProfileId);
+        entity.HasIndex(x => x.RegionType);
+        entity.HasIndex(x => x.CoordinateProfileId);
+        entity.HasIndex(x => x.CoordinateProfileVersionId);
+        entity.HasOne(x => x.ScannerProfile).WithMany(x => x.Regions).HasForeignKey(x => x.ScannerProfileId).OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(x => x.CoordinateProfile).WithMany().HasForeignKey(x => x.CoordinateProfileId).OnDelete(DeleteBehavior.SetNull);
+        entity.HasOne(x => x.CoordinateProfileVersion).WithMany().HasForeignKey(x => x.CoordinateProfileVersionId).OnDelete(DeleteBehavior.SetNull);
     }
 
     private static void ConfigureCoordinateProfile(ModelBuilder modelBuilder)
