@@ -37,6 +37,32 @@ public sealed class DigitalTwinCoordinateImportService(
         "备注"
     ];
 
+    // CSV categories that are deliberately out of scope for the coordinate
+    // importer. The baseline CSV now carries the UI/engineering control manifest
+    // (界面控件 html controls, login/user-management pages, reagent lane position/
+    // entry indicator lamps, reagent legend totals, lane separator lines, mix
+    // bottle status bar/cells). These rows describe screen elements and status
+    // indicators, not robot movement targets: many have no physical coordinates,
+    // and even those that carry layout coordinates (lamps/status cells) are
+    // front-end driven by control ID, not consumed by the motion coordinate set.
+    // They are skipped here so they are never imported as executable or reference
+    // coordinate points. A genuinely new PHYSICAL category that is neither a known
+    // coordinate category nor listed here still falls through to Rejected, keeping
+    // the executable-coordinate contract fail-closed.
+    private static readonly HashSet<string> IgnoredCategories = new(StringComparer.Ordinal)
+    {
+        "界面控件",
+        "登录页",
+        "用户管理",
+        "权限控制",
+        "试剂到位感应",
+        "试剂入口感应",
+        "试剂图例总量",
+        "试剂区通道分隔线",
+        "配液瓶状态",
+        "配液瓶状态格"
+    };
+
     public async Task<DigitalTwinCoordinateImportResponse> PreviewAsync(
         PreviewDigitalTwinCoordinateImportRequest request,
         CancellationToken cancellationToken = default)
@@ -236,6 +262,14 @@ public sealed class DigitalTwinCoordinateImportService(
 
         foreach (var csvRow in parsed.Rows)
         {
+            // Skip UI/engineering control rows so they never become coordinate
+            // points (executable or reference). Only physical-coordinate rows
+            // remain; see IgnoredCategories for the rationale.
+            if (IgnoredCategories.Contains(csvRow.Category))
+            {
+                continue;
+            }
+
             rows.Add(MapRow(csvRow));
         }
 
@@ -380,14 +414,22 @@ public sealed class DigitalTwinCoordinateImportService(
         {
             "针头_Z1" => "Needle1",
             "针头_Z2" => "Needle2",
-            "机械臂随动相机" => "ArmCamera",
+            // "机械臂随动相机" is the legacy arm-follow camera label; the current CSV
+            // names it "机械臂随动相机_样本扫码" because it doubles as the arm-mounted
+            // sample/slide barcode scanner (DCR55). Match by prefix so either form
+            // resolves to the same ArmCamera tool reference.
+            _ when row.Name.StartsWith("机械臂随动相机", StringComparison.Ordinal) => "ArmCamera",
             _ => ReferenceCode("RobotReference", row.RowNo, row.ColumnNo)
         };
         var reason = code switch
         {
             "Needle1" => "Needle1/Z1 is the machine origin (0,0).",
             "Needle2" => "Needle2/Z2 is the confirmed offset (0,+25000 um).",
-            "ArmCamera" => "Arm camera is a reference point until robot execution is explicitly validated.",
+            // ArmCamera is the arm-mounted sample scanner (DCR55) tool reference, not
+            // an executable robot target. The arm carries it to a slot/ScannerRegion,
+            // stops, then triggers the read; it is a ReferenceOnly point and is not
+            // part of the required executable target-point set.
+            "ArmCamera" => "Arm-mounted sample scanner (DCR55) tool reference; not a robot movement target.",
             _ => "Robot-relative physical reference."
         };
         return row.ToDisposition(DigitalTwinCoordinateDisposition.ReferenceOnly, code, code.StartsWith("Needle", StringComparison.Ordinal) ? "Needle" : ReferenceOnlyPointType, code, reason);
@@ -911,6 +953,19 @@ public sealed class DigitalTwinCoordinateImportService(
             if (TryParseInt(value, out var parsed))
             {
                 return parsed;
+            }
+
+            // The baseline CSV emits row/column indices aligned to the millimeter
+            // grid with a trailing decimal suffix (e.g. "1.0", "2.000"). They are
+            // still whole layout indices (row 1..8, column 1..5). Accept a decimal
+            // form ONLY when it is numerically equal to an integer; a genuinely
+            // fractional value such as "1.4" or "1.5" is rejected (surfaced as a
+            // parse error) instead of being silently rounded, preserving the
+            // fail-closed coordinate import contract.
+            if (decimal.TryParse(value.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var decimalValue)
+                && decimalValue == decimal.Truncate(decimalValue))
+            {
+                return (int)decimalValue;
             }
 
             errors.Add($"{fieldName} must be an integer");

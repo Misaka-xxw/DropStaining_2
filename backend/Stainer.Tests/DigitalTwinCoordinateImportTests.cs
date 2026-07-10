@@ -60,6 +60,17 @@ public sealed class DigitalTwinCoordinateImportTests
         Assert.Contains(preview.Rows, x => x.CsvLogicalLabel == "Mixer1" && x.TargetPointCode == "Mixer1" && x.Disposition == "ReferenceOnly");
         Assert.Contains(preview.Rows, x => x.CsvLogicalLabel == "Mixer4" && x.TargetPointCode == "Mixer4" && x.Disposition == "ReferenceOnly");
         Assert.Contains(preview.Rows, x => x.TargetPointCode == "ReagentScannerCamera" && x.Disposition == "ReferenceOnly");
+
+        // ArmCamera is the arm-mounted sample scanner (DCR55) tool reference: a
+        // ReferenceOnly point, never an ExecutableTarget or required target point.
+        Assert.Contains(preview.Rows, x => x.TargetPointCode == "ArmCamera" && x.Disposition == "ReferenceOnly");
+        Assert.DoesNotContain(preview.Rows, x => x.TargetPointCode == "ArmCamera" && x.Disposition == "ExecutableTarget");
+
+        // UI/engineering control rows (界面控件, sensors, legends, status cells) are
+        // skipped and must never reach the coordinate preview as points.
+        Assert.DoesNotContain(preview.Rows, x => x.Category == "界面控件");
+        Assert.DoesNotContain(preview.Rows, x => x.Category == "试剂到位感应");
+        Assert.DoesNotContain(preview.Rows, x => x.Category == "配液瓶状态格");
     }
 
     [Fact]
@@ -203,6 +214,37 @@ public sealed class DigitalTwinCoordinateImportTests
         await service.EnsureRunCoordinateUsableAsync(readyRun.Id, DeviceModes.Real);
     }
 
+    [Fact]
+    public async Task Preview_accepts_whole_decimal_indices_but_rejects_fractional_row_or_column()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin", "admin");
+
+        // Whole-number decimal indices (1.0 / 2.000) are legitimate baseline CSV
+        // formatting and must NOT raise an integer-parse error.
+        var wholeDecimalPreview = await PostAsync<DigitalTwinCoordinateImportResponse>(
+            client,
+            "/api/engineering/coordinates/digital-twin/import/preview",
+            new PreviewDigitalTwinCoordinateImportRequest(WriteTempCsv(
+                "序号,类别,名称,控件ID,行,列,x_mm,y_mm,形状,半径_mm,宽度_mm,高度_mm,备注",
+                "1,试剂区,试剂_S11,svg-reagent-s11,1.0,2.000,316.25,16.5,circle,10.0,,,whole decimal index")));
+        Assert.DoesNotContain(wholeDecimalPreview.Errors, error => error.Contains("must be an integer", StringComparison.Ordinal));
+
+        // Fractional indices (1.5 / 1.4) must be rejected and surfaced as errors,
+        // never silently rounded to an integer.
+        var fractionalPreview = await PostAsync<DigitalTwinCoordinateImportResponse>(
+            client,
+            "/api/engineering/coordinates/digital-twin/import/preview",
+            new PreviewDigitalTwinCoordinateImportRequest(WriteTempCsv(
+                "序号,类别,名称,控件ID,行,列,x_mm,y_mm,形状,半径_mm,宽度_mm,高度_mm,备注",
+                "1,试剂区,试剂_S11,svg-reagent-s11,1.5,1.4,316.25,16.5,circle,10.0,,,fractional index")));
+        Assert.False(fractionalPreview.Ok);
+        Assert.True(fractionalPreview.RejectedCount >= 1);
+        Assert.Contains(fractionalPreview.Errors, error => error.Contains("行 must be an integer", StringComparison.Ordinal));
+        Assert.Contains(fractionalPreview.Errors, error => error.Contains("列 must be an integer", StringComparison.Ordinal));
+    }
+
     private static void AssertRow(
         DigitalTwinCoordinateImportResponse response,
         string logicalLabel,
@@ -238,25 +280,6 @@ public sealed class DigitalTwinCoordinateImportTests
     {
         var version = dbContext.CoordinateProfileVersions.Single(x => x.Id == versionId);
         var points = dbContext.CoordinatePoints.Where(x => x.CoordinateProfileVersionId == versionId).ToList();
-        var profileId = version.CoordinateProfileId;
-        var scanner = points.SingleOrDefault(x => x.PointCode == "ReagentScannerCamera");
-        if (points.All(x => x.PointCode != "SampleScan"))
-        {
-            points.Add(new CoordinatePoint
-            {
-                CoordinateProfileId = profileId,
-                CoordinateProfileVersionId = versionId,
-                PointCode = "SampleScan",
-                PointType = "SampleScanPosition",
-                PresetXUm = scanner?.PresetXUm ?? 342_000,
-                PresetYUm = scanner?.PresetYUm ?? 211_000,
-                CalibratedXUm = scanner?.CalibratedXUm ?? 342_000,
-                CalibratedYUm = scanner?.CalibratedYUm ?? 211_000,
-                IsEnabled = true,
-                CreatedAtUtc = DateTimeOffset.UtcNow
-            });
-            dbContext.CoordinatePoints.Add(points[^1]);
-        }
 
         foreach (var point in points.Where(x => CoordinateProfileLifecycleService.RequiredTargetPointCodes.Contains(x.PointCode, StringComparer.Ordinal)))
         {
@@ -302,6 +325,13 @@ public sealed class DigitalTwinCoordinateImportTests
         }
 
         throw new FileNotFoundException("Digital twin coordinate baseline CSV was not found.");
+    }
+
+    private static string WriteTempCsv(params string[] lines)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"stainer-dt-parse-{Guid.NewGuid():N}.csv");
+        File.WriteAllLines(path, lines);
+        return path;
     }
 
     private static WebApplicationFactory<Program> CreateFactory()

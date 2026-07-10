@@ -328,7 +328,14 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
             await EnsureCoordinatePointAsync(profile.Id, versionId, code, "WashPosition", null, null, true, now, cancellationToken);
         }
 
-        await EnsureCoordinatePointAsync(profile.Id, versionId, "SampleScan", "SampleScanPosition", null, null, true, now, cancellationToken);
+        // Sample scanner calibration/test reference only. The arm-mounted sample
+        // scanner (DCR55) is a tool reference, not a fixed per-version movement
+        // target (the arm carries it to a slot/ScannerRegion, stops, then reads).
+        // Reagent scanning uses the fixed multi-channel scanner module, not arm
+        // movement. Kept as a non-required calibration point so legacy/seeded
+        // baselines still expose a named sample-scanner anchor without being
+        // enforced as an executable target by CoordinateProfileLifecycleService.
+        await EnsureCoordinatePointAsync(profile.Id, versionId, "SampleScannerCalibrationPoint", "SampleScannerCalibration", null, null, true, now, cancellationToken);
         await EnsureCoordinatePointAsync(profile.Id, versionId, "DabA", "DabSourceBottle", null, null, true, now, cancellationToken);
         await EnsureCoordinatePointAsync(profile.Id, versionId, "DabB", "DabSourceBottle", null, null, true, now, cancellationToken);
 

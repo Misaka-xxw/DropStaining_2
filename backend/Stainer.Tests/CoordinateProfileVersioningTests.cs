@@ -30,7 +30,7 @@ public sealed class CoordinateProfileVersioningTests
         Assert.Equal(CoordinateProfileVersionStatus.Active, originalVersion.Status);
         Assert.Equal(CoordinateVersionUsageScope.MockOnly, originalVersion.UsageScope);
         Assert.Equal(CoordinateVersionVerificationStatus.Unverified, originalVersion.VerificationStatus);
-        Assert.Contains(profile.Points, x => x.PointCode == "SampleScan");
+        Assert.Contains(profile.Points, x => x.PointCode == "SampleScannerCalibrationPoint");
         Assert.Contains(profile.Points, x => x.PointCode == "DabA");
         Assert.Contains(profile.Points, x => x.PointCode == "DabB");
 

@@ -671,6 +671,20 @@ public sealed class CoordinateProfileLifecycleService(
         }
     }
 
+    // Required target points are the executable robot movement targets that every
+    // published/activated coordinate version MUST define. They are exactly the
+    // physical business positions a real run needs to reach: reagent rack (R1-R40),
+    // slide slots (A-01..D-04), wash positions, DAB mix holes (M1-M8), and DAB
+    // A/B source bottles.
+    //
+    // Sample scanning is intentionally NOT a required movement target here. The
+    // arm-mounted sample scanner (DCR55, formerly labelled "ArmCamera") is a tool
+    // reference: the arm carries it to a slot/ScannerRegion, stops, then triggers
+    // the read. Reagent scanning is handled by the fixed multi-channel scanner
+    // module (parent command 0x08), not by arm movement. A standalone scan station
+    // is therefore not a per-version executable target. If a calibration/test
+    // reference point is needed it is expressed as SampleScannerCalibrationPoint
+    // (ReferenceOnly/Calibration) in the seeder, not as SampleScan here.
     private static IReadOnlyList<string> BuildRequiredTargetPointCodes()
     {
         var codes = new List<string>();
@@ -680,7 +694,6 @@ public sealed class CoordinateProfileLifecycleService(
             codes.AddRange(Enumerable.Range(1, 4).Select(x => $"{drawer}-{x:00}"));
         }
 
-        codes.Add("SampleScan");
         codes.AddRange(["WashInnerLeft", "WashInnerRight", "WashOuterLeft", "WashOuterRight"]);
         codes.AddRange(Enumerable.Range(1, 8).Select(x => $"M{x}"));
         codes.AddRange(["DabA", "DabB"]);
