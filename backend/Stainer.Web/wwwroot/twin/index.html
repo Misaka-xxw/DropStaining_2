@@ -2185,8 +2185,8 @@
       <p>输入账号密码后选择登录身份。管理员可进入调试和用户管理，实验员进入日常操作页面。</p>
     </div>
     <section class="login-form-card" id="simpleLoginCard" data-control-id="simpleLoginCard">
-      <label>账号<input id="loginUsername" data-control-id="loginUsername" value="admin" autocomplete="username"></label>
-      <label>密码<input id="loginPassword" data-control-id="loginPassword" type="password" value="123456" autocomplete="current-password"></label>
+      <label>账号<input id="loginUsername" data-control-id="loginUsername" placeholder="账号" autocomplete="username"></label>
+      <label>密码<input id="loginPassword" data-control-id="loginPassword" type="password" placeholder="密码" autocomplete="current-password"></label>
       <div class="login-actions login-actions-two" id="loginRoleActions" data-control-id="loginRoleActions">
         <button type="button" class="primary-login" id="adminLoginBtn" data-control-id="adminLoginBtn" data-login-role="admin">管理员登录</button>
         <button type="button" class="operator-login" id="operatorLoginBtn" data-control-id="operatorLoginBtn" data-login-role="operator">实验员登录</button>
@@ -2362,8 +2362,6 @@ const OP_DEF_BY_KEY = Object.fromEntries(OP_DEFS.map(op => [op.key, op]));
 const CONFIG_STORAGE_KEY = 'pathologyStainer.configProfiles.v1';
 const CONFIG_ASSIGN_STORAGE_KEY = 'pathologyStainer.channelConfigAssignments.v1';
 const SETTINGS_STORAGE_KEY = 'pathologyStainer.runtimeSettings.v1';
-const USER_STORAGE_KEY = 'pathologyStainer.users.v2';
-const CURRENT_USER_STORAGE_KEY = 'pathologyStainer.currentUser.v2';
 const DEFAULT_APP_SETTINGS = {
   dataInterface:'WebSocket 预留', hostAddress:'ws://127.0.0.1:9001/digital-twin', heartbeatSec:3,
   reagentBottleCapacityMl:10, reagentTargetTempC:8, workTargetTempC:40, needleGapMm:25,
@@ -2460,12 +2458,7 @@ const PRECHECK_STEPS = [
 let precheckPassed = false;
 let precheckRunning = false;
 let precheckState = PRECHECK_STEPS.map(() => 'idle');
-const DEFAULT_USERS = [
-  { id:'admin', username:'admin', name:'管理员', role:'admin', password:'123456', enabled:true },
-  { id:'operator', username:'operator', name:'实验员', role:'operator', password:'123456', enabled:true }
-];
-let appUsers = loadAppUsers();
-let CURRENT_USER = loadCurrentUser() || { id:'', username:'', name:'未登录', role:'guest' };
+let CURRENT_USER = { id:'', username:'', name:'未登录', role:'guest' };
 let backendUsers = [];
 let backendRoles = [];
 let backendUsersLoaded = false;
@@ -5327,51 +5320,31 @@ window.digitalTwin = {
   engineering: { getDebugForm() { return collectEngineeringForm('debugPane'); }, getConfigForm(sectionId) { return collectEngineeringForm(sectionId || 'configPane'); } },
   auth: {
     getCurrentUser() { return deepClone(CURRENT_USER); },
-    listUsers() { return deepClone(backendUsersLoaded ? backendUsers : appUsers.map(({password, ...rest}) => rest)); },
+    listUsers() { return deepClone(backendUsersLoaded ? backendUsers : []); },
     logout: logoutCurrentUser
   },
   getControlIdRegistry
 };
 
 
-function normalizeUser(user) {
-  const role = user?.role === 'admin' ? 'admin' : 'operator';
-  const username = String(user?.username || user?.id || '').trim() || (role === 'admin' ? 'admin' : 'operator');
-  return {
-    id: String(user?.id || username || `user-${Date.now()}`),
-    username,
-    name: String(user?.name || (role === 'admin' ? '管理员' : '实验员')).trim(),
-    role,
-    password: String(user?.password || (role === 'admin' ? 'admin' : 'operator')),
-    enabled: user?.enabled !== false
+function applyServerUser(user) {
+  if(!user || !user.username) return false;
+  CURRENT_USER = {
+    id: String(user.id || user.username),
+    username: user.username,
+    name: user.displayName || user.name || user.username,
+    role: user.activeRole || user.role || 'operator'
   };
+  return true;
 }
-function loadAppUsers() {
+async function restoreBackendSession() {
   try {
-    const raw = localStorage.getItem(USER_STORAGE_KEY);
-    const loaded = raw ? JSON.parse(raw) : null;
-    const list = Array.isArray(loaded) && loaded.length ? loaded : DEFAULT_USERS;
-    const normalized = list.map(normalizeUser);
-    DEFAULT_USERS.forEach(defaultUser => {
-      if(!normalized.some(u => u.username === defaultUser.username)) normalized.push(normalizeUser(defaultUser));
-    });
-    return normalized;
-  } catch(e) { return DEFAULT_USERS.map(normalizeUser); }
-}
-function saveAppUsers() {
-  try { localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(appUsers, null, 2)); } catch(e) {}
-}
-function loadCurrentUser() {
-  try {
-    const raw = localStorage.getItem(CURRENT_USER_STORAGE_KEY);
-    if(!raw) return null;
-    const stored = JSON.parse(raw);
-    const match = (appUsers || []).find(u => u.id === stored.id && u.enabled !== false);
-    return match ? { id:match.id, username:match.username, name:match.name, role:match.role } : null;
-  } catch(e) { return null; }
-}
-function saveCurrentUser() {
-  try { localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify({ id:CURRENT_USER.id, username:CURRENT_USER.username, name:CURRENT_USER.name, role:CURRENT_USER.role })); } catch(e) {}
+    const res = await fetch('/api/current-user', { credentials:'same-origin', cache:'no-store' });
+    if(!res.ok) { setLoginVisible(true); return; }
+    const user = await res.json();
+    if(applyServerUser(user)) { setLoginVisible(false); applyUserRoleUi(); renderUserMenu(); loadDatabaseSnapshot(); }
+    else setLoginVisible(true);
+  } catch(e) { setLoginVisible(true); }
 }
 function setLoginError(message='') {
   const node = document.getElementById('loginErrorText');
@@ -5387,16 +5360,23 @@ function resetStatusDetailToDefault() {
   const detail = document.getElementById('detailBox');
   if(detail) detail.innerHTML = '<strong>未选中对象</strong>点击任意试剂、配液孔、A/B液、玻片、通道按钮、针头、相机或孔位，可查看状态、余量与步骤进度。';
 }
-function loginAsRole(role) {
-  const username = (document.getElementById('loginUsername')?.value || document.getElementById(`${role === 'admin' ? 'admin' : 'operator'}LoginName`)?.value || '').trim();
-  const password = document.getElementById('loginPassword')?.value || document.getElementById(`${role === 'admin' ? 'admin' : 'operator'}LoginPassword`)?.value || '';
-  const user = appUsers.find(u => u.role === role && u.username === username && u.enabled !== false);
-  if(!user || user.password !== password) {
-    setLoginError('账号、密码或身份不匹配，或该用户已停用。');
-    return;
-  }
-  CURRENT_USER = { id:user.id, username:user.username, name:user.name, role:user.role };
-  saveCurrentUser();
+async function loginAsRole(role) {
+  const username = (document.getElementById('loginUsername')?.value || '').trim();
+  const password = document.getElementById('loginPassword')?.value || '';
+  if(!username) { setLoginError('请输入账号。'); return; }
+  let res;
+  try {
+    res = await fetch('/api/login', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({ username, password, role })
+    });
+  } catch(err) { setLoginError('登录请求失败：' + err.message); return; }
+  if(!res || !res.ok) { setLoginError('账号、密码或身份不匹配，或该用户已停用。'); return; }
+  let payload = null;
+  try { payload = await res.json(); } catch(e) { payload = null; }
+  if(!payload || !payload.ok || !applyServerUser(payload.user || {})) { setLoginError('登录失败：后端未返回有效用户。'); return; }
   setLoginError('');
   setLoginVisible(false);
   applyUserRoleUi();
@@ -5407,10 +5387,10 @@ function loginAsRole(role) {
   setRightPanelRatio(RIGHT_PANEL_MIN_RATIO, false);
   resetStatusDetailToDefault();
   showSideTab('status');
-  bridgeBackendSession(username, password, role);
+  loadDatabaseSnapshot();
 }
-function logoutCurrentUser() {
-  try { localStorage.removeItem(CURRENT_USER_STORAGE_KEY); } catch(e) {}
+async function logoutCurrentUser() {
+  try { await fetch('/api/logout', { method:'POST', credentials:'same-origin' }); } catch(e) {}
   CURRENT_USER = { id:'', username:'', name:'未登录', role:'guest' };
   applyUserRoleUi();
   renderUserMenu();
@@ -5950,28 +5930,6 @@ document.querySelectorAll('[data-side-tab]').forEach(btn => {
 const csvInput = document.getElementById('csvInput');
 if(csvInput) csvInput.addEventListener('change', e => { if(e.target.files && e.target.files[0]) loadCsvFile(e.target.files[0]); });
 
-async function bridgeBackendSession(username, password, role) {
-  try {
-    const response = await fetch('/api/login', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      credentials:'same-origin',
-      body:JSON.stringify({ username, password, role })
-    });
-    if(!response.ok) {
-      console.warn('后端会话桥接失败', response.status);
-      log('后端会话未建立：数据库快照需要后端账号密码一致', 'warn');
-      return false;
-    }
-    await loadDatabaseSnapshot();
-    return true;
-  } catch(err) {
-    console.warn('后端会话桥接异常', err);
-    log('后端会话桥接失败：' + err.message, 'warn');
-    return false;
-  }
-}
-
 async function loadDatabaseSnapshot() {
   try {
     const response = await fetch('/api/twin/snapshot', { cache:'no-store', credentials:'same-origin' });
@@ -6071,7 +6029,7 @@ window.digitalTwinLoadDatabaseSnapshot = loadDatabaseSnapshot;
 setInterval(() => { updateSideHeaderStatus(); updateKpis(); updateHeaderMetrics(); }, 1000);
 
 resetDemo();
-if(CURRENT_USER.id) loadDatabaseSnapshot();
+restoreBackendSession();
 [1,2,3,4].forEach(id => { if(channelConfigAssignments[id] && !getProfileById(channelConfigAssignments[id])) channelConfigAssignments[id] = null; assignConfigToChannel(id, channelConfigAssignments[id], false); });
   if(window.digitalTwin?.engineering) {
     window.digitalTwin.engineering.getConfigSectionForm = function(sectionKey) {
