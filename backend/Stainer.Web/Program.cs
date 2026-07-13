@@ -8,6 +8,9 @@ using Stainer.Web.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"))
     && string.IsNullOrWhiteSpace(builder.Configuration["urls"]))
 {
@@ -85,7 +88,7 @@ if (args.Contains("--seed-mock-demo-data", StringComparer.OrdinalIgnoreCase)
     await DatabaseInitializer.InitializeAsync(dbContext);
     await dbContext.Database.MigrateAsync();
     await seedScope.ServiceProvider.GetRequiredService<ReferenceDataSeeder>().SeedAsync();
-    var actor = new AuthenticatedUser(string.Empty, "system", "System", "admin", ["admin", "engineer"]);
+    var actor = new AuthenticatedUser(string.Empty, "system", "System", "admin", ["admin"]);
     if (args.Contains("--seed-mock-demo-data", StringComparer.OrdinalIgnoreCase))
     {
         var response = await seedScope.ServiceProvider.GetRequiredService<MockDemoDataSeeder>()
@@ -125,6 +128,10 @@ using (var scope = app.Services.CreateScope())
     await seeder.SeedAsync();
     var recovery = scope.ServiceProvider.GetRequiredService<StartupRecoveryService>();
     await recovery.RecoverAsync();
+    // 预 seed 温控点（drawers A-D × slots 1-4 = 16 点）与冷却单元，
+    // 使 /api/twin/snapshot 在首次空库启动时也能稳定返回温控点，而非依赖 thermal API 被首次调用。
+    var thermalControl = scope.ServiceProvider.GetRequiredService<ThermalControlService>();
+    await thermalControl.EnsureSeededAsync(CancellationToken.None);
 }
 
 app.Services.GetRequiredService<StartupDeviceInitializationRunner>()

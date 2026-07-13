@@ -185,12 +185,15 @@ public sealed class UserManagementService(
             async () =>
             {
                 var user = await LoadUserAsync(userId, cancellationToken);
-                var hasAudit = await dbContext.AuditLogs.AnyAsync(
-                    x => x.ActorUserId == userId || (x.EntityType == "User" && x.EntityId == userId),
+                // 仅当该用户作为 Actor 留下过“业务动作”审计时才阻止删除。
+                // 登录/退出（auth.login / auth.logout）属于会话事件、不算业务动作，需排除，
+                // 否则用户只要登录过一次就不能删除；账号本身的创建/改名等审计（由管理员发起）也不计入。
+                var hasOperationalAudit = await dbContext.AuditLogs.AnyAsync(
+                    x => x.ActorUserId == userId && !x.Action.StartsWith("auth."),
                     cancellationToken);
-                if (hasAudit)
+                if (hasOperationalAudit)
                 {
-                    throw new BusinessRuleException("user_has_audit_logs", "Users with audit records cannot be deleted.", StatusCodes.Status409Conflict);
+                    throw new BusinessRuleException("user_has_audit_logs", "该用户存在操作审计记录（曾执行过业务动作），不能删除。", StatusCodes.Status409Conflict);
                 }
 
                 dbContext.Users.Remove(user);

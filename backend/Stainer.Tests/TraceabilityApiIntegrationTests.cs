@@ -55,7 +55,7 @@ public sealed class TraceabilityApiIntegrationTests
         Assert.False(operatorDetail.TryGetProperty("liquidClassSnapshotJson", out _));
 
         using var engineerClient = factory.CreateClient();
-        await LoginAsync(engineerClient, "engineer", "engineer");
+        await LoginAsync(engineerClient, "admin", "admin");
         var engineeringDetail = await engineerClient.GetFromJsonAsync<HistoryRunDetailResponse>($"/api/history/runs/{seeded.MachineRunId}");
         Assert.NotNull(engineeringDetail);
         Assert.Single(engineeringDetail!.ChannelBatches);
@@ -109,7 +109,7 @@ public sealed class TraceabilityApiIntegrationTests
         AssertOperatorSafe(csv);
 
         using var engineerClient = factory.CreateClient();
-        await LoginAsync(engineerClient, "engineer", "engineer");
+        await LoginAsync(engineerClient, "admin", "admin");
         var engineeringRun = await engineerClient.GetFromJsonAsync<JsonElement>($"/api/runs/{seeded.MachineRunId}");
         AssertOperatorSafe(engineeringRun.GetProperty("alarms").GetRawText());
         var diagnostics = await engineerClient.GetFromJsonAsync<TraceabilityListResponse<EngineeringErrorCodeResponse>>(

@@ -806,7 +806,7 @@ public sealed class DabLifecycleService(
         var position = await SelectPositionAsync(null, cancellationToken);
         var required = DabFormula.CalculateRequired(taskIds.Count);
         var commandId = $"dab-reprepare-{plan.Id}";
-        var systemActor = new AuthenticatedUser(string.Empty, "system", "System", "system", ["engineer"]);
+        var systemActor = new AuthenticatedUser(string.Empty, "system", "System", "system", ["admin"]);
         var batch = new DabBatch
         {
             DabMixPosition = position,

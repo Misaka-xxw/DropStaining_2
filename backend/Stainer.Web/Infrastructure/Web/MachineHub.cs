@@ -8,7 +8,7 @@ public sealed class MachineHub(UserSessionService sessionService) : Hub
 {
     public const string Route = "/hubs/machine";
     public const string AuthorizedGroup = "machine.authorized";
-    public const string EngineerGroup = "machine.engineer";
+    public const string AdminGroup = "machine.admin";
 
     public override async Task OnConnectedAsync()
     {
@@ -29,9 +29,9 @@ public sealed class MachineHub(UserSessionService sessionService) : Hub
         Context.Items["userId"] = user.UserId;
         Context.Items["activeRole"] = user.ActiveRole;
         await Groups.AddToGroupAsync(Context.ConnectionId, AuthorizedGroup, Context.ConnectionAborted);
-        if (user.HasRole("engineer") || user.HasRole("admin"))
+        if (user.HasRole("admin"))
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, EngineerGroup, Context.ConnectionAborted);
+            await Groups.AddToGroupAsync(Context.ConnectionId, AdminGroup, Context.ConnectionAborted);
         }
 
         await base.OnConnectedAsync();

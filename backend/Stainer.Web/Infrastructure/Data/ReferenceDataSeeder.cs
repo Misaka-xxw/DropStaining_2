@@ -19,6 +19,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
     {
         var now = DateTimeOffset.UtcNow;
 
+        await RemoveEngineerRoleAndUserAsync(cancellationToken);
         await SeedRolesAsync(now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await SeedDefaultUsersAsync(now, cancellationToken);
@@ -71,7 +72,6 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         var roles = new[]
         {
             ("operator", "Operator"),
-            ("engineer", "Engineer"),
             ("admin", "Administrator")
         };
 
@@ -84,6 +84,30 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         }
     }
 
+    private async Task RemoveEngineerRoleAndUserAsync(CancellationToken cancellationToken)
+    {
+        // 工程师角色已下线：从数据库移除遗留的 engineer 角色与同名演示账号（及其 user_roles）。
+        // 幂等——不存在时为空操作；每次启动执行，确保旧库里残留的 engineer 也被清掉。
+        var engineerRole = await dbContext.Roles.FirstOrDefaultAsync(x => x.Code == "engineer", cancellationToken);
+        if (engineerRole is not null)
+        {
+            dbContext.UserRoles.RemoveRange(dbContext.UserRoles.Where(x => x.RoleId == engineerRole.Id).ToList());
+            dbContext.Roles.Remove(engineerRole);
+        }
+
+        var engineerUser = await dbContext.Users.FirstOrDefaultAsync(x => x.Username == "engineer", cancellationToken);
+        if (engineerUser is not null)
+        {
+            dbContext.UserRoles.RemoveRange(dbContext.UserRoles.Where(x => x.UserId == engineerUser.Id).ToList());
+            dbContext.Users.Remove(engineerUser);
+        }
+
+        if (engineerRole is not null || engineerUser is not null)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
     private async Task SeedDefaultUsersAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
         var passwordHashService = new PasswordHashService();
@@ -91,7 +115,6 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         var users = new[]
         {
             ("operator", "Operator", new[] { "operator" }),
-            ("engineer", "Engineer", new[] { "engineer" }),
             ("admin", "Administrator", new[] { "admin" })
         };
 

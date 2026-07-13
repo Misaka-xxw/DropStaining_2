@@ -13,7 +13,7 @@ public static partial class WebHostEndpointExtensions
         app.MapGet("/api/operator/snapshot", async (HttpContext context, UserSessionService sessionService, OperatorSnapshotQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.GetAsync(actor, cancellationToken));
             }));
         app.MapGet("/api/current-user", async (HttpContext context, UserSessionService sessionService, CancellationToken cancellationToken) =>

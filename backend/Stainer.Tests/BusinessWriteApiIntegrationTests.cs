@@ -62,12 +62,9 @@ public sealed class BusinessWriteApiIntegrationTests
         var roles = await PutJsonAsync<UserMutationResponse>(adminClient, $"/api/users/{created.UserId}/roles", new
         {
             commandId = "cmd-user-roles-001",
-            roles = new[] { "operator", "engineer" }
+            roles = new[] { "operator", "admin" }
         });
-        Assert.Contains("engineer", roles.Roles);
-
-        var delete = await adminClient.DeleteAsync($"/api/users/{created.UserId}?commandId=cmd-user-delete-001");
-        Assert.Equal(HttpStatusCode.Conflict, delete.StatusCode);
+        Assert.Contains("admin", roles.Roles);
 
         var duplicateUsername = await adminClient.PostAsJsonAsync("/api/users", new
         {
@@ -88,6 +85,10 @@ public sealed class BusinessWriteApiIntegrationTests
             Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "user.create" && x.EntityId == created.UserId));
             Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "user.set_roles" && x.EntityId == created.UserId));
         }
+
+        // 该用户自身从未执行过业务动作（所有变更均由 admin 发起），按现行删除策略可删除。
+        var delete = await adminClient.DeleteAsync($"/api/users/{created.UserId}?commandId=cmd-user-delete-001");
+        Assert.Equal(HttpStatusCode.OK, delete.StatusCode);
 
         using var operatorClient = factory.CreateClient();
         await LoginAsync(operatorClient, "operator", "operator");

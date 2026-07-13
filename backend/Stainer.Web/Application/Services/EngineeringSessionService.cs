@@ -43,7 +43,7 @@ public sealed class EngineeringSessionService(
         AuthenticatedUser actor,
         CancellationToken cancellationToken = default)
     {
-        RequireEngineer(actor);
+        RequireAdmin(actor);
         var reason = RequireValue(request.Reason, "reason");
         var target = RequireValue(request.Target, "target");
 
@@ -62,7 +62,7 @@ public sealed class EngineeringSessionService(
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x!)
             .ToList();
-        if (!roles.Contains("engineer", StringComparer.OrdinalIgnoreCase) && !roles.Contains("admin", StringComparer.OrdinalIgnoreCase))
+        if (!roles.Contains("admin", StringComparer.OrdinalIgnoreCase))
         {
             throw new BusinessRuleException("engineering_session_forbidden", "Engineering session requires engineer or admin role.", StatusCodes.Status403Forbidden);
         }
@@ -114,7 +114,7 @@ public sealed class EngineeringSessionService(
         AuthenticatedUser actor,
         CancellationToken cancellationToken = default)
     {
-        RequireEngineer(actor);
+        RequireAdmin(actor);
         var reason = RequireValue(request.Reason, "reason");
         var target = RequireValue(request.Target, "target");
         return idempotencyService.RunAsync(
@@ -156,7 +156,7 @@ public sealed class EngineeringSessionService(
         bool dangerousOperationConfirmed,
         CancellationToken cancellationToken = default)
     {
-        RequireEngineer(actor);
+        RequireAdmin(actor);
         commandId = RequireValue(commandId, "commandId");
         reason = RequireValue(reason, "reason");
         target = RequireValue(target, "target");
@@ -256,9 +256,9 @@ public sealed class EngineeringSessionService(
             message);
     }
 
-    private static void RequireEngineer(AuthenticatedUser actor)
+    private static void RequireAdmin(AuthenticatedUser actor)
     {
-        if (!actor.HasRole("engineer") && !actor.HasRole("admin"))
+        if (!actor.HasRole("admin"))
         {
             throw new BusinessRuleException("engineering_session_forbidden", "Engineering session requires engineer or admin role.", StatusCodes.Status403Forbidden);
         }

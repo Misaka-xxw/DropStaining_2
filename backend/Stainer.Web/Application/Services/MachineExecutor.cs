@@ -185,7 +185,7 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
             run.Id,
             "MachineRun",
             run.Id,
-            "engineer",
+            "admin",
             new Dictionary<string, object?>
             {
                 ["connected"] = true,

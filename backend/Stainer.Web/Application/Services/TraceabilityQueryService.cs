@@ -187,7 +187,7 @@ public sealed class TraceabilityQueryService(
                 }
 
                 var highSeverity = IsHighSeverity(alarm.Severity);
-                if (highSeverity && !(actor.HasRole("admin") || actor.HasRole("engineer")))
+                if (highSeverity && !actor.HasRole("admin"))
                 {
                     throw new BusinessRuleException("alarm_ack_forbidden", "Current user is not allowed to acknowledge this alarm.", StatusCodes.Status403Forbidden);
                 }

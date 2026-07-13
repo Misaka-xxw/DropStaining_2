@@ -172,7 +172,7 @@ public static partial class WebHostEndpointExtensions
         app.MapPost("/api/channel-batches/experiment-type-selection", async (HttpContext context, SelectChannelExperimentTypeRequest request, UserSessionService sessionService, ChannelBatchWorkflowService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.SelectExperimentTypeAsync(request, actor, cancellationToken));
             }));
         app.MapPost("/api/channel-batches/active", async (HttpContext context, EnsureChannelBatchRequest request, UserSessionService sessionService, ChannelBatchWorkflowService service, CancellationToken cancellationToken) =>

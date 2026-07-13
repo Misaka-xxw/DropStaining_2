@@ -320,7 +320,6 @@ public sealed class MockRuntimeStore
     private static string TranslateRole(string role) => role switch
     {
         "operator" => "操作员",
-        "engineer" => "工程师",
         "admin" => "管理员",
         _ => role
     };

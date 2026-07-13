@@ -394,24 +394,49 @@ public sealed class ThermalControlService(
         }
     }
 
+    // 启动期公开入口：仅保证 16 个温控点 + 冷却单元已写入数据库，
+    // 不推进温度模拟。供 Program.cs 启动初始化调用，使 /api/twin/snapshot 在空库下也能稳定返回温控点。
+    public async Task EnsureSeededAsync(CancellationToken cancellationToken = default)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            await EnsureSeededCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
     private async Task EnsureSeededCoreAsync(CancellationToken cancellationToken)
     {
-        if (!await dbContext.ThermalPointStates.AnyAsync(cancellationToken))
+        // 温控点：按 (DrawerCode, SlotNo) 幂等补齐到 16 行（A-D × 1-4）。
+        // 不用 AnyAsync 守卫——那会让 1~15 行的残缺状态原样保留，导致 snapshot 返回缺数、
+        // 单抽屉逻辑（下方 points.Count != 4）抛 thermal_board_not_found。此处只补缺失项，已有行（含被业务设过的温度）不动。
+        var present = (await dbContext.ThermalPointStates
+                .Select(x => new { x.DrawerCode, x.SlotNo })
+                .ToListAsync(cancellationToken))
+            .Select(x => (x.DrawerCode.ToUpperInvariant(), x.SlotNo))
+            .ToHashSet();
+        var now = DateTimeOffset.UtcNow;
+        foreach (var (drawer, board) in new[] { ("A", 0), ("B", 1), ("C", 2), ("D", 3) })
         {
-            var now = DateTimeOffset.UtcNow;
-            foreach (var (drawer, board) in new[] { ("A", 0), ("B", 1), ("C", 2), ("D", 3) })
+            for (var slot = 1; slot <= 4; slot++)
             {
-                for (var slot = 1; slot <= 4; slot++)
+                if (present.Contains((drawer, slot)))
                 {
-                    dbContext.ThermalPointStates.Add(new ThermalPointState
-                    {
-                        DrawerCode = drawer,
-                        BoardNo = board,
-                        SlotNo = slot,
-                        PointNo = slot - 1,
-                        UpdatedAtUtc = now
-                    });
+                    continue;
                 }
+
+                dbContext.ThermalPointStates.Add(new ThermalPointState
+                {
+                    DrawerCode = drawer,
+                    BoardNo = board,
+                    SlotNo = slot,
+                    PointNo = slot - 1,
+                    UpdatedAtUtc = now
+                });
             }
         }
 

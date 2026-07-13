@@ -19,7 +19,7 @@ public static partial class WebHostEndpointExtensions
         app.MapPost("/api/system/initialize", async (HttpContext context, StartDeviceInitializationRequest request, UserSessionService sessionService, DeviceInitializationService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.InitializeAsync(request, actor, cancellationToken));
             }));
         app.MapPost("/api/system/reset", () => Results.Json(
@@ -44,13 +44,13 @@ public static partial class WebHostEndpointExtensions
         app.MapPost("/api/mock-demo-data/seed", async (HttpContext context, RunCommandRequest request, UserSessionService sessionService, MockDemoDataSeeder seeder, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await seeder.SeedAsync(request.CommandId, actor, cancellationToken));
             }));
         app.MapPost("/api/mock-demo-data/reset", async (HttpContext context, ResetMockDemoDataRequest request, UserSessionService sessionService, MockDemoDataSeeder seeder, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await seeder.ResetAsync(request, actor, cancellationToken));
             }));
         if (legacyRuntimeCompatibilityEnabled)

@@ -13,7 +13,7 @@ public static partial class WebHostEndpointExtensions
         app.MapGet("/api/run/preflight", async (HttpContext context, UserSessionService sessionService, PreflightValidationService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.ValidateAsync(cancellationToken));
             }));
         app.MapPost("/api/runs", async (HttpContext context, CreateMachineRunRequest request, UserSessionService sessionService, MachineRunService service, CancellationToken cancellationToken) =>
@@ -25,7 +25,7 @@ public static partial class WebHostEndpointExtensions
         app.MapGet("/api/runs/current", async (HttpContext context, UserSessionService sessionService, MachineRunQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 var run = await service.GetCurrentAsync(cancellationToken);
                 var nonTechnicalRun = run is null ? null : ToNonTechnicalRun(run);
                 return run is null
@@ -37,7 +37,7 @@ public static partial class WebHostEndpointExtensions
         app.MapGet("/api/runs/{id}", async (HttpContext context, string id, UserSessionService sessionService, MachineRunQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 var run = await service.GetAsync(id, cancellationToken);
                 var nonTechnicalRun = run is null ? null : ToNonTechnicalRun(run);
                 return run is null
@@ -73,13 +73,13 @@ public static partial class WebHostEndpointExtensions
         app.MapPost("/api/runs/{id}/fault", async (HttpContext context, string id, InjectFaultRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await service.InjectFaultAsync(id, request, actor, cancellationToken));
             }));
         app.MapPost("/api/runs/{id}/redo-current-major-step", async (HttpContext context, string id, RedoMajorStepRequest request, UserSessionService sessionService, RunControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await service.RedoCurrentMajorStepAsync(id, request, actor, cancellationToken));
             }));
     }

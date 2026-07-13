@@ -23,7 +23,7 @@ public sealed class StartupDeviceInitializationRunner(
         "system",
         "System",
         "system",
-        ["system", "admin", "engineer"]);
+        ["system", "admin"]);
     private int started;
 
     public void Start(CancellationToken stoppingToken)

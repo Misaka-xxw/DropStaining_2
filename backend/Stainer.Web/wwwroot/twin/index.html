@@ -2186,7 +2186,7 @@
     </div>
     <section class="login-form-card" id="simpleLoginCard" data-control-id="simpleLoginCard">
       <label>账号<input id="loginUsername" data-control-id="loginUsername" value="admin" autocomplete="username"></label>
-      <label>密码<input id="loginPassword" data-control-id="loginPassword" type="password" value="admin" autocomplete="current-password"></label>
+      <label>密码<input id="loginPassword" data-control-id="loginPassword" type="password" value="123456" autocomplete="current-password"></label>
       <div class="login-actions login-actions-two" id="loginRoleActions" data-control-id="loginRoleActions">
         <button type="button" class="primary-login" id="adminLoginBtn" data-control-id="adminLoginBtn" data-login-role="admin">管理员登录</button>
         <button type="button" class="operator-login" id="operatorLoginBtn" data-control-id="operatorLoginBtn" data-login-role="operator">实验员登录</button>
@@ -2362,8 +2362,8 @@ const OP_DEF_BY_KEY = Object.fromEntries(OP_DEFS.map(op => [op.key, op]));
 const CONFIG_STORAGE_KEY = 'pathologyStainer.configProfiles.v1';
 const CONFIG_ASSIGN_STORAGE_KEY = 'pathologyStainer.channelConfigAssignments.v1';
 const SETTINGS_STORAGE_KEY = 'pathologyStainer.runtimeSettings.v1';
-const USER_STORAGE_KEY = 'pathologyStainer.users.v1';
-const CURRENT_USER_STORAGE_KEY = 'pathologyStainer.currentUser.v1';
+const USER_STORAGE_KEY = 'pathologyStainer.users.v2';
+const CURRENT_USER_STORAGE_KEY = 'pathologyStainer.currentUser.v2';
 const DEFAULT_APP_SETTINGS = {
   dataInterface:'WebSocket 预留', hostAddress:'ws://127.0.0.1:9001/digital-twin', heartbeatSec:3,
   reagentBottleCapacityMl:10, reagentTargetTempC:8, workTargetTempC:40, needleGapMm:25,
@@ -2461,11 +2461,15 @@ let precheckPassed = false;
 let precheckRunning = false;
 let precheckState = PRECHECK_STEPS.map(() => 'idle');
 const DEFAULT_USERS = [
-  { id:'admin', username:'admin', name:'管理员', role:'admin', password:'admin', enabled:true },
-  { id:'operator', username:'operator', name:'实验员', role:'operator', password:'operator', enabled:true }
+  { id:'admin', username:'admin', name:'管理员', role:'admin', password:'123456', enabled:true },
+  { id:'operator', username:'operator', name:'实验员', role:'operator', password:'123456', enabled:true }
 ];
 let appUsers = loadAppUsers();
 let CURRENT_USER = loadCurrentUser() || { id:'', username:'', name:'未登录', role:'guest' };
+let backendUsers = [];
+let backendRoles = [];
+let backendUsersLoaded = false;
+let backendUsersLoading = false;
 const byName = new Map();
 const byCategory = new Map();
 let configProfiles = loadConfigProfiles();
@@ -3379,7 +3383,8 @@ function drawPart(item) {
     g.appendChild(el('rect', { id:`${baseId}-body`, x:x-w/2, y:y-h/2, width:w, height:h, rx:item.category === '混匀电机' ? 5 : 3, fill:fill, 'fill-opacity': isSlide ? 0.88 : 1 }));
     if(isSlide) {
       const slideCode = textSvg(x, y - h*0.18, getSlideDisplayCode(item), 'slide-index-text'); slideCode.setAttribute('id', `${baseId}-code`); g.appendChild(slideCode);
-      const slideTemp = textSvg(x, y + h*0.22, `${Math.round(getSlideTemp(item))}℃`, 'slide-temp-text'); slideTemp.setAttribute('id', `${baseId}-temperature`); g.appendChild(slideTemp);
+      const slideTempValue = getSlideTemp(item);
+      const slideTemp = textSvg(x, y + h*0.22, Number.isFinite(slideTempValue) ? `${Math.round(slideTempValue)}℃` : '—', 'slide-temp-text'); slideTemp.setAttribute('id', `${baseId}-temperature`); g.appendChild(slideTemp);
     }
   }
   const label = item.category === '玻片通道' ? '' : shortLabel(item);
@@ -5322,7 +5327,7 @@ window.digitalTwin = {
   engineering: { getDebugForm() { return collectEngineeringForm('debugPane'); }, getConfigForm(sectionId) { return collectEngineeringForm(sectionId || 'configPane'); } },
   auth: {
     getCurrentUser() { return deepClone(CURRENT_USER); },
-    listUsers() { return deepClone(appUsers.map(({password, ...rest}) => rest)); },
+    listUsers() { return deepClone(backendUsersLoaded ? backendUsers : appUsers.map(({password, ...rest}) => rest)); },
     logout: logoutCurrentUser
   },
   getControlIdRegistry
@@ -5402,6 +5407,7 @@ function loginAsRole(role) {
   setRightPanelRatio(RIGHT_PANEL_MIN_RATIO, false);
   resetStatusDetailToDefault();
   showSideTab('status');
+  bridgeBackendSession(username, password, role);
 }
 function logoutCurrentUser() {
   try { localStorage.removeItem(CURRENT_USER_STORAGE_KEY); } catch(e) {}
@@ -5447,56 +5453,179 @@ function initLoginPage() {
   applyUserRoleUi();
   setLoginVisible(!CURRENT_USER.id);
 }
+function makeCommandId(prefix='ui') {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+async function backendApi(path, options={}) {
+  const headers = Object.assign({}, options.headers || {});
+  const hasBody = Object.prototype.hasOwnProperty.call(options, 'body') && options.body !== undefined;
+  if(hasBody && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, Object.assign({ credentials:'same-origin', cache:'no-store' }, options, { headers }));
+  if(!res.ok) {
+    let detail = '';
+    try {
+      const payload = await res.json();
+      detail = payload.detail || payload.message || payload.code || '';
+    } catch(e) {
+      try { detail = await res.text(); } catch(_) {}
+    }
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
+  if(res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+function normalizeBackendUser(user) {
+  const roles = Array.isArray(user?.roles) && user.roles.length ? user.roles : [user?.role || 'operator'];
+  const primaryRole = roles.includes('admin') ? 'admin' : (roles[0] || 'operator');
+  return {
+    id: String(user?.id || user?.username || ''),
+    username: String(user?.username || ''),
+    name: String(user?.displayName || user?.name || user?.username || ''),
+    role: primaryRole,
+    roles: roles.map(role => String(role)).filter(Boolean),
+    enabled: user?.enabled !== false
+  };
+}
+function normalizeBackendRole(role) {
+  return {
+    id: String(role?.id || role?.code || ''),
+    code: String(role?.code || role?.id || ''),
+    name: String(role?.name || role?.code || role?.id || '')
+  };
+}
+function roleDisplayName(role) {
+  if(role === 'admin') return '管理员';
+  if(role === 'operator') return '实验员';
+  const match = backendRoles.find(item => item.code === role || item.id === role);
+  return match?.name || role;
+}
+async function refreshBackendUsers(force=false) {
+  if(backendUsersLoading) return;
+  if(backendUsersLoaded && !force) return;
+  backendUsersLoading = true;
+  try {
+    const [users, roles] = await Promise.all([backendApi('/api/users'), backendApi('/api/roles')]);
+    backendUsers = Array.isArray(users) ? users.map(normalizeBackendUser) : [];
+    backendRoles = Array.isArray(roles) ? roles.map(normalizeBackendRole).filter(role => role.code) : [];
+    backendUsersLoaded = true;
+  } finally {
+    backendUsersLoading = false;
+  }
+}
+function queueBackendUsersRefresh(force=false) {
+  refreshBackendUsers(force).then(() => {
+    const pane = document.getElementById('settingsSubpaneUser');
+    if(pane) openSettingsPage('用户管理', true);
+  }).catch(err => {
+    backendUsersLoaded = false;
+    log(`用户管理接口读取失败：${err.message}`, 'err');
+    const tbody = document.querySelector('#userManagementTable tbody');
+    if(tbody) tbody.innerHTML = '<tr><td colspan="5">用户管理接口读取失败，请确认已使用管理员账号登录。</td></tr>';
+  });
+}
 function renderUserManagementPane(active=false) {
-  const rows = appUsers.map(user => {
-    const roleText = user.role === 'admin' ? '管理员' : '实验员';
-    return `<tr id="userRow-${escapeHtml(user.id)}"><td>${escapeHtml(user.username)}</td><td>${escapeHtml(user.name)}</td><td><span class="user-role-chip ${user.role}">${roleText}</span></td><td><span class="user-status-chip ${user.enabled ? 'enabled' : ''}">${user.enabled ? '启用' : '停用'}</span></td><td><div class="user-row-actions"><button type="button" data-user-toggle="${escapeHtml(user.id)}">${user.enabled ? '停用' : '启用'}</button><button type="button" data-user-reset="${escapeHtml(user.id)}">重置密码</button><button type="button" class="danger" data-user-delete="${escapeHtml(user.id)}" ${user.username === 'admin' ? 'disabled' : ''}>删除</button></div></td></tr>`;
-  }).join('');
+  if(active && CURRENT_USER.role === 'admin' && !backendUsersLoaded && !backendUsersLoading) queueBackendUsersRefresh(false);
+  const users = backendUsersLoaded ? backendUsers : [];
+  const rows = backendUsersLoading && !backendUsersLoaded
+    ? '<tr><td colspan="5">正在读取数据库用户...</td></tr>'
+    : (users.length ? users.map(user => {
+      const roleText = roleDisplayName(user.role);
+      const roleClass = user.role === 'admin' ? 'admin' : 'operator';
+      const canDelete = user.username !== 'admin' && user.username !== CURRENT_USER.username;
+      const canDisable = user.username !== CURRENT_USER.username;
+      return `<tr id="userRow-${escapeHtml(user.id)}"><td>${escapeHtml(user.username)}</td><td>${escapeHtml(user.name)}</td><td><span class="user-role-chip ${roleClass}">${escapeHtml(roleText)}</span></td><td><span class="user-status-chip ${user.enabled ? 'enabled' : ''}">${user.enabled ? '启用' : '停用'}</span></td><td><div class="user-row-actions"><button type="button" data-user-rename="${escapeHtml(user.id)}">改名</button><button type="button" data-user-roles="${escapeHtml(user.id)}">角色</button><button type="button" data-user-toggle="${escapeHtml(user.id)}" ${canDisable ? '' : 'disabled'}>${user.enabled ? '停用' : '启用'}</button><button type="button" data-user-reset="${escapeHtml(user.id)}">重置密码</button><button type="button" class="danger" data-user-delete="${escapeHtml(user.id)}" ${canDelete ? '' : 'disabled'}>删除</button></div></td></tr>`;
+    }).join('') : '<tr><td colspan="5">数据库暂无用户，或尚未完成读取。</td></tr>');
+  const roleOptions = (backendRoles.length ? backendRoles : [{code:'operator', name:'实验员'}, {code:'admin', name:'管理员'}])
+    .map(role => `<option value="${escapeHtml(role.code)}">${escapeHtml(roleDisplayName(role.code))}</option>`).join('');
   return `<div class="settings-subpane ${active ? 'active' : ''}" id="settingsSubpaneUser" data-settings-subpane="user">
     <div class="settings-section" id="settingsSectionUserManagement"><strong>用户管理</strong>
-      <div class="login-permission-note">只有管理员可以看到和操作本页面；实验员登录时右侧“调试” Tab 与顶部“调试”模式按钮会自动隐藏。</div>
+      <div class="login-permission-note">本页已接入后端真实用户管理 API，只有管理员会话可以读取和修改数据库用户。</div>
       <div class="user-management-grid">
         <div class="user-table-wrap" id="userManagementTableWrap" data-control-id="userManagementTableWrap"><table class="user-table" id="userManagementTable" data-control-id="userManagementTable"><thead><tr><th>账号</th><th>显示名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>
-        <section class="engineering-card user-form-card" id="userCreateCard" data-control-id="userCreateCard"><strong>新增 / 修改用户</strong><div class="engineering-form-grid"><label>账号<input id="userNewUsernameInput" data-control-id="userNewUsernameInput" placeholder="例如 tech01"></label><label>显示名<input id="userNewNameInput" data-control-id="userNewNameInput" placeholder="姓名或岗位"></label><label>角色<select id="userNewRoleSelect" data-control-id="userNewRoleSelect"><option value="operator">实验员</option><option value="admin">管理员</option></select></label><label>初始密码<input id="userNewPasswordInput" data-control-id="userNewPasswordInput" value="123456"></label></div><div class="engineering-actions"><button type="button" id="userAddBtn" data-control-id="userAddBtn" class="ok-lite">新增用户</button><button type="button" id="userSaveListBtn" data-control-id="userSaveListBtn">保存用户表</button></div><div class="engineering-note">当前原型使用 localStorage 模拟账号表；后续可将本页按钮绑定到后端用户、角色、审计接口。</div></section>
+        <section class="engineering-card user-form-card" id="userCreateCard" data-control-id="userCreateCard"><strong>新增用户</strong><div class="engineering-form-grid"><label>账号<input id="userNewUsernameInput" data-control-id="userNewUsernameInput" placeholder="例如 tech01"></label><label>显示名<input id="userNewNameInput" data-control-id="userNewNameInput" placeholder="姓名或岗位"></label><label>角色<select id="userNewRoleSelect" data-control-id="userNewRoleSelect">${roleOptions}</select></label><label>初始密码<input id="userNewPasswordInput" data-control-id="userNewPasswordInput" value="123456"></label></div><div class="engineering-actions"><button type="button" id="userAddBtn" data-control-id="userAddBtn" class="ok-lite">新增用户</button><button type="button" id="userSaveListBtn" data-control-id="userSaveListBtn">刷新用户表</button></div><div class="engineering-note">新增、改名、角色、启停、重置密码和删除都会直接调用后端 API，并从数据库重新读取列表。</div></section>
       </div>
     </div>
   </div>`;
 }
+function findBackendUser(id) {
+  return backendUsers.find(user => user.id === id);
+}
+async function reloadUserManagementPane(message, level='ok') {
+  backendUsersLoaded = false;
+  await refreshBackendUsers(true);
+  openSettingsPage('用户管理', true);
+  if(message) log(message, level);
+}
 function bindUserManagementHandlers() {
   const addBtn = document.getElementById('userAddBtn');
-  if(addBtn) addBtn.onclick = () => {
+  if(addBtn) addBtn.onclick = async () => {
     const username = (document.getElementById('userNewUsernameInput')?.value || '').trim();
-    const name = (document.getElementById('userNewNameInput')?.value || '').trim() || username;
-    const role = document.getElementById('userNewRoleSelect')?.value === 'admin' ? 'admin' : 'operator';
+    const displayName = (document.getElementById('userNewNameInput')?.value || '').trim() || username;
+    const role = document.getElementById('userNewRoleSelect')?.value || 'operator';
     const password = document.getElementById('userNewPasswordInput')?.value || '123456';
     if(!username) { log('新增用户失败：账号不能为空', 'err'); return; }
-    const existing = appUsers.find(u => u.username === username);
-    if(existing) { existing.name = name; existing.role = role; existing.password = password; existing.enabled = true; log(`用户已更新：${name}`, 'ok'); }
-    else { appUsers.push(normalizeUser({ id:`user-${Date.now()}`, username, name, role, password, enabled:true })); log(`用户已新增：${name}`, 'ok'); }
-    saveAppUsers(); openSettingsPage('用户管理', true);
+    try {
+      await backendApi('/api/users', { method:'POST', body: JSON.stringify({ commandId:makeCommandId('user-create'), username, displayName, password, roles:[role] }) });
+      await reloadUserManagementPane(`用户已新增：${displayName}`, 'ok');
+    } catch(err) { const msg = `新增用户失败：${err.message}`; log(msg, 'err'); alert(msg); }
   };
   const saveBtn = document.getElementById('userSaveListBtn');
-  if(saveBtn) saveBtn.onclick = () => { saveAppUsers(); log('用户表已保存到本地缓存', 'ok'); };
-  document.querySelectorAll('[data-user-toggle]').forEach(btn => btn.onclick = () => {
-    const user = appUsers.find(u => u.id === btn.getAttribute('data-user-toggle'));
+  if(saveBtn) saveBtn.onclick = async () => {
+    try { await reloadUserManagementPane('用户表已从数据库刷新', 'ok'); }
+    catch(err) { log(`刷新用户表失败：${err.message}`, 'err'); }
+  };
+  document.querySelectorAll('[data-user-rename]').forEach(btn => btn.onclick = async () => {
+    const user = findBackendUser(btn.getAttribute('data-user-rename'));
     if(!user) return;
-    if(user.id === CURRENT_USER.id && user.enabled) { log('不能停用当前登录用户', 'err'); return; }
-    user.enabled = !user.enabled; saveAppUsers(); openSettingsPage('用户管理', true); log(`${user.name}已${user.enabled ? '启用' : '停用'}`, user.enabled ? 'ok' : 'warn');
+    const displayName = prompt('请输入新的显示名', user.name) || '';
+    if(!displayName.trim()) return;
+    try {
+      await backendApi(`/api/users/${encodeURIComponent(user.id)}/display-name`, { method:'PUT', body: JSON.stringify({ commandId:makeCommandId('user-rename'), displayName:displayName.trim() }) });
+      await reloadUserManagementPane(`用户显示名已更新：${displayName.trim()}`, 'ok');
+    } catch(err) { log(`更新显示名失败：${err.message}`, 'err'); }
   });
-  document.querySelectorAll('[data-user-reset]').forEach(btn => btn.onclick = () => {
-    const user = appUsers.find(u => u.id === btn.getAttribute('data-user-reset'));
+  document.querySelectorAll('[data-user-roles]').forEach(btn => btn.onclick = async () => {
+    const user = findBackendUser(btn.getAttribute('data-user-roles'));
     if(!user) return;
-    user.password = user.role === 'admin' ? 'admin' : 'operator'; saveAppUsers(); openSettingsPage('用户管理', true); log(`${user.name}密码已重置为默认值`, 'warn');
+    const rolesText = prompt('请输入角色代码，多个角色用逗号分隔', user.roles.join(',')) || '';
+    const roles = rolesText.split(',').map(role => role.trim()).filter(Boolean);
+    if(!roles.length) return;
+    try {
+      await backendApi(`/api/users/${encodeURIComponent(user.id)}/roles`, { method:'PUT', body: JSON.stringify({ commandId:makeCommandId('user-roles'), roles }) });
+      await reloadUserManagementPane(`用户角色已更新：${user.username}`, 'ok');
+    } catch(err) { log(`更新角色失败：${err.message}`, 'err'); }
   });
-  document.querySelectorAll('[data-user-delete]').forEach(btn => btn.onclick = () => {
-    const id = btn.getAttribute('data-user-delete');
-    const user = appUsers.find(u => u.id === id);
+  document.querySelectorAll('[data-user-toggle]').forEach(btn => btn.onclick = async () => {
+    const user = findBackendUser(btn.getAttribute('data-user-toggle'));
+    if(!user) return;
+    if(user.username === CURRENT_USER.username && user.enabled) { log('不能停用当前登录用户', 'err'); return; }
+    try {
+      await backendApi(`/api/users/${encodeURIComponent(user.id)}/enabled`, { method:'PUT', body: JSON.stringify({ commandId:makeCommandId('user-enabled'), enabled:!user.enabled }) });
+      await reloadUserManagementPane(`${user.name}已${user.enabled ? '停用' : '启用'}`, user.enabled ? 'warn' : 'ok');
+    } catch(err) { log(`更新用户状态失败：${err.message}`, 'err'); }
+  });
+  document.querySelectorAll('[data-user-reset]').forEach(btn => btn.onclick = async () => {
+    const user = findBackendUser(btn.getAttribute('data-user-reset'));
+    if(!user) return;
+    const newPassword = prompt('请输入新密码', '123456') || '';
+    if(!newPassword) return;
+    try {
+      await backendApi(`/api/users/${encodeURIComponent(user.id)}/password`, { method:'PUT', body: JSON.stringify({ commandId:makeCommandId('user-password'), newPassword }) });
+      await reloadUserManagementPane(`${user.name}密码已重置`, 'warn');
+    } catch(err) { log(`重置密码失败：${err.message}`, 'err'); }
+  });
+  document.querySelectorAll('[data-user-delete]').forEach(btn => btn.onclick = async () => {
+    const user = findBackendUser(btn.getAttribute('data-user-delete'));
     if(!user || user.username === 'admin') return;
-    if(user.id === CURRENT_USER.id) { log('不能删除当前登录用户', 'err'); return; }
-    appUsers = appUsers.filter(u => u.id !== id); saveAppUsers(); openSettingsPage('用户管理', true); log(`用户已删除：${user.name}`, 'warn');
+    if(user.username === CURRENT_USER.username) { log('不能删除当前登录用户', 'err'); return; }
+    if(!confirm(`确认删除用户 ${user.username}？`)) return;
+    try {
+      await backendApi(`/api/users/${encodeURIComponent(user.id)}?commandId=${encodeURIComponent(makeCommandId('user-delete'))}`, { method:'DELETE' });
+      await reloadUserManagementPane(`用户已删除：${user.name}`, 'warn');
+    } catch(err) { const msg = `删除用户失败：${err.message}`; log(msg, 'err'); alert(msg); }
   });
 }
-
 function renderUserMenu() {
   const menu = document.getElementById('userMenu');
   const userBtn = document.getElementById('userBtn');
@@ -5547,15 +5676,23 @@ function openSettingsPage(section='系统设置', userManage=false) {
         <div class="settings-section" id="settingsSectionUiPlanning"><strong>界面与规划</strong><div class="settings-edit-grid"><label>打开页面后自动检测<select id="settingsAutoPrecheckInput" data-control-id="settingsAutoPrecheckInput"><option value="false" ${!appSettings.autoRunPrecheck?'selected':''}>否</option><option value="true" ${appSettings.autoRunPrecheck?'selected':''}>是</option></select></label><label>右侧栏快捷操作<span class="settings-readonly-field">底部工具行按钮可在 30% / 70% 之间快速切换</span></label></div><div class="settings-help">玻片步骤点由页面物理布局决定，配置文件可保留完整步骤，界面不再提供显示上限限制项。</div></div>
       </div>
       ${userPane}
-      <div class="settings-actions"><button type="button" id="settingsSaveBtn" data-control-id="settingsSaveBtn">保存设置</button><button type="button" id="settingsResetBtn" data-control-id="settingsResetBtn">恢复默认</button></div>
+      <div class="settings-actions" id="settingsActions"><button type="button" id="settingsSaveBtn" data-control-id="settingsSaveBtn">保存设置</button><button type="button" id="settingsResetBtn" data-control-id="settingsResetBtn">恢复默认</button></div>
     </div>`;
+    const toggleSettingsActions = (key) => {
+      const actions = document.getElementById('settingsActions');
+      if(actions) actions.style.display = (key === 'user') ? 'none' : '';
+    };
     document.querySelectorAll('[data-settings-tab]').forEach(btn => {
       btn.addEventListener('click', () => {
         const key = btn.getAttribute('data-settings-tab');
         document.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b === btn));
         document.querySelectorAll('[data-settings-subpane]').forEach(pane => pane.classList.toggle('active', pane.getAttribute('data-settings-subpane') === key));
+        toggleSettingsActions(key);
+        if(key === 'user' && CURRENT_USER.role === 'admin' && !backendUsersLoaded && !backendUsersLoading) queueBackendUsersRefresh(false);
       });
     });
+    const initialSettingsTab = document.querySelector('[data-settings-tab].active');
+    toggleSettingsActions(initialSettingsTab ? initialSettingsTab.getAttribute('data-settings-tab') : 'runtime');
     bindClick('settingsSaveBtn', saveSettingsFromPane);
     bindClick('settingsResetBtn', resetAppSettings);
     if(canShowUsers) bindUserManagementHandlers();
@@ -5813,10 +5950,31 @@ document.querySelectorAll('[data-side-tab]').forEach(btn => {
 const csvInput = document.getElementById('csvInput');
 if(csvInput) csvInput.addEventListener('change', e => { if(e.target.files && e.target.files[0]) loadCsvFile(e.target.files[0]); });
 
+async function bridgeBackendSession(username, password, role) {
+  try {
+    const response = await fetch('/api/login', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'same-origin',
+      body:JSON.stringify({ username, password, role })
+    });
+    if(!response.ok) {
+      console.warn('后端会话桥接失败', response.status);
+      log('后端会话未建立：数据库快照需要后端账号密码一致', 'warn');
+      return false;
+    }
+    await loadDatabaseSnapshot();
+    return true;
+  } catch(err) {
+    console.warn('后端会话桥接异常', err);
+    log('后端会话桥接失败：' + err.message, 'warn');
+    return false;
+  }
+}
 
 async function loadDatabaseSnapshot() {
   try {
-    const response = await fetch('/api/twin/snapshot', { cache:'no-store' });
+    const response = await fetch('/api/twin/snapshot', { cache:'no-store', credentials:'same-origin' });
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
     const snapshot = await response.json();
     window.digitalTwinDbSnapshot = snapshot;
@@ -5913,7 +6071,7 @@ window.digitalTwinLoadDatabaseSnapshot = loadDatabaseSnapshot;
 setInterval(() => { updateSideHeaderStatus(); updateKpis(); updateHeaderMetrics(); }, 1000);
 
 resetDemo();
-loadDatabaseSnapshot();
+if(CURRENT_USER.id) loadDatabaseSnapshot();
 [1,2,3,4].forEach(id => { if(channelConfigAssignments[id] && !getProfileById(channelConfigAssignments[id])) channelConfigAssignments[id] = null; assignConfigToChannel(id, channelConfigAssignments[id], false); });
   if(window.digitalTwin?.engineering) {
     window.digitalTwin.engineering.getConfigSectionForm = function(sectionKey) {

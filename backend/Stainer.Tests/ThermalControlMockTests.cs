@@ -229,7 +229,9 @@ public sealed class ThermalControlMockTests
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
         Assert.False(await dbContext.CommandReceipts.AnyAsync(x => x.CommandId == "cmd-real-thermal-rejected"));
-        Assert.False(await dbContext.ThermalPointStates.AnyAsync());
+        // 启动期 ThermalControlService.EnsureSeededAsync 会幂等补齐 16 个温控点基线（供 /api/twin/snapshot 稳定返回），
+        // 故 Real 模式断言改为：基线 16 行仍在、未被本次 mocked 变更新增；命令未落账（上一行）即证明该变更被拒绝。
+        Assert.Equal(16, await dbContext.ThermalPointStates.CountAsync());
     }
 
     private static async Task<ThermalStateResponse> WaitForStateAsync(HttpClient client, Func<ThermalStateResponse, bool> predicate)

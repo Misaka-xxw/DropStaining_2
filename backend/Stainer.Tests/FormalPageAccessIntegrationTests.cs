@@ -29,9 +29,10 @@ public sealed class FormalPageAccessIntegrationTests
             Assert.Equal(expectedMapped ? HttpStatusCode.Unauthorized : HttpStatusCode.NotFound, response.StatusCode);
         }
 
+        // /control-console 现在在所有环境都直接返回数字孪生页（不再受 legacy 运行时兼容开关控制，也无旧版 iframe 外壳）。
         var controlConsole = await client.GetStringAsync("/control-console");
-        Assert.Equal(expectedMapped, controlConsole.Contains("controlConsoleFrame", StringComparison.Ordinal));
-        Assert.Equal(expectedMapped, controlConsole.Contains("data-href=\"/control-console\"", StringComparison.Ordinal));
+        Assert.Contains("api/twin/snapshot", controlConsole, StringComparison.Ordinal);
+        Assert.DoesNotContain("controlConsoleFrame", controlConsole, StringComparison.Ordinal);
 
         var login = await client.PostAsJsonAsync("/api/login", new { username = "operator", password = "123456", role = "operator" });
         var loginBody = await login.Content.ReadFromJsonAsync<Stainer.Web.Application.ReadModels.LoginResponse>();

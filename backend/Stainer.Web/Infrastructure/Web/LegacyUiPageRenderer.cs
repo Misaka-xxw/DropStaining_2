@@ -125,7 +125,7 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
                 <a href="/alerts" class="nav-item" data-href="/alerts"><i>06</i><span>告警</span><small>处理</small></a>
                 <a href="/history" class="nav-item" data-href="/history"><i>07</i><span>历史</span><small>导出</small></a>
                 <a href="/configure" class="nav-item admin-only" data-href="/configure"><i>C</i><span>配置</span><small>协议</small></a>
-                <a href="/engineer" class="nav-item engineer-only" data-href="/engineer"><i>E</i><span>工程</span><small>调试</small></a>
+                <a href="/engineer" class="nav-item admin-only" data-href="/engineer"><i>E</i><span>工程</span><small>调试</small></a>
                 <a href="/admin" class="nav-item admin-only" data-href="/admin"><i>A</i><span>管理</span><small>用户</small></a>
                 {{mockNavigation}}
               </nav>
@@ -168,57 +168,41 @@ public sealed class LegacyUiPageRenderer(IHostEnvironment environment)
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-          <title>登录 - 全自动冰冻切片染色机</title>
-          <link rel="stylesheet" href="/static/css/app.css?v=20260626-r3">
+          <title>&#30331;&#24405; - &#20912;&#20813;&#26579;&#33394;&#26426;</title>
+          <link rel="stylesheet" href="/static/css/app.css">
         </head>
-        <body class="login-screen">
-          <div class="login-grid">
-            <section class="hero-panel glass-panel">
-              <div class="machine-badge">HE / IHC · V2.0 基线 · Mock</div>
-              <h1>全自动冰冻切片染色机</h1>
-              <p>13.3 寸触屏优先设计，覆盖登录初始化、样本确认、试剂校验、运行监控、告警处理和受控工程调试。</p>
-              <div class="hero-device">
-                <div class="device-top"><span></span><span></span><span></span><span></span></div>
-                <div class="device-screen"><div class="wave"></div><b>4 通道 × 4 玻片</b><small>通道批次 / 16 Slot 温控 / Mock Adapter</small></div>
-                <div class="device-slots"><i></i><i></i><i></i><i></i></div>
+        <body class="login-screen single-login-screen">
+          <section class="login-card modern-card single-login-card">
+            <div class="login-title-block">
+              <h1>&#20912;&#20813;&#26579;&#33394;&#26426;&#32593;&#39029;&#30331;&#24405;</h1>
+              <p>&#36755;&#20837;&#36134;&#21495;&#23494;&#30721;&#21518;&#36873;&#25321;&#30331;&#24405;&#36523;&#20221;&#12290;&#31649;&#29702;&#21592;&#21487;&#36827;&#20837;&#35843;&#35797;&#21644;&#29992;&#25143;&#31649;&#29702;&#65292;&#23454;&#39564;&#21592;&#36827;&#20837;&#26085;&#24120;&#25805;&#20316;&#39029;&#38754;&#12290;</p>
+            </div>
+            <div class="single-login-form">
+              <label class="field-label">&#36134;&#21495;
+                <input id="username" class="input input-xl" value="admin" autocomplete="username" placeholder="&#36134;&#21495;">
+              </label>
+              <label class="field-label">&#23494;&#30721;
+                <input id="password" class="input input-xl" type="password" value="123456" autocomplete="current-password" placeholder="&#23494;&#30721;">
+              </label>
+              <div class="single-login-actions">
+                <button class="btn btn-primary btn-xl" type="button" onclick="login('admin')">&#31649;&#29702;&#21592;&#30331;&#24405;</button>
+                <button class="btn btn-xl btn-operator" type="button" onclick="login('operator')">&#23454;&#39564;&#21592;&#30331;&#24405;</button>
               </div>
-              <div class="hero-stats">
-                <div><span>最大负载</span><b>16片</b></div>
-                <div><span>试剂位</span><b>5×8</b></div>
-                <div><span>温控映射</span><b>4×4</b></div>
-              </div>
-            </section>
-            <section class="login-card modern-card">
-              <div class="login-logo-row">
-                <div class="brand-orb big">冰</div>
-                <div><h2>用户登录</h2><p>选择角色后进入对应工作台</p></div>
-              </div>
-              <div class="role-picker two-roles" role="radiogroup">
-                <label class="role-tile active"><input type="radio" name="role" value="operator" checked><i>OP</i><b>操作员</b><span>实验操作</span></label>
-                <label class="role-tile"><input type="radio" name="role" value="admin"><i>AD</i><b>管理员</b><span>用户与配置</span></label>
-              </div>
-              <label class="field-label">用户名<input id="username" class="input input-xl" value="operator" placeholder="用户名"></label>
-              <label class="field-label">密码<input id="password" class="input input-xl" type="password" value="123456" placeholder="密码"></label>
-              <button class="btn btn-primary btn-xl full" onclick="login()">登录并初始化连接</button>
-              <div class="quick-accounts">
-                <button onclick="fillAccount('operator')">操作员演示</button>
-                <button onclick="fillAccount('admin')">管理员演示</button>
-              </div>
-              <p class="hint center">演示账号：operator / admin，密码均为 123456</p>
-            </section>
-          </div>
+            </div>
+          </section>
           <div id="toast" class="toast hidden"></div>
-          <script src="/static/js/api.js?v=20260626-r3"></script>
+          <script src="/static/js/api.js"></script>
           <script>
-            function selectedRole(){ return document.querySelector('input[name="role"]:checked').value; }
-            function fillAccount(role){ username.value=role; password.value='123456'; document.querySelector(`input[value="${role}"]`).checked=true; syncRoles(); }
-            function syncRoles(){ document.querySelectorAll('.role-tile').forEach(x=>{ const input=x.querySelector('input'); x.classList.toggle('active', !!input && input.checked); }); }
-            document.querySelectorAll('input[name="role"]').forEach(x=>x.addEventListener('change', syncRoles));
-            async function login(){
-              const payload = {username: username.value, password: password.value, role: selectedRole()};
-              const res = await api('/api/login', {method:'POST', body: JSON.stringify(payload)});
-              if(res.ok){ location.href=res.redirect; }
+            async function login(role){
+              const payload = { username: username.value, password: password.value, role };
+              const res = await api('/api/login', { method:'POST', body: JSON.stringify(payload) });
+              if(res.ok){ location.href = res.redirect; }
             }
+            [username, password].forEach(input => {
+              input.addEventListener('keydown', evt => {
+                if(evt.key === 'Enter') login('operator');
+              });
+            });
           </script>
         </body>
         </html>

@@ -14,8 +14,8 @@ public sealed class MachineEventSignalRDispatcher(
         {
             await foreach (var message in publisher.ReadAllAsync(stoppingToken))
             {
-                var clients = string.Equals(message.RequiredRole, "engineer", StringComparison.OrdinalIgnoreCase)
-                    ? hubContext.Clients.Group(MachineHub.EngineerGroup)
+                var clients = string.Equals(message.RequiredRole, "admin", StringComparison.OrdinalIgnoreCase)
+                    ? hubContext.Clients.Group(MachineHub.AdminGroup)
                     : hubContext.Clients.Group(MachineHub.AuthorizedGroup);
                 await clients.SendAsync("machineEvent", message, stoppingToken);
             }

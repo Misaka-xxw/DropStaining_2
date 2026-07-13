@@ -28,7 +28,7 @@ public sealed class WebHostIntegrationTests
         Assert.False(info!.PythonRuntimeRequired);
         Assert.Equal("ASP.NET Core", info.UiHost);
 
-        foreach (var route in new[] { "/", "/control-console", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/alarms", "/history", "/configure", "/engineer", "/admin", "/management", "/mock-timeline" })
+        foreach (var route in new[] { "/", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/alarms", "/history", "/configure", "/engineer", "/admin", "/management", "/mock-timeline" })
         {
             var html = await client.GetStringAsync(route);
             Assert.Contains("app.css", html);
@@ -37,10 +37,10 @@ public sealed class WebHostIntegrationTests
         }
 
         var login = await client.GetStringAsync("/");
-        Assert.Contains("role-picker two-roles", login);
-        Assert.Contains("value=\"operator\"", login);
-        Assert.Contains("value=\"admin\"", login);
-        Assert.DoesNotContain("value=\"engineer\"", login);
+        Assert.Contains("single-login-screen", login);
+        Assert.Contains("login('operator')", login);
+        Assert.Contains("login('admin')", login);
+        Assert.DoesNotContain("engineer", login);
         Assert.DoesNotContain("ENG", login);
 
         var dashboard = await client.GetStringAsync("/dashboard");
@@ -61,11 +61,10 @@ public sealed class WebHostIntegrationTests
         Assert.DoesNotContain("kpiInit", dashboard);
         Assert.DoesNotContain("dashboardLogs", dashboard);
 
+        // /control-console 现在直接返回数字孪生页（移植自 stainer_twin_fastapi），不再是旧版 app-shell + iframe 外壳。
         var controlConsole = await client.GetStringAsync("/control-console");
-        Assert.Contains("app-shell", controlConsole);
-        Assert.Contains("controlConsoleFrame", controlConsole);
-        Assert.Contains("/static/control-console/index.html?v=20260702-r19-patch1", controlConsole);
-        Assert.DoesNotContain("top-panel", controlConsole);
+        Assert.Contains("api/twin/snapshot", controlConsole, StringComparison.Ordinal);
+        Assert.DoesNotContain("controlConsoleFrame", controlConsole, StringComparison.Ordinal);
 
         var mockTimeline = await client.GetStringAsync("/mock-timeline");
         Assert.Contains("mockGanttBoard", mockTimeline);
@@ -80,17 +79,6 @@ public sealed class WebHostIntegrationTests
         var apiScript = await js.Content.ReadAsStringAsync();
         Assert.Contains("initializeUserMenu", apiScript);
         Assert.Contains("logoutButton.addEventListener('click'", apiScript);
-
-        var consoleCss = await client.GetAsync("/static/control-console/enhancement.css");
-        Assert.Equal(HttpStatusCode.OK, consoleCss.StatusCode);
-
-        var consoleJs = await client.GetAsync("/static/control-console/enhancement.js");
-        Assert.Equal(HttpStatusCode.OK, consoleJs.StatusCode);
-
-        var consolePage = await client.GetStringAsync("/static/control-console/index.html");
-        Assert.Contains("twinSvg", consolePage);
-        Assert.Contains("embedded-host", consolePage);
-        Assert.Contains("/static/control-console/enhancement.js", consolePage);
 
         var fallback = await client.GetStringAsync("/kiosk/unknown");
         Assert.Contains("drawerBoard", fallback);
@@ -302,10 +290,10 @@ public sealed class WebHostIntegrationTests
         Assert.DoesNotContain("mockGanttBoard", html);
         Assert.DoesNotContain("mock-timeline.js", html);
 
-        var legacyConsole = await client.GetStringAsync("/control-console");
-        Assert.Contains("drawerBoard", legacyConsole);
-        Assert.DoesNotContain("controlConsoleFrame", legacyConsole);
-        Assert.DoesNotContain("data-href=\"/control-console\"", legacyConsole);
+        // /control-console 现在在所有环境都返回数字孪生页（不再是 dev-only，也不会回退成 dashboard）。
+        var twinConsole = await client.GetStringAsync("/control-console");
+        Assert.Contains("api/twin/snapshot", twinConsole, StringComparison.Ordinal);
+        Assert.DoesNotContain("controlConsoleFrame", twinConsole, StringComparison.Ordinal);
 
         var login = await client.PostAsJsonAsync("/api/login", new { username = "operator", password = "123456", role = "operator" });
         Assert.Equal("/dashboard", (await login.Content.ReadFromJsonAsync<LoginResponse>())?.Redirect);
@@ -713,7 +701,6 @@ public sealed class WebHostIntegrationTests
 
         var roles = await client.GetFromJsonAsync<List<RoleListItemResponse>>("/api/roles");
         Assert.Contains(roles!, x => x.Code == "operator");
-        Assert.Contains(roles!, x => x.Code == "engineer");
         Assert.Contains(roles!, x => x.Code == "admin");
     }
 

@@ -76,3 +76,86 @@ button,input,select{font:inherit}button{touch-action:manipulation}.hidden{displa
 .pump-state-strip span,.device-diagnostic-grid span{font-weight:900;color:#0c63bd}
 .device-diagnostic-grid{grid-template-columns:repeat(3,1fr);margin-bottom:12px}
 @media(max-width:1000px){.slot-temp-map,.pump-state-strip,.device-diagnostic-grid{grid-template-columns:1fr}}
+
+/* Single login screen used before entering the control console. */
+body.single-login-screen{
+  min-height:100vh;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 26% 18%, rgba(37,99,235,.34), transparent 32%),
+    radial-gradient(circle at 80% 18%, rgba(14,165,233,.25), transparent 30%),
+    linear-gradient(115deg,#10245c 0%,#243b8f 48%,#0f7b77 100%);
+  display:grid;
+  place-items:center;
+  padding:28px;
+  color:#fff;
+}
+.single-login-card{
+  width:min(460px, 94vw);
+  margin:0;
+  padding:28px 24px 56px;
+  border-radius:24px;
+  background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.26);
+  box-shadow:0 26px 70px rgba(7,17,31,.32);
+  backdrop-filter:blur(18px);
+  color:#fff;
+}
+.login-title-block{
+  text-align:center;
+  display:grid;
+  gap:8px;
+  margin-bottom:16px;
+}
+.login-title-block h1{
+  margin:0;
+  font-size:30px;
+  line-height:1.2;
+  letter-spacing:0;
+}
+.login-title-block p{
+  margin:0 auto;
+  max-width:380px;
+  color:rgba(235,245,255,.9);
+  font-size:13px;
+  line-height:1.55;
+}
+.single-login-form{
+  background:rgba(255,255,255,.94);
+  color:#172033;
+  border-radius:18px;
+  padding:20px;
+  box-shadow:0 16px 36px rgba(15,23,42,.18);
+}
+.single-login-form .field-label{
+  margin:0 0 14px;
+  color:#334155;
+  gap:6px;
+  font-size:13px;
+}
+.single-login-form .input-xl{
+  height:38px;
+  border-radius:11px;
+  font-size:14px;
+  padding:0 12px;
+}
+.single-login-actions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  margin-top:4px;
+}
+.single-login-actions .btn{
+  min-height:40px;
+  border-radius:11px;
+  font-size:14px;
+}
+.btn-operator{
+  background:linear-gradient(135deg,#10b981,#059669);
+  color:#fff;
+  box-shadow:0 14px 30px rgba(16,185,129,.22);
+}
+@media(max-width:520px){
+  .single-login-card{padding:24px 18px 36px}
+  .single-login-actions{grid-template-columns:1fr}
+}

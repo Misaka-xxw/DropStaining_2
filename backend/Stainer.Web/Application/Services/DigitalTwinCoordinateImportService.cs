@@ -99,7 +99,7 @@ public sealed class DigitalTwinCoordinateImportService(
             actor,
             async () =>
             {
-                RequireEngineer(actor);
+                RequireAdmin(actor);
                 var reason = RequireValue(request.Reason, "reason");
                 var profileCode = NormalizeOptional(request.ProfileCode) ?? ReferenceDataSeeder.DefaultCoordinateProfileCode;
                 var versionLabel = NormalizeOptional(request.VersionLabel) ?? DefaultVersionLabel;
@@ -779,11 +779,11 @@ public sealed class DigitalTwinCoordinateImportService(
         });
     }
 
-    private static void RequireEngineer(AuthenticatedUser actor)
+    private static void RequireAdmin(AuthenticatedUser actor)
     {
-        if (!actor.HasRole("engineer") && !actor.HasRole("admin"))
+        if (!actor.HasRole("admin"))
         {
-            throw new BusinessRuleException("coordinate_permission_denied", "Coordinate changes require engineer or admin role.", StatusCodes.Status403Forbidden);
+            throw new BusinessRuleException("coordinate_permission_denied", "Coordinate changes require admin role.", StatusCodes.Status403Forbidden);
         }
     }
 

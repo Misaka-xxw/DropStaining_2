@@ -4,6 +4,13 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 规避 .NET SDK 9.0.300 StaticWebAssets 管道在 Windows 上的盘符大小写 bug：
+         DefineStaticWebAssets 任务对每个 wwwroot 文件以 D:\ 和 d:\ 两种大小写各产出一份资产，
+         致使合并/预压缩检测（StaticWebAssets.targets:615 / DiscoverPrecompressedAssets）冲突崩溃。
+         本项目运行期用 UseStaticFiles() 服务 wwwroot、不依赖 MapStaticAssets 的指纹/完整性清单，
+         故关闭整个 build/publish 静态资产管道，wwwroot 仍照常复制到输出目录并由 UseStaticFiles 提供。
+         升级到修复版 SDK 后可移除此项。 -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
   </PropertyGroup>
 
   <!--
@@ -39,6 +46,13 @@
   <ItemGroup>
     <EmbeddedResource Include="Infrastructure\Twin\Assets\frontend_registry.json" />
     <EmbeddedResource Include="Infrastructure\Twin\Assets\frontend_db_mapping.csv" />
+  </ItemGroup>
+
+  <!-- StaticWebAssetsEnabled=false 关闭后，SDK 不再通过静态资产管道把 wwwroot 复制到输出目录。
+       wwwroot 文件已被 SDK 默认 glob 包含为 Content，这里用 Update 把它们的 CopyToOutputDirectory
+       置为 PreserveNewest，以便运行期 UseStaticFiles() 能从输出目录的 wwwroot 提供前端文件。 -->
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

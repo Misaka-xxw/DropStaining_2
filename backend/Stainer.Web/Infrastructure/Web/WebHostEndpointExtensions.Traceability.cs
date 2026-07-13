@@ -13,13 +13,13 @@ public static partial class WebHostEndpointExtensions
         app.MapGet("/api/history/runs", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.ListRunsAsync(context.Request.Query, cancellationToken));
             }));
         app.MapGet("/api/history/runs/{machineRunId}", async (HttpContext context, string machineRunId, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 var detail = await service.GetRunDetailAsync(machineRunId, cancellationToken);
                 if (detail is null) return Results.NotFound();
                 if (!string.Equals(actor.ActiveRole, "operator", StringComparison.OrdinalIgnoreCase))
@@ -77,50 +77,50 @@ public static partial class WebHostEndpointExtensions
         app.MapGet("/api/history/reagent-consumptions", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.ListReagentConsumptionsAsync(context.Request.Query, cancellationToken));
             }));
         app.MapGet("/api/alarms", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 var result = await service.ListAlarmsAsync(context.Request.Query, cancellationToken);
                 return Results.Ok(result with { Items = result.Items.Select(ToNonTechnicalAlarm).ToList() });
             }));
         app.MapPost("/api/alarms/{alarmId}/acknowledge", async (HttpContext context, string alarmId, AcknowledgeAlarmRequest request, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.AcknowledgeAlarmAsync(alarmId, request, actor, cancellationToken));
             }));
         app.MapGet("/api/audit/logs", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                _ = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                _ = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await service.ListAuditLogsAsync(context.Request.Query, cancellationToken));
             }));
         app.MapGet("/api/history/export/runs", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return ToCsvFile(await service.ExportRunsAsync(context.Request.Query, actor, cancellationToken));
             }));
         app.MapGet("/api/history/export/reagent-consumptions", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return ToCsvFile(await service.ExportReagentConsumptionsAsync(context.Request.Query, actor, cancellationToken));
             }));
         app.MapGet("/api/alarms/export", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return ToCsvFile(await service.ExportAlarmsAsync(context.Request.Query, actor, cancellationToken));
             }));
         app.MapGet("/api/audit/export", async (HttpContext context, UserSessionService sessionService, TraceabilityQueryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
-                var actor = await sessionService.RequireAnyRoleAsync(context, ["engineer", "admin"], cancellationToken);
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return ToCsvFile(await service.ExportAuditLogsAsync(context.Request.Query, actor, cancellationToken));
             }));
     }

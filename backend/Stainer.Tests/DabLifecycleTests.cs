@@ -214,7 +214,7 @@ public sealed class DabLifecycleTests
         Assert.Equal(HttpStatusCode.Forbidden, operatorCreate.StatusCode);
 
         using var client = factory.CreateClient();
-        await LoginAsync(client, "engineer");
+        await LoginAsync(client, "admin");
         var first = await PostAsync<DabBatchResponse>(client, "/api/dab/batches", new
         {
             commandId = "cmd-dab-api-create-1",

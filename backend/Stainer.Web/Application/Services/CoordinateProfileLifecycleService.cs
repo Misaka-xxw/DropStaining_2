@@ -84,7 +84,7 @@ public sealed class CoordinateProfileLifecycleService(
             actor,
             async () =>
             {
-                RequireEngineer(actor);
+                RequireAdmin(actor);
                 var reason = RequireValue(request.Reason, "reason");
                 var profileCode = RequireValue(request.ProfileCode, "profileCode");
                 var profile = await dbContext.CoordinateProfiles
@@ -189,7 +189,7 @@ public sealed class CoordinateProfileLifecycleService(
             actor,
             async () =>
             {
-                RequireEngineer(actor);
+                RequireAdmin(actor);
                 var reason = RequireValue(request.Reason, "reason");
                 var validation = NormalizeJson(RequireValue(request.ValidationResultJson, "validationResultJson"));
                 var version = await LoadVersionWithPointsAsync(versionId, cancellationToken);
@@ -234,7 +234,7 @@ public sealed class CoordinateProfileLifecycleService(
             actor,
             async () =>
             {
-                RequireEngineer(actor);
+                RequireAdmin(actor);
                 var reason = RequireValue(request.Reason, "reason");
                 var version = await LoadVersionWithPointsAsync(versionId, cancellationToken);
                 if (version.Status != CoordinateProfileVersionStatus.Published)
@@ -297,7 +297,7 @@ public sealed class CoordinateProfileLifecycleService(
             actor,
             async () =>
             {
-                RequireEngineer(actor);
+                RequireAdmin(actor);
                 var reason = RequireValue(request.Reason, "reason");
                 var profileCode = RequireValue(request.ProfileCode, "profileCode");
                 var pointCode = NormalizeCode(request.PointCode);
@@ -734,9 +734,9 @@ public sealed class CoordinateProfileLifecycleService(
         });
     }
 
-    private static void RequireEngineer(AuthenticatedUser actor)
+    private static void RequireAdmin(AuthenticatedUser actor)
     {
-        if (!actor.HasRole("engineer") && !actor.HasRole("admin"))
+        if (!actor.HasRole("admin"))
         {
             throw new BusinessRuleException("coordinate_permission_denied", "Coordinate changes require engineer or admin role.", StatusCodes.Status403Forbidden);
         }

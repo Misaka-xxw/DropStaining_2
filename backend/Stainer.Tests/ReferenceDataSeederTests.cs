@@ -14,9 +14,8 @@ public sealed class ReferenceDataSeederTests
 
         await seeder.SeedAsync();
 
-        Assert.Equal(3, await dbContext.Roles.CountAsync());
+        Assert.Equal(2, await dbContext.Roles.CountAsync());
         Assert.True(await dbContext.Roles.AnyAsync(x => x.Code == "operator"));
-        Assert.True(await dbContext.Roles.AnyAsync(x => x.Code == "engineer"));
         Assert.True(await dbContext.Roles.AnyAsync(x => x.Code == "admin"));
 
         Assert.Equal(4, await dbContext.Drawers.CountAsync());
@@ -113,7 +112,7 @@ public sealed class ReferenceDataSeederTests
         await seeder.SeedAsync();
         await seeder.SeedAsync();
 
-        Assert.Equal(3, await dbContext.Roles.CountAsync());
+        Assert.Equal(2, await dbContext.Roles.CountAsync());
         Assert.Equal(4, await dbContext.Drawers.CountAsync());
         Assert.Equal(16, await dbContext.PhysicalSlots.CountAsync());
         Assert.Equal(40, await dbContext.ReagentRackPositions.CountAsync());
