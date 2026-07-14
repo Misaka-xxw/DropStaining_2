@@ -2,7 +2,28 @@
 
 # 全自动冰冻切片染色机上位机待办清单
 
-> 本文件仅保留截至当前仍需完成的项目工作。Mock 业务闭环、正式数据库与 Web HMI 接入、Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、扫码器配置持久化基础、扫码区域配置表达、试剂坐标锚点生成、DCR55 控制服务抽象、样本/试剂扫码职责与坐标语义确认、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证、坐标 Z 语义补齐、LiquidClass 参数补齐、工程手动移液测试 API、Workflow 配置模型评估（经代码评估无需新增模型）均已完成，不再重复列入。
+> 本文件以未完成工作为主，同时保留少量关键完成项用于追溯。Mock 业务闭环、正式数据库与 Web HMI 接入、Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、扫码器配置持久化基础、扫码区域配置表达、试剂坐标锚点生成、DCR55 控制服务抽象、样本/试剂扫码职责与坐标语义确认、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证、坐标 Z 语义补齐、LiquidClass 参数补齐、工程手动移液测试 API、Workflow 配置模型评估（经代码评估无需新增模型）均已完成。
+
+## 当前工作区收口项（2026-07-14，尚未提交）
+
+### ✅ 本轮已实现并完成专项测试
+
+- 数字孪生工程/配置页已将温控板启停与查询、混匀启停与查询、液体类型读取/保存/新建、扫码器创建与控制、液位阈值保存、样本清洗启停接到现有正式 API；不再使用“指令进入模拟队列”的占位行为。
+- 新增 `POST /api/fluidics/wash-stop`：使用独立业务命令停止 PWM0 清洗泵，要求 admin 权限，支持命令幂等与审计，Real 模式 fail-closed。
+- 新增 `POST /api/fluidics/level-thresholds`：更新 SystemWater / PBS / Waste / ToxicWaste 的低位/满位阈值，不修改容量和当前液量；阈值统一截断到 `0..CapacityUl`，要求 admin 权限、理由、命令幂等与审计，Real 模式 fail-closed。
+- `FluidicsWashStopAndThresholdTests` 专项测试于 2026-07-14 验证 **4/4 通过**。
+
+### 提交前仍需完成
+
+- [ ] 对本轮数字孪生工程控件执行浏览器级回归：管理员/工程会话门禁、温控/混匀、液体类型、扫码器、样本清洗、液位阈值保存与错误提示。
+- [ ] 执行完整后端测试集，确认新增端点和前端接线未破坏既有 Mock、权限、审计与设备边界。
+- [ ] 核对并清理 `tmp-build/acceptance-build`、`tmp-build/final-review`、`tmp-build/review-build`、`tmp-build/webcheck` 等临时验收产物；不得误删用户需要保留的证据，提交内容以确认后的源文件和测试为准。
+- [ ] 完成代码审查后提交本轮源代码、测试与文档；提交前再次核对 `git status --short`。
+
+### 边界
+
+- 本轮只证明 Mock/工程控制台软件契约与专项测试通过；未连接真实 COM/CAN/TCP，未执行真实扫码、真实温控、真实混匀、真实液路或机械动作。
+- 当前工作区尚未提交，不能把本节描述为已进入正式发布基线。
 
 ## 已完成但保留追溯的扫码器后端事项
 
@@ -69,9 +90,9 @@
 - **评估结论**：经代码评估，现有 `WorkflowDefinition` / `WorkflowVersion` / `WorkflowStep` / `WorkflowReagentRequirement` 与 `ChannelBatch.SelectedWorkflowVersionId` 已满足“实验流程加载”需求；同一 Channel 内 4 个玻片共享同一 Workflow、不同 Channel 可选不同 Workflow 已被数据模型与运行实例化强制；`StainingTask.WorkflowVersionId` 为任务意图/兼容校验，`ChannelBatch.SelectedWorkflowVersionId` 为运行执行权威。
 - **结论**：Workflow 配置模型无需继续开发，无需新增数据库字段或 Migration。
 
-### 仍需完成（与上述后端配置能力配套）
+### 仍需完成（与上述配置能力配套）
 
-- 前端工程配置页面：坐标 Z 语义 / LiquidClass 参数 / 工程移液测试 的可视化配置与展示（当前仅后端能力完成，无对应前端页面）。
+- 前端工程配置页面：LiquidClass 主要参数已在当前未提交工作区完成读写接线；坐标 Z 语义与工程移液测试仍需补齐专门的可视化配置、展示和浏览器验收。
 - DCR55 真实硬件验证（见 P1-07）、主控真实硬件验证（见 P1-03）、SOCON 真实接入（见 P1-02）仍为未完成。
 - 样本扫码坐标落地（DCR55 工具偏移、Slot / `ScannerRegion` 扫码目标位、`SampleScan` 去留 / 改名）仍为未完成。
 - 试剂扫码通道映射（主控 `0x08` 的 `ch1–ch5` 与列 / R 位映射、EMPTY / INVALID 原始格式）仍为未完成。

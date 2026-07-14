@@ -41,6 +41,14 @@
 
 SOCON 兼容性报告的技术结论已经完成（P0-01 已收口，已提交至 HEAD `e7c127df`），23D Bridge 骨架已完成并提交，P0-02 Bridge 正式 net452 x86 构建验证已完成（VS2022 MSBuild Release|x86，59 checks passed）；后续仍必须以当前仓库内文件内容和 `git status --short` 为准，不能仅凭本文件推定。
 
+### 1.2.1 2026-07-14 当前工作区进展
+
+- 当前 Git HEAD 为 `a67965f`（`Connect control console run lifecycle and scan flows`）；该提交已完成数字孪生控制台运行生命周期与扫码流程接线，并补充 `docs/control-console-mapping.md`。提交中包含 `tmp-build/webcheck` 构建产物，后续提交前应继续区分源文件与临时验收产物。
+- 当前未提交工作区正在继续收口数字孪生工程/配置控件：温控板启停与查询、混匀启停与查询、液体类型参数读取/保存/新建、扫码器创建与 Restart / Calibration Light / ROI 控制、液位阈值保存，以及样本清洗启停均已接入现有正式后端 API；这些属于 Mock/工程控制台软件能力，不代表真实硬件已验证。
+- 为样本清洗补充独立 `POST /api/fluidics/wash-stop` 业务契约，停止 PWM0 清洗泵；为液位配置补充 `POST /api/fluidics/level-thresholds`，只更新高低阈值、不改变容器容量和当前液量。两者均要求 admin 权限、命令幂等、审计，并在非 Mock 模式保持 fail-closed。
+- 新增 `FluidicsWashStopAndThresholdTests` 4 项测试，覆盖清洗停止与重放幂等、admin 权限、阈值更新不改变当前液量、阈值按容量统一截断；2026-07-14 使用 `dotnet test backend/Stainer.Tests/Stainer.Tests.csproj --filter FluidicsWashStopAndThresholdTests --no-restore` 验证 **4/4 通过**。
+- 当前改动尚未提交；正式阶段结论仍须以提交后的 Git 状态和完整回归结果为准。真实 COM/CAN/TCP、真实扫码、真实温控/混匀/液路动作均未执行。
+
 ### 1.3 项目目标
 
 项目最终应实现一套可追溯、可审计、可配置、可维护且以安全为前提的冰冻切片自动染色上位机，支持：
