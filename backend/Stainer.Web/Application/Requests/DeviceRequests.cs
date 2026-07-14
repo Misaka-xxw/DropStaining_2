@@ -83,6 +83,10 @@ public sealed record WashTargetRequest(
     int? DurationMs = null,
     string? Reason = null);
 
+public sealed record StopWashRequest(
+    string CommandId,
+    string? Reason = null);
+
 public sealed record MixerCommandRequest(
     string CommandId,
     string? RoundKey = null,
@@ -93,6 +97,13 @@ public sealed record SetLiquidLevelRequest(
     string SourceType,
     string LevelStatus,
     int? CurrentVolumeUl = null,
+    string? Reason = null);
+
+public sealed record SetLiquidThresholdRequest(
+    string CommandId,
+    string SourceType,
+    int? LowThresholdUl = null,
+    int? FullThresholdUl = null,
     string? Reason = null);
 
 public sealed record ConfigureFluidicsFaultRequest(

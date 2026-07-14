@@ -3828,8 +3828,91 @@ function renderWellEngineeringEditor(item, baseId) {
 function renderObjectPipetteEditor(item, baseId) {
   return `<section class="object-engineering-card" id="${baseId}-pipette-card" data-control-id="${baseId}-pipette-card"><strong>通道移液测试<span class="engineering-pill">当前孔位</span></strong><div class="object-form-grid three"><label>孔位<input id="${baseId}-pipette-well" data-control-id="${baseId}-pipette-well" value="${escapeHtml(item.name)}" readonly></label><label>液量 / μL<input id="${baseId}-pipette-volume" data-control-id="${baseId}-pipette-volume" type="number" value="100"></label><label>控制针<select id="${baseId}-pipette-needle" data-control-id="${baseId}-pipette-needle"><option>Z1</option><option>Z2</option><option>双针</option></select></label></div><div class="object-actions"><button type="button" class="primary-lite" data-object-action="吸液" data-object-name="${escapeHtml(item.name)}">吸液</button><button type="button" data-object-action="打液" data-object-name="${escapeHtml(item.name)}">打液</button><button type="button" data-object-action="打系统液" data-object-name="${escapeHtml(item.name)}">打系统液</button><button type="button" data-object-action="液面探测" data-object-name="${escapeHtml(item.name)}">液面探测</button><button type="button" class="warn-lite" data-object-action="清空通道" data-object-name="${escapeHtml(item.name)}">清空通道</button><button type="button" data-object-action="停止动作" data-object-name="${escapeHtml(item.name)}">停止动作</button></div></section>`;
 }
+// 通道移液动作 -> pipetting-tests 端点（映射来自 /api/engineering/pipetting-tests/types）
+const PIPETTE_ACTIONS = { '吸液':'aspirate', '打液':'dispense', '打系统液':'flush', '液面探测':'liquid-detect', '清空通道':'wash' };
+
+async function runPipetteTest(action, item, baseId) {
+  const endpoint = PIPETTE_ACTIONS[action];
+  const well = (document.getElementById(`${baseId}-pipette-well`)?.value || item?.name || '').trim();
+  const volume = Number(document.getElementById(`${baseId}-pipette-volume`)?.value);
+  const needleRaw = String(document.getElementById(`${baseId}-pipette-needle`)?.value || 'Z1').trim();
+  const channel = needleRaw === 'Z2' ? '2' : '1'; // Z1/双针->通道1, Z2->通道2（设备双针）
+  await writeApi(`/api/engineering/pipetting-tests/${endpoint}`, { method:'POST', body: JSON.stringify({
+    commandId: makeCommandId('pipette-' + endpoint),
+    channel,
+    position: well,
+    coordinatePointCode: well,
+    volumeUl: Number.isFinite(volume) ? volume : null,
+    reason: `twin 移液测试 ${action}@${well}`,
+    target: `pipetting-test:${endpoint}:${well}`,
+    dangerousOperationConfirmed: false
+  }) });
+  log(`${action}（${well}）已下发，需管理员 + 工程会话`, 'ok');
+  await loadDatabaseSnapshot();
+}
+
+async function applyScannerRoi(baseId, scannerType) {
+  const num = id => { const v = Number(document.getElementById(`${baseId}-barcode-roi-${id}`)?.value); return Number.isFinite(v) ? v : 0; };
+  const sc = await resolveScannerId(scannerType);
+  if(!sc) { log('没有已配置的扫码器，无法保存 ROI（请先「创建扫码器」）', 'warn'); return; }
+  await writeApi(`/api/scanners/${encodeURIComponent(sc.id)}/roi/apply`, { method:'POST', body: JSON.stringify({
+    commandId: makeCommandId('scanner-roi'),
+    left: num('left'), top: num('top'), width: num('width'), height: num('height'),
+    reason: `twin ROI 保存 (${scannerType})`
+  }) });
+  log(`ROI 已保存到扫码器 ${sc.name || sc.id}`, 'ok');
+}
+
+// 扫码器 profile 解析：按 Name 含「试剂/样本」匹配角色，找不到则取第一条；无任何 profile 返回 null。
+async function resolveScannerId(role) {
+  let list = [];
+  try { list = await backendApi('/api/scanners'); } catch(e) { list = []; }
+  if(!Array.isArray(list) || !list.length) return null;
+  const wantReagent = role === 'reagent';
+  return list.find(s => wantReagent ? /试剂/i.test(String(s.name || '')) : /样本/i.test(String(s.name || ''))) || null;
+}
+
+async function createScannerProfile() {
+  const role = String(document.getElementById('scannerTargetSelect')?.value || 'reagent');
+  const port = document.getElementById('scannerComPortSelect')?.value || 'COM1';
+  const baud = Number(document.getElementById('scannerBaudRateSelect')?.value) || 115200;
+  const roi = k => { const v = Number(document.getElementById('scannerRoi' + k + 'Input')?.value); return Number.isFinite(v) ? v : null; };
+  await writeApi('/api/scanners', { method:'POST', body: JSON.stringify({
+    commandId: makeCommandId('scanner-create'),
+    name: role === 'reagent' ? '试剂扫码器' : '样本扫码器',
+    scannerType: 'Dcr55',
+    enabled: true,
+    port,
+    baudRate: baud,
+    timeoutMilliseconds: 2000,
+    triggerMode: 'Software',
+    deviceParameters: { roiX: roi('Left'), roiY: roi('Top'), roiWidth: roi('Width'), roiHeight: roi('Height') },
+    reason: 'twin 创建扫码器'
+  }) });
+  log(`已创建扫码器配置：${role === 'reagent' ? '试剂扫码器' : '样本扫码器'}（ScannerType=Dcr55, TriggerMode=Software）`, 'ok');
+  await loadDatabaseSnapshot();
+}
+
+async function scannerControl(action) {
+  const role = String(document.getElementById('scannerTargetSelect')?.value || 'reagent');
+  const sc = await resolveScannerId(role);
+  if(!sc) { log('没有已配置的扫码器，请先「创建扫码器」', 'warn'); return; }
+  const id = encodeURIComponent(sc.id);
+  if(action === '配置/扫码器：设置ROI') {
+    const roi = k => { const v = Number(document.getElementById('scannerRoi' + k + 'Input')?.value); return Number.isFinite(v) ? v : 0; };
+    await writeApi(`/api/scanners/${id}/roi/apply`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-roi'), left: roi('Left'), top: roi('Top'), width: roi('Width'), height: roi('Height'), reason: 'twin 设置ROI' }) });
+  } else if(action === '配置/扫码器：打开校验光') {
+    await writeApi(`/api/scanners/${id}/calibration-light/enable`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-light-on'), reason: 'twin 打开校验光' }) });
+  } else if(action === '配置/扫码器：关闭校验光') {
+    await writeApi(`/api/scanners/${id}/calibration-light/disable`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-light-off'), reason: 'twin 关闭校验光' }) });
+  } else if(action === '配置/扫码器：重新启动') {
+    await writeApi(`/api/scanners/${id}/restart`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('scanner-restart'), reason: 'twin 重启扫码器' }) });
+  }
+  log(`${action} -> 扫码器 ${sc.name || sc.id} 已下发`, 'ok');
+  await loadDatabaseSnapshot();
+}
+
 // 对象化工程动作统一分发器。按 action + item.category 路由到真实后端命令。
-// US-403 先接「试剂条码扫描」族；吸液/打液/温控/液路/孔位/ROI 等族在 US-404 接入。
 async function dispatchObjectAction(action, item, baseId, btn) {
   if(btn) flashControl(btn);
   const name = item?.name || '';
@@ -3841,6 +3924,9 @@ async function dispatchObjectAction(action, item, baseId, btn) {
       if(action === '停止试剂条码扫描') return await reagentPositionScan(rackCode, 'stop', name);
       if(action === '清空试剂条码') return await reagentPositionScan(rackCode, 'clear', name);
     }
+    if(action === '保存ROI到扫码器和配置文件') return await applyScannerRoi(baseId, isReagent ? 'reagent' : 'sample');
+    if(PIPETTE_ACTIONS[action]) return await runPipetteTest(action, item, baseId);
+    if(action === '停止动作') { log('停止动作：Mock 模式无独立停止端点，设备随工程会话结束停止', 'warn'); return; }
     log(`${action}：${name} 暂未接入后端（模拟队列）`, 'warn');
   } catch(err) { /* routed by writeApi where used */ }
 }
@@ -4698,7 +4784,8 @@ const CONFIG_SECTION_META = [
   ['position','通道移位','维护绝对坐标移动、孔位坐标读取、孔位 Z 高度与液体类型配置。'],
   ['pipette','通道移液','按孔位和针头执行吸液、打液、打系统液、液面探测与清空通道测试。'],
   ['mixheat','混匀加热','控制通道样本目标温度、当前温度读取、开始加热、停止加热和温度查询。'],
-  ['thermal','清洗混匀','维护混匀参数、样本清洗、电磁阀和仓位光耦；试剂制冷和供水已迁移到状态对象详情。']
+  ['thermal','清洗混匀','维护混匀参数、样本清洗、电磁阀和仓位光耦；试剂制冷和供水已迁移到状态对象详情。'],
+  ['scanner','扫码器','创建/选择样本或试剂扫码器，配置串口、ROI、校验光与重启。']
 ];
 const CONFIG_SECTION_KEYS = new Set(CONFIG_SECTION_META.map(([key]) => key));
 function normalizeConfigSectionKey(section) {
@@ -5123,6 +5210,7 @@ function renderConfigScannerSection() {
         <section class="engineering-card" id="scannerInitCard" data-control-id="scannerInitCard">
           <strong>初始化</strong>
           <div class="engineering-actions compact-actions">
+            ${engineeringButton('创建扫码器','配置/扫码器：创建扫码器','primary-lite')}
             ${engineeringButton('重新启动','配置/扫码器：重新启动','warn-lite')}
             ${engineeringButton('恢复出厂','配置/扫码器：恢复出厂')}
             ${engineeringButton('Raw Model模式','配置/扫码器：Raw Model模式')}
@@ -5250,22 +5338,177 @@ function renderConfigThermalSection() {
   </section>`;
 }
 
+function drawerFromChannelSelect(selectId) {
+  const v = String(document.getElementById(selectId)?.value || '').trim();
+  const m = /通道\s*([1-4])/.exec(v);
+  if(m) return 'ABCD'[Number(m[1]) - 1];
+  return '';
+}
+
+// 混匀加热 drawer 解析：通道1-4 -> A/B/C/D；全选 -> A,B,C,D（无全板统一接口，需逐 drawer 下发）
+function mixHeatDrawers() {
+  const sel = String(document.getElementById('mixHeatChannelSelect')?.value || '').trim();
+  const m = /通道\s*([1-4])/.exec(sel);
+  if(m) return ['ABCD'[Number(m[1]) - 1]];
+  if(/全选|全部/.test(sel)) return ['A', 'B', 'C', 'D'];
+  return ['A'];
+}
+
+// 液体类型参数：表单 -> SaveLiquidClassRequest。标注的单位换算（mm/s·mm -> μm/s·μm，×1000）为按表单标签的假设，待设备侧复核。
+function liquidClassFormParams() {
+  const num = id => { const v = Number(document.getElementById(id)?.value); return Number.isFinite(v) && v >= 0 ? Math.round(v) : null; };
+  const mmToUm = id => { const v = Number(document.getElementById(id)?.value); return Number.isFinite(v) && v >= 0 ? Math.round(v * 1000) : null; };
+  const yn = id => { const v = String(document.getElementById(id)?.value || ''); return v === '是' ? true : (v === '否' ? false : null); };
+  const out = {};
+  const set = (k, v) => { if(v !== null && v !== undefined) out[k] = v; };
+  set('aspirateSpeedUlPerSecond', num('aspSpeedInput'));
+  set('dispenseSpeedUlPerSecond', num('dispSpeedInput'));
+  set('leadingAirGapUl', num('aspLeadingAirGapInput'));
+  set('trailingAirGapUl', num('aspTrailingAirGapInput'));
+  set('excessVolumeUl', num('aspExcessVolumeInput'));
+  set('conditioningVolumeUl', num('aspConditioningVolumeInput'));
+  set('liquidDetectionEnabled', yn('aspUseLldSelect'));
+  set('liquidDetectionSensitivityPercent', num('aspLldSensitivityInput'));
+  set('liquidDetectionSpeedUmPerSecond', mmToUm('aspLldDownSpeedInput')); // mm/s -> μm/s
+  set('liquidFollowingDepthUm', mmToUm('aspFollowDepthInput'));           // mm -> μm
+  set('aspirateDelayMs', num('aspPreDelayInput'));
+  set('dispenseDelayMs', num('dispPreDelayInput'));
+  set('blowoutVolumeUl', num('dispBlowoutVolumeInput'));
+  set('breakoffSpeedUlPerSecond', num('dispBreakoffSpeedInput'));
+  set('retractSpeedUmPerSecond', mmToUm('aspRetractSpeedInput'));         // mm/s -> μm/s
+  return out;
+}
+
+async function saveLiquidClassParams(isCreate) {
+  const code = String(document.getElementById('liquidClassSelect')?.value || '').trim();
+  const newName = String(document.getElementById('liquidClassNewNameInput')?.value || '').trim();
+  const name = isCreate ? (newName || code) : code;
+  const body = { commandId: makeCommandId(isCreate ? 'liquid-class-create' : 'liquid-class-save'), code, name, isEnabled: true, reason: isCreate ? 'twin 新建液体类型' : 'twin 保存液体类型参数', dangerousOperationConfirmed: false };
+  if(!isCreate) Object.assign(body, liquidClassFormParams());
+  await writeApi('/api/engineering/liquid-classes', { method:'POST', body: JSON.stringify(body) });
+  log(`${isCreate ? '新建' : '保存'}液体类型 ${code} 已下发，需管理员 + 工程会话`, 'ok');
+  await loadDatabaseSnapshot();
+}
+
+async function readLiquidClassParams() {
+  const code = String(document.getElementById('liquidClassSelect')?.value || '').trim();
+  let list = [];
+  try { list = await backendApi('/api/engineering/liquid-classes'); } catch(e) { list = []; }
+  const arr = Array.isArray(list) ? list : [];
+  const match = arr.find(x => x.code === code) || arr[0];
+  if(!match) { log(`未读取到液体类型 ${code}`, 'warn'); return; }
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el && v !== null && v !== undefined && Number.isFinite(v)) el.value = v; };
+  setVal('aspSpeedInput', match.aspirateSpeedUlPerSecond);
+  setVal('dispSpeedInput', match.dispenseSpeedUlPerSecond);
+  setVal('aspLeadingAirGapInput', match.leadingAirGapUl);
+  setVal('aspTrailingAirGapInput', match.trailingAirGapUl);
+  setVal('aspExcessVolumeInput', match.excessVolumeUl);
+  setVal('aspConditioningVolumeInput', match.conditioningVolumeUl);
+  setVal('aspUseLldSelect', match.liquidDetectionEnabled === true ? '是' : (match.liquidDetectionEnabled === false ? '否' : null));
+  setVal('aspLldSensitivityInput', match.liquidDetectionSensitivityPercent);
+  setVal('aspLldDownSpeedInput', match.liquidDetectionSpeedUmPerSecond != null ? match.liquidDetectionSpeedUmPerSecond / 1000 : null);
+  setVal('aspFollowDepthInput', match.liquidFollowingDepthUm != null ? match.liquidFollowingDepthUm / 1000 : null);
+  setVal('aspPreDelayInput', match.aspirateDelayMs);
+  setVal('dispPreDelayInput', match.dispenseDelayMs);
+  setVal('dispBlowoutVolumeInput', match.blowoutVolumeUl);
+  setVal('dispBreakoffSpeedInput', match.breakoffSpeedUlPerSecond);
+  setVal('aspRetractSpeedInput', match.retractSpeedUmPerSecond != null ? match.retractSpeedUmPerSecond / 1000 : null);
+  log(`已读取液体类型 ${match.code || match.name} 参数（μm 字段已 ÷1000 回显为 mm/mm·s⁻¹）`, 'ok');
+}
+
+// 样本清洗启停（wash = 一次性执行命令；wash-stop = 独立业务停止契约，非裸 PWM=0）。
+async function startSampleWash() {
+  const dur = Number(document.getElementById('sampleWashTimeInput')?.value);
+  await writeApi('/api/fluidics/wash', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('sample-wash'), targetPointCode: 'WashInnerLeft', speedPercent: 60, durationMs: Number.isFinite(dur) ? dur : 2000, reason: 'twin 样本清洗' }) });
+  log('样本清洗已启动（WashInnerLeft / PWM0）', 'ok');
+  await loadDatabaseSnapshot();
+}
+async function stopSampleWash() {
+  await writeApi('/api/fluidics/wash-stop', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('sample-wash-stop'), reason: 'twin 停止样本清洗' }) });
+  log('样本清洗已停止', 'ok');
+  await loadDatabaseSnapshot();
+}
+
+// 调试/配置页 [data-action-log] 工程动作分发器。通道选择 -> drawer A-D（与 4.2 一致）。
+async function dispatchEngineeringAction(action, btn) {
+  if(btn) flashControl(btn);
+  const consoleNode = document.querySelector('.test-console');
+  try {
+    if(action === '配置/清洗混匀：开始混匀' || action === '配置/清洗混匀：混匀复位') {
+      const drawer = drawerFromChannelSelect('thermalMixChannelSelect');
+      if(!drawer) { log('请先在"通道选择"选择具体通道（1-4）再操作混匀', 'warn'); return; }
+      const op = action.endsWith('混匀复位') ? 'stop' : 'start';
+      await writeApi(`/api/fluidics/mixers/${encodeURIComponent(drawer)}/${op}`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('mixer-' + op), reason: `twin ${action}` }) });
+      log(`${action}（通道${drawer}）已下发，需管理员 + 工程会话`, 'ok');
+      await loadDatabaseSnapshot();
+      return;
+    }
+    if(action === '配置/清洗混匀：查询混匀') {
+      const state = await backendApi('/api/fluidics/state');
+      log(`${action}：pumps=${(state?.pumps || []).length}, ready=${state?.ready}`, 'ok');
+      return;
+    }
+    if(action === '配置/混匀加热：开始加热' || action === '配置/混匀加热：停止加热') {
+      const isEnabled = action.endsWith('停止加热') ? false : true;
+      const rawTemp = Number(String(document.getElementById('mixHeatTargetTempInput')?.value || '').replace(/[^\d.\-]/g, ''));
+      const targetDeciC = Number.isFinite(rawTemp) ? Math.round(rawTemp * 10) : 500;
+      const drawers = mixHeatDrawers();
+      for(const d of drawers) {
+        await writeApi(`/api/thermal/boards/${encodeURIComponent(d)}`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('thermal-board'), targetTemperatureDeciC: targetDeciC, isEnabled }) });
+      }
+      log(`${action}：drawer=${drawers.join(',')} 目标=${rawTemp}℃(${targetDeciC}) isEnabled=${isEnabled} 已下发`, 'ok');
+      await loadDatabaseSnapshot();
+      return;
+    }
+    if(action === '配置/混匀加热：查询温度') {
+      const state = await backendApi('/api/thermal/state');
+      const drawers = mixHeatDrawers();
+      const pts = (state?.points || []).filter(p => drawers.includes(p.drawerCode));
+      const summary = pts.slice(0, 8).map(p => `${p.drawerCode}${p.slotNo}=${(p.currentTemperatureDeciC/10).toFixed(1)}℃`).join(' ') || '--';
+      const cur = document.getElementById('mixHeatCurrentTempInput');
+      const stat = document.getElementById('mixHeatStatusInput');
+      if(cur && pts.length) cur.value = `${(pts[0].currentTemperatureDeciC/10).toFixed(1)}℃`;
+      if(stat && pts.length) stat.value = pts.some(p => p.isEnabled && String(p.status || '').toLowerCase() !== 'off') ? '加热中' : '待机';
+      log(`${action}：drawer=${drawers.join(',')} ${pts.length}点 ${summary}`, 'ok');
+      return;
+    }
+    if(action === '配置/清洗混匀：打开样本清洗') return await startSampleWash();
+    if(action === '配置/清洗混匀：关闭样本清洗') return await stopSampleWash();
+    if(action === '配置/液体类型：新建液体类型') return await saveLiquidClassParams(true);
+    if(action === '配置/液体类型：保存液体类型参数' || action === '配置/液体类型：保存吸液加液参数') return await saveLiquidClassParams(false);
+    if(action === '配置/液体类型：读取液体类型参数') return await readLiquidClassParams();
+    if(action === '配置/扫码器：创建扫码器') return await createScannerProfile();
+    if(['配置/扫码器：设置ROI','配置/扫码器：打开校验光','配置/扫码器：关闭校验光','配置/扫码器：重新启动'].includes(action)) return await scannerControl(action);
+    log(`${action}：暂未接入（样本清洗三按钮按约定保留原样，不绑后端）`, 'warn');
+  } catch(err) { /* routed by writeApi where used */ }
+  if(consoleNode) consoleNode.textContent += `\n[${new Date().toLocaleTimeString()}] ${action}`;
+}
+
 function bindEngineeringControlHandlers(root=document) {
   root.querySelectorAll('[data-action-log]').forEach(btn => {
     if(btn.dataset.engineeringBound === 'true') return;
     btn.dataset.engineeringBound = 'true';
     btn.addEventListener('click', () => {
       const action = btn.getAttribute('data-action-log') || btn.textContent.trim();
-      log(`${action}：指令已进入模拟队列，后续可接 WebSocket/上位机`, 'ok');
-      const consoleNode = root.querySelector('.test-console');
-      if(consoleNode) consoleNode.textContent += `\n[${new Date().toLocaleTimeString()}] ${action}`;
-      flashControl(btn);
+      dispatchEngineeringAction(action, btn);
     });
   });
   const openLiquidBtn = Array.from(root.querySelectorAll('[data-action-log]')).find(btn => (btn.getAttribute('data-action-log') || '').includes('打开液体类型配置'));
   if(openLiquidBtn && !openLiquidBtn.dataset.openLiquidBound) {
     openLiquidBtn.dataset.openLiquidBound = 'true';
     openLiquidBtn.addEventListener('click', () => { showSideTab('config'); renderConfigPane('liquid'); });
+  }
+  const washSwitch = root.querySelector('#sampleWashSwitch');
+  if(washSwitch && !washSwitch.dataset.washBound) {
+    washSwitch.dataset.washBound = 'true';
+    washSwitch.style.cursor = 'pointer';
+    washSwitch.title = '点击启停样本清洗（wash / wash-stop）';
+    washSwitch.addEventListener('click', async () => {
+      const turnOn = !washSwitch.classList.contains('on');
+      washSwitch.classList.toggle('on', turnOn);
+      try { if(turnOn) await startSampleWash(); else await stopSampleWash(); }
+      catch(e) { washSwitch.classList.toggle('on', !turnOn); }
+    });
   }
 }
 function collectEngineeringForm(rootId) {

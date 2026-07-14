@@ -196,6 +196,43 @@ public sealed class FluidicsControlService(
             cancellationToken);
     }
 
+    public Task<FluidicsMutationResponse> StopWashAsync(
+        StopWashRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return idempotencyService.RunAsync(
+            request.CommandId,
+            "fluidics.wash.stop",
+            request,
+            actor,
+            async () =>
+            {
+                EnsureMockMode();
+                await Gate.WaitAsync(cancellationToken);
+                try
+                {
+                    await EnsureSeededCoreAsync(cancellationToken);
+                    // wash 由 PWM0 驱动；wash-stop 是独立业务命令（非裸 PWM=0），停止 wash 泵。
+                    var pump = await RequirePumpAsync("PWM0", cancellationToken);
+                    ApplyPumpStop(pump, request.CommandId, FluidicsStatuses.Stopped, null, null, null);
+                    AddPumpTelemetry(pump, FluidicsTelemetryEventTypes.PumpChanged);
+                    PublishPump(pump, "stopped");
+                    AddAudit(actor, "fluidics.wash.stop", "PumpChannelState", pump.Id, request.CommandId, new { pump.PwmChannelCode, pump.TargetPointCode, request.Reason });
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                    return new CommandExecutionResult<FluidicsMutationResponse>(
+                        new FluidicsMutationResponse(true, request.CommandId, false, "Sample wash stopped.", await BuildResponseAsync(cancellationToken)),
+                        "PumpChannelState",
+                        pump.Id);
+                }
+                finally
+                {
+                    Gate.Release();
+                }
+            },
+            cancellationToken);
+    }
+
     public Task<FluidicsMutationResponse> StartMixerAsync(
         string drawerCode,
         MixerCommandRequest request,
@@ -274,6 +311,50 @@ public sealed class FluidicsControlService(
                     await dbContext.SaveChangesAsync(cancellationToken);
                     return new CommandExecutionResult<FluidicsMutationResponse>(
                         new FluidicsMutationResponse(true, request.CommandId, false, "Liquid level updated.", await BuildResponseAsync(cancellationToken)),
+                        "LiquidContainerState",
+                        liquid.Id);
+                }
+                finally
+                {
+                    Gate.Release();
+                }
+            },
+            cancellationToken);
+    }
+
+    public Task<FluidicsMutationResponse> SetLiquidThresholdAsync(
+        SetLiquidThresholdRequest request,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return idempotencyService.RunAsync(
+            request.CommandId,
+            "fluidics.threshold.set",
+            request,
+            actor,
+            async () =>
+            {
+                EnsureMockMode();
+                await Gate.WaitAsync(cancellationToken);
+                try
+                {
+                    await EnsureSeededCoreAsync(cancellationToken);
+                    var liquid = await RequireLiquidAsync(request.SourceType, cancellationToken);
+                    _ = RequireReason(request.Reason);
+                    if(request.LowThresholdUl.HasValue) liquid.LowThresholdUl = Math.Clamp(request.LowThresholdUl.Value, 0, liquid.CapacityUl);
+                    if(request.FullThresholdUl.HasValue) liquid.FullThresholdUl = Math.Clamp(request.FullThresholdUl.Value, 0, liquid.CapacityUl);
+                    liquid.LevelStatus = CalculateLiquidStatus(liquid);
+                    liquid.UpdatedAtUtc = DateTimeOffset.UtcNow;
+                    AddAudit(actor, "fluidics.threshold.set", "LiquidContainerState", liquid.Id, request.CommandId, new
+                    {
+                        liquid.SourceType,
+                        liquid.LowThresholdUl,
+                        liquid.FullThresholdUl,
+                        request.Reason
+                    });
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                    return new CommandExecutionResult<FluidicsMutationResponse>(
+                        new FluidicsMutationResponse(true, request.CommandId, false, "Liquid thresholds updated.", await BuildResponseAsync(cancellationToken)),
                         "LiquidContainerState",
                         liquid.Id);
                 }

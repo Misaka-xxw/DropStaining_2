@@ -106,6 +106,12 @@ public static partial class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await service.WashAsync(request, actor, cancellationToken));
             }));
+        app.MapPost("/api/fluidics/wash-stop", async (HttpContext context, StopWashRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.StopWashAsync(request, actor, cancellationToken));
+            }));
         app.MapPost("/api/fluidics/mixers/{drawerCode}/start", async (HttpContext context, string drawerCode, MixerCommandRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
@@ -129,6 +135,12 @@ public static partial class WebHostEndpointExtensions
             {
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await service.SetLiquidLevelAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/fluidics/level-thresholds", async (HttpContext context, SetLiquidThresholdRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.SetLiquidThresholdAsync(request, actor, cancellationToken));
             }));
         app.MapPost("/api/fluidics/faults", async (HttpContext context, ConfigureFluidicsFaultRequest request, UserSessionService sessionService, FluidicsControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>

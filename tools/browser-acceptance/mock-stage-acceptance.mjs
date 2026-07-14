@@ -178,10 +178,11 @@ async function loginViaUi(page, username, role) {
   await page.goto(`${baseURL}/`);
   await page.fill('#username', username);
   await page.fill('#password', '123456');
-  await page.check(`input[name="role"][value="${role}"]`);
+  // 当前旧版登录页是两个身份按钮（管理员 btn-primary / 实验员 btn-operator），不再有 role 单选。
+  const selector = role === 'operator' ? 'button.btn-operator' : 'button.btn-primary.btn-xl';
   await Promise.all([
     page.waitForURL(url => url.pathname !== '/', { timeout: 15000 }),
-    page.click('button.btn-primary.btn-xl')
+    page.click(selector)
   ]);
   await waitForSnapshot(page, role);
 }
