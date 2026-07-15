@@ -19,7 +19,6 @@ if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URL
 
 builder.Services.AddStainerInfrastructure(builder.Configuration, builder.Environment);
 builder.Services.AddSingleton<MockRuntimeStore>();
-builder.Services.AddSingleton<LegacyUiPageRenderer>();
 
 var app = builder.Build();
 

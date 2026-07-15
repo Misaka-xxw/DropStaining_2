@@ -13,7 +13,6 @@ public static partial class WebHostEndpointExtensions
         var legacyRuntimeCompatibilityEnabled = app.Environment.IsDevelopment()
             || app.Environment.IsEnvironment("Testing");
 
-        MapPageEndpoints(app, legacyRuntimeCompatibilityEnabled);
         MapDeviceAndOperationsEndpoints(app);
         MapIdentityEndpoints(app);
         MapWorkflowEndpoints(app);
@@ -25,17 +24,6 @@ public static partial class WebHostEndpointExtensions
         MapRunEndpoints(app);
         MapCompatibilityEndpoints(app, legacyRuntimeCompatibilityEnabled);
         MapTwinEndpoints(app);
-        MapFallbackEndpoint(app);
-    }
-
-    private static void MapFallbackEndpoint(WebApplication app)
-    {
-        app.MapFallback((HttpContext context, LegacyUiPageRenderer renderer) =>
-        {
-            return context.Request.Path.StartsWithSegments("/api")
-                ? Results.NotFound()
-                : renderer.Render("/dashboard");
-        });
     }
 
     private static async Task<IResult> ExecuteBusinessAsync(Func<Task<IResult>> action)

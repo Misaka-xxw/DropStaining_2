@@ -1,5 +1,7 @@
 # 项目交接摘要
 
+> ⚠️ **历史文档（已被步骤 6 取代）**：本摘要描述的是步骤 6 之前的架构。其中关于 `LegacyUiPageRenderer.cs`、`wwwroot/static/js/{api,stainer-host,dashboard,run,engineer,configure}.js`、`wwwroot/static/css/app.css` 以及旧多页面路由（`/dashboard`、`/samples`、`/run`、`/configure`、`/engineer`、`/admin` 等）的描述均已在步骤 6 删除：正式 UI 收敛为唯一的 `/control-console`（`wwwroot/twin/index.html`），早期 `src/` FastAPI/Jinja 原型也已删除。本文保留作为历史交接参考，上述引用均已失效。
+
 * 项目名称：全自动冰冻切片染色机上位机（Stainer）
 * 当前分支 / 最新提交：`master` / `7617075ce2e90cc1e43bfc5b618896a255cf882e`（`删除临时文件`，2026-06-30 09:49:03 +08:00）；本地比 `origin/master` 领先 1 个提交
 * 工作区是否有未提交修改：有；`data/logs/runtime-20260630.jsonl` 和 `data/machine-executor.lock` 两个运行时文件发生变化，另有本交接文档 `docs/PROJECT_HANDOFF.md` 未跟踪；未发现未提交的业务代码修改

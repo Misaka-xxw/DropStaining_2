@@ -353,7 +353,7 @@ ASP.NET Core Application Services + EF Core + SQLite
 - Mock 页面状态；
 - 临时测试数据库；
 - 测试适配器；
-- 历史 FastAPI/Jinja/Python 原型；
+- 历史 FastAPI/Jinja/Python 原型（已于步骤 6 删除）；
 - 旧控制台接口；
 - 任何直接以 UI 或设备适配器写入数据库的实现。
 
@@ -415,7 +415,7 @@ D:\Stainer\
 │
 ├─ package.json
 │
-└─ src\                               # 历史 FastAPI/Jinja/Python 原型；非正式系统
+└─ src\  # 历史 FastAPI/Jinja/Python 原型（已于步骤 6 删除；非正式系统，目录已移除）
 ```
 
 ### 6.1 数据库目录规则
@@ -444,7 +444,7 @@ D:\Stainer\data\stainer.db-shm
 
 ### 6.2 历史原型规则
 
-`src/` 下的旧 FastAPI/Jinja/Python 实现仅作历史参考：
+`src/` 下的旧 FastAPI/Jinja/Python 实现（已于步骤 6 删除）原仅作历史参考：
 
 - 不用于正式部署；
 - 不作为正式 Web Host；

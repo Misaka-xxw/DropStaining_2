@@ -13,7 +13,7 @@ using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Infrastructure.Twin;
 
-// 对应 stainer_twin_fastapi/stainer_twin_api/snapshot.py。
+// 早期对应 stainer_twin_fastapi/stainer_twin_api/snapshot.py（该 Python 源已于步骤 6 删除）。
 // 逐方法移植 Python 实现，关键不变量：
 //  - 顶层 JSON 键是 snake_case 与 camelCase 混合，必须用字面量键的 Dictionary 构造、
 //    以 PropertyNamingPolicy=null 序列化，避免键名漂移。

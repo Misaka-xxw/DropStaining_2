@@ -1,14 +1,14 @@
 # Stainer 上位机（ASP.NET Core Mock 阶段）
 
-本仓库当前正式主线是 `backend/Stainer.Web`：ASP.NET Core + SQLite + 原生 HTML/CSS/JavaScript HMI。`src/` 目录仍保留早期 FastAPI/Jinja 原型作为参考，不作为正式运行入口。
+本仓库当前正式主线是 `backend/Stainer.Web`：ASP.NET Core + SQLite，正式 Web UI 已收敛为唯一的 `/control-console`（`wwwroot/twin/index.html`，自包含）。早期 `src/` FastAPI/Jinja 原型已在步骤 6 删除。
 
 ## 当前阶段边界
 
-- 已完成 Mock 阶段正式页面接入：操作员、试剂/DAB、运行、告警/历史、工程、管理页面均读取正式 API 和 SQLite 数据。
+- 步骤 6 后正式 UI 收敛为唯一的 `/control-console`；旧的 `/dashboard`、`/samples`、`/run`、`/configure`、`/engineer`、`/admin` 等多页面、`LegacyUiPageRenderer` 及 `wwwroot/static/*` 已删除，旧 URL 返回 404（共 12 个旧正式页面 + `/mock-timeline` = 13 个旧 URL）。
 - Mock 设备适配器用于本地验证，工程测试入口保留 Mock 标识；`Device:Mode=Real` 仍保持 fail-closed。
 - 未接真实硬件，不改变数据库模型、核心业务规则或最终视觉。
 - 旧 `/api/state`、旧 `/api/run/start|pause|resume|stop` 仅在 Development/Testing 环境映射；Staging/Production 不可用。
-- `/control-console` 仅 Development/Testing 可用，不进入正式导航。
+- `/control-console` 为唯一正式 UI，在所有环境直接返回数字孪生页；根路径 `/` 重定向到它。
 
 ## 快速启动
 

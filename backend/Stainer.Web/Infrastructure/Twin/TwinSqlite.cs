@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Stainer.Web.Infrastructure.Twin;
 
-// 对应 stainer_twin_fastapi/stainer_twin_api/database.py。
+// 早期对应 stainer_twin_fastapi/stainer_twin_api/database.py（该 Python 源已于步骤 6 删除）。
 // 关键语义：one/many 在任何 SQLite 错误时返回 null/空（这是数字孪生 null-policy 的根基——
 // 数据库表/行/字段缺失时统一回退为 null，绝不抛异常中断快照生成）。
 internal static class TwinSqlite

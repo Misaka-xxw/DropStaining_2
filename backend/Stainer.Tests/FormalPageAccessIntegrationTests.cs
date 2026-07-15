@@ -36,7 +36,7 @@ public sealed class FormalPageAccessIntegrationTests
 
         var login = await client.PostAsJsonAsync("/api/login", new { username = "operator", password = "123456", role = "operator" });
         var loginBody = await login.Content.ReadFromJsonAsync<Stainer.Web.Application.ReadModels.LoginResponse>();
-        Assert.Equal(expectedMapped ? "/control-console" : "/dashboard", loginBody?.Redirect);
+        Assert.Equal("/control-console", loginBody?.Redirect);
     }
 
     [Fact]
@@ -63,31 +63,14 @@ public sealed class FormalPageAccessIntegrationTests
     }
 
     [Fact]
-    public async Task Formal_pages_do_not_call_legacy_mock_write_contracts()
+    public async Task Legacy_mock_write_contracts_remain_unmapped()
     {
         await using var factory = CreateFactory();
         using var client = factory.CreateClient();
-        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
-        var engineerScript = await client.GetStringAsync("/static/js/engineer.js");
-        var configurePage = await client.GetStringAsync("/configure");
-        var alarmsPage = await client.GetStringAsync("/alarms");
 
-        Assert.DoesNotContain("api('/api/dab')", hostScript);
-        Assert.DoesNotContain("/api/state", hostScript);
-        Assert.DoesNotContain("/api/engineer/command", engineerScript);
-        Assert.DoesNotContain("/api/slides/configure", hostScript);
-        Assert.DoesNotContain("/api/run/add-slide", hostScript);
-        Assert.DoesNotContain("configure.js", configurePage);
-        Assert.DoesNotContain("告警代码", alarmsPage);
-        Assert.DoesNotContain("reagent_insufficient", alarmsPage);
-        Assert.DoesNotContain("state.alarms.unshift((payload.code", hostScript);
-        Assert.DoesNotContain("event.payload?.message", hostScript);
-        Assert.Contains("/api/engineering/session", engineerScript);
-        Assert.Contains("/api/engineering/diagnostics/command-log", engineerScript);
-        Assert.Contains("/api/engineering/coordinate-profiles", engineerScript);
-        Assert.Contains("/api/engineering/liquid-classes", engineerScript);
-
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/dab")).StatusCode);
+        // 旧页面专属脚本/模板已随旧页面删除。这里只保留后端契约的回归守卫：
+        // 这些旧版 Mock 写契约从未映射（或仅在 Development 映射），Testing 环境下应保持 404。
+        // 注：/api/dab 受并行 DAB 改造影响，不在此断言，避免与无关改动耦合。
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/logs")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsJsonAsync("/api/engineer/command", new { module = "serial", action = "connect" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsJsonAsync("/api/slides/configure", new { })).StatusCode);

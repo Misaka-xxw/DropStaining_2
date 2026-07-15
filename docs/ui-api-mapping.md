@@ -1,5 +1,7 @@
 # UI 控件 → 后端 API 映射表
 
+> ⚠️ **历史文档（已被步骤 6 取代）**：本文档生成于 2026-07-13，描述的是步骤 6 之前的旧 UI 架构：`LegacyUiPageRenderer.cs` 服务端内联渲染 + `wwwroot/static/js/*`（`api.js`/`stainer-host.js`/`dashboard.js`/`run.js`/`engineer.js`/`configure.js`）+ `/dashboard`、`/samples`、`/run`、`/configure`、`/engineer`、`/admin` 等多页面。步骤 6 已删除上述 renderer、全部旧静态资源与旧页面路由，正式 UI 收敛为唯一的 `/control-console`（`wwwroot/twin/index.html`）；早期 `src/` FastAPI/Jinja 原型也已删除。后端 API/DTO/SignalR 契约不变。本文保留作为控件→API 的历史映射参考，文中对旧 renderer/JS/页面路由的引用均已失效。
+
 > 生成日期：2026-07-13。权威源：线上 UI 由 [`LegacyUiPageRenderer.cs`](../backend/Stainer.Web/Infrastructure/Web/LegacyUiPageRenderer.cs) 服务端内联渲染 + [`wwwroot/static/js/`](../backend/Stainer.Web/wwwroot/static/js/) 提供行为；后端为 ASP.NET minimal API（[`Infrastructure/Web/WebHostEndpointExtensions.*.cs`](../backend/Stainer.Web/Infrastructure/Web/)）。
 >
 > **不在范围内**：`src/app/templates/*.html`（旧 Python Flask 模板，已被 .NET 渲染器取代，含 `testPipette`/`engineerCommand` 等已废弃控件）；`wwwroot/twin/index.html`（747KB 数字孪生打包页，独立控制面，仅消费 `/api/login`、`/api/users`、`/api/roles`、`/api/twin/snapshot`，其余多为客户端 Mock）。

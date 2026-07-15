@@ -8,7 +8,7 @@ using Stainer.Web.Infrastructure.Data;
 
 namespace Stainer.Web.Application.Services;
 
-public sealed class UserSessionService(StainerDbContext dbContext, PasswordHashService passwordHashService, IHostEnvironment environment)
+public sealed class UserSessionService(StainerDbContext dbContext, PasswordHashService passwordHashService)
 {
     public const string SessionCookieName = "stainer_session";
     private static readonly ConcurrentDictionary<string, AuthenticatedUser> Sessions = new(StringComparer.Ordinal);
@@ -66,8 +66,8 @@ public sealed class UserSessionService(StainerDbContext dbContext, PasswordHashS
         });
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var developmentOrTesting = environment.IsDevelopment() || environment.IsEnvironment("Testing");
-        return new LoginResponse(true, ToCurrentUser(principal), developmentOrTesting ? "/control-console" : "/dashboard");
+        // 正式 UI 已收敛到 /control-console（旧 /dashboard、/login 等页面已删除），登录后统一回到该页面。
+        return new LoginResponse(true, ToCurrentUser(principal), "/control-console");
     }
 
     public async Task LogoutAsync(HttpContext httpContext, CancellationToken cancellationToken = default)

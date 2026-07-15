@@ -15,10 +15,10 @@ namespace Stainer.Tests;
 public sealed class WebHostIntegrationTests
 {
     [Fact]
-    public async Task Web_host_serves_pages_static_assets_health_api_and_fallback()
+    public async Task Web_host_serves_control_console_and_returns_404_for_removed_pages()
     {
         await using var factory = CreateFactory();
-        using var client = factory.CreateClient();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
         var health = await client.GetAsync("/health");
         Assert.Equal(HttpStatusCode.OK, health.StatusCode);
@@ -28,166 +28,30 @@ public sealed class WebHostIntegrationTests
         Assert.False(info!.PythonRuntimeRequired);
         Assert.Equal("ASP.NET Core", info.UiHost);
 
-        foreach (var route in new[] { "/", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/alarms", "/history", "/configure", "/engineer", "/admin", "/management", "/mock-timeline" })
-        {
-            var html = await client.GetStringAsync(route);
-            Assert.Contains("app.css", html);
-            Assert.DoesNotContain("{%", html);
-            Assert.DoesNotContain("{{", html);
-        }
+        // 根路径统一收敛到 /control-console（302 重定向，正式页面唯一入口）。
+        var root = await client.GetAsync("/");
+        Assert.Equal(HttpStatusCode.Redirect, root.StatusCode);
+        Assert.Equal("/control-console", root.Headers.Location?.OriginalString);
 
-        var login = await client.GetStringAsync("/");
-        Assert.Contains("single-login-screen", login);
-        Assert.Contains("login('operator')", login);
-        Assert.Contains("login('admin')", login);
-        Assert.DoesNotContain("engineer", login);
-        Assert.DoesNotContain("ENG", login);
-
-        var dashboard = await client.GetStringAsync("/dashboard");
-        Assert.Contains("app-shell", dashboard);
-        Assert.Contains("drawerBoard", dashboard);
-        Assert.Contains(">检查<", dashboard);
-        Assert.Contains("data-href=\"/control-console\"", dashboard);
-        Assert.Contains("current-page-card", dashboard);
-        Assert.Contains("currentPageLabel", dashboard);
-        Assert.Contains("userMenu", dashboard);
-        Assert.Contains("id=\"logoutButton\"", dashboard);
-        Assert.Contains("退出登录", dashboard);
-        Assert.DoesNotContain("onclick=\"toggleUserMenu", dashboard);
-        Assert.Contains("<i>06</i><span>告警</span>", dashboard);
-        Assert.Contains("<i>07</i><span>历史</span>", dashboard);
-        Assert.DoesNotContain("top-panel", dashboard);
-        Assert.DoesNotContain("workflow-strip v18-flow", dashboard);
-        Assert.DoesNotContain("kpiInit", dashboard);
-        Assert.DoesNotContain("dashboardLogs", dashboard);
-
-        // /control-console 现在直接返回数字孪生页（移植自 stainer_twin_fastapi），不再是旧版 app-shell + iframe 外壳。
+        // /control-console 直接返回自包含的数字孪生页（无旧版 app-shell / iframe 外壳、无旧 login 页）。
         var controlConsole = await client.GetStringAsync("/control-console");
         Assert.Contains("api/twin/snapshot", controlConsole, StringComparison.Ordinal);
         Assert.DoesNotContain("controlConsoleFrame", controlConsole, StringComparison.Ordinal);
+        Assert.DoesNotContain("single-login-screen", controlConsole, StringComparison.Ordinal);
 
-        var mockTimeline = await client.GetStringAsync("/mock-timeline");
-        Assert.Contains("mockGanttBoard", mockTimeline);
-        Assert.Contains("/static/js/mock-timeline.js", mockTimeline);
+        // 旧页面路由全部删除后返回 404，不再保留隐藏入口或 dashboard 兜底。
+        foreach (var route in new[] { "/login", "/dashboard", "/samples", "/reagents", "/run", "/alerts", "/alarms", "/history", "/configure", "/engineer", "/admin", "/management", "/mock-timeline" })
+        {
+            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(route)).StatusCode);
+        }
 
-        var css = await client.GetAsync("/static/css/app.css");
-        Assert.Equal(HttpStatusCode.OK, css.StatusCode);
-        Assert.Contains("text/css", css.Content.Headers.ContentType?.MediaType);
+        // 旧页面专属静态资源已删除（/control-console 自包含，不引用这些文件）。
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/static/css/app.css")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/static/js/api.js")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/static/js/stainer-host.js")).StatusCode);
 
-        var js = await client.GetAsync("/static/js/api.js");
-        Assert.Equal(HttpStatusCode.OK, js.StatusCode);
-        var apiScript = await js.Content.ReadAsStringAsync();
-        Assert.Contains("initializeUserMenu", apiScript);
-        Assert.Contains("logoutButton.addEventListener('click'", apiScript);
-
-        var fallback = await client.GetStringAsync("/kiosk/unknown");
-        Assert.Contains("drawerBoard", fallback);
-    }
-
-    [Fact]
-    public async Task Samples_page_uses_channel_batch_api_without_local_storage_business_state()
-    {
-        await using var factory = CreateFactory();
-        using var client = factory.CreateClient();
-
-        var html = await client.GetStringAsync("/samples");
-        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
-
-        Assert.Contains("选择实验类型", html);
-        Assert.Contains("使用当前默认 HE 流程", html);
-        Assert.Contains("使用当前默认 IHC 流程", html);
-        Assert.Contains("确认创建任务", html);
-        Assert.DoesNotContain("统一选择脚本", html);
-        Assert.DoesNotContain("channelScriptSelect", html);
-        Assert.DoesNotContain("WorkflowVersionId", html);
-        Assert.DoesNotContain("confirmMockTask", html);
-        Assert.DoesNotContain("localStorage", html);
-
-        Assert.DoesNotContain("localStorage", hostScript);
-        Assert.DoesNotContain("channelWorkflowSelections", hostScript);
-        Assert.DoesNotContain("/api/samples/scan", hostScript);
-        Assert.Contains("/api/channel-batches/active", hostScript);
-        Assert.Contains("/api/channel-batches/experiment-type-selection", hostScript);
-        Assert.DoesNotContain("/api/channel-batches/workflow-selection", hostScript);
-        Assert.Contains("/api/tasks/he", hostScript);
-        Assert.Contains("/api/tasks/ihc", hostScript);
-        Assert.Contains("/api/lis/mock-query", hostScript);
-        Assert.Contains("channelBatch.changed", hostScript);
-        Assert.Contains("slideTask.created", hostScript);
-        Assert.Contains("继承通道脚本", hostScript);
-        Assert.Contains("未选实验类型，禁止添加", hostScript);
-    }
-
-    [Fact]
-    public async Task Reagents_page_reads_formal_api_without_mock_or_local_storage_business_state()
-    {
-        await using var factory = CreateFactory();
-        using var client = factory.CreateClient();
-
-        var html = await client.GetStringAsync("/reagents");
-        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
-
-        Assert.Contains("扫码会话", html);
-        Assert.Contains("开始扫码", html);
-        Assert.Contains("完成扫码", html);
-        Assert.Contains("reagentDeck", html);
-        Assert.DoesNotContain("Mock:", html);
-        Assert.DoesNotContain("localStorage", html);
-
-        Assert.Contains("/api/reagents/rack", hostScript);
-        Assert.Contains("/api/reagents/scan-sessions/overview", hostScript);
-        Assert.Contains("/api/reagents/scan-sessions/start", hostScript);
-        Assert.Contains("completeReagentScanSession", hostScript);
-        Assert.Contains("/api/reagents/scan-confirm", hostScript);
-        Assert.Contains("beginReagentScanGuide", hostScript);
-        Assert.Contains("scanState", hostScript);
-        Assert.Contains("reagent.bottleDepleted", hostScript);
-        Assert.DoesNotContain("localStorage", hostScript);
-        Assert.DoesNotContain("/api/reagents/scan'", hostScript);
-        Assert.DoesNotContain("/api/reagents/scan\"", hostScript);
-        Assert.DoesNotContain("CreateReagent(", hostScript);
-    }
-
-    [Fact]
-    public async Task Operator_pages_use_formal_snapshot_dab_and_run_contracts()
-    {
-        await using var factory = CreateFactory();
-        using var client = factory.CreateClient();
-
-        var dashboard = await client.GetStringAsync("/dashboard");
-        var samples = await client.GetStringAsync("/samples");
-        var reagents = await client.GetStringAsync("/reagents");
-        var run = await client.GetStringAsync("/run");
-        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
-        var runScript = await client.GetStringAsync("/static/js/run.js");
-
-        Assert.Contains("dashboardEvents", dashboard);
-        Assert.Contains("dashboardEventModal", dashboard);
-        Assert.Contains("openDashboardEventList()", dashboard);
-        Assert.DoesNotContain("operator-event-row", dashboard);
-        Assert.DoesNotContain("DAB 临时配液区", dashboard);
-        Assert.Contains("channelScriptModal", samples);
-        Assert.DoesNotContain("单玻片流程", samples);
-        Assert.Contains("dabPositionGrid", reagents);
-        Assert.Contains("dabCleaningConfirmButton", reagents);
-        Assert.Contains("runResourceGrid", run);
-        Assert.Contains("runNeedles", run);
-        Assert.Contains("runCommandStages", run);
-        Assert.Contains("启动前预检", run);
-
-        Assert.Contains("/api/operator/snapshot", hostScript);
-        Assert.Contains("/api/dab/batches/", hostScript);
-        Assert.DoesNotContain("/api/state", hostScript);
-        Assert.Contains("/api/operator/snapshot", runScript);
-        Assert.Contains("/api/runs/", runScript);
-        Assert.Contains("operatorConfirm", runScript);
-        Assert.DoesNotContain("MockDeviceState", runScript);
-        Assert.DoesNotContain("状态哈希", runScript);
-        Assert.DoesNotContain("confirm(", runScript);
-        Assert.DoesNotContain("prompt(", runScript);
-        Assert.DoesNotContain("alert(", runScript);
-        Assert.DoesNotContain("/api/state", runScript);
-        Assert.DoesNotContain("/api/run/start", runScript);
+        // 未匹配的非 API 路径同样返回 404（旧 fallback 渲染 /dashboard 的行为已移除）。
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/kiosk/unknown")).StatusCode);
     }
 
     [Fact]
@@ -253,50 +117,23 @@ public sealed class WebHostIntegrationTests
     }
 
     [Fact]
-    public async Task Traceability_pages_use_formal_history_alarm_audit_apis_and_csv_exports()
-    {
-        await using var factory = CreateFactory();
-        using var client = factory.CreateClient();
-
-        var history = await client.GetStringAsync("/history");
-        var alarms = await client.GetStringAsync("/alarms");
-        var management = await client.GetStringAsync("/management");
-        var hostScript = await client.GetStringAsync("/static/js/stainer-host.js");
-
-        Assert.Contains("historySlides", history);
-        Assert.Contains("alarmList", alarms);
-        Assert.Contains("auditCorrelationFilter", management);
-        Assert.Contains("/api/history/runs", hostScript);
-        Assert.Contains("/api/history/reagent-consumptions", hostScript);
-        Assert.Contains("/api/alarms", hostScript);
-        Assert.Contains("/api/audit/logs", hostScript);
-        Assert.Contains("/api/history/export/runs", hostScript);
-        Assert.Contains("/api/history/export/reagent-consumptions", hostScript);
-        Assert.Contains("/api/alarms/export", hostScript);
-        Assert.Contains("/api/audit/export", hostScript);
-        Assert.Contains("acknowledgeTraceAlarm", hostScript);
-        Assert.DoesNotContain("localStorage", hostScript);
-    }
-
-    [Fact]
-    public async Task Development_only_pages_are_hidden_in_production()
+    public async Task Removed_pages_return_404_in_production_and_login_redirects_to_control_console()
     {
         await using var factory = CreateFactory("Production");
-        using var client = factory.CreateClient();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-        var html = await client.GetStringAsync("/mock-timeline");
+        // 旧页面（含原 dev-only 的 mock-timeline）在生产环境同样删除并返回 404。
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/mock-timeline")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/dashboard")).StatusCode);
 
-        Assert.Contains("drawerBoard", html);
-        Assert.DoesNotContain("mockGanttBoard", html);
-        Assert.DoesNotContain("mock-timeline.js", html);
-
-        // /control-console 现在在所有环境都返回数字孪生页（不再是 dev-only，也不会回退成 dashboard）。
+        // /control-console 在生产环境也直接返回数字孪生页（不再受 legacy 兼容开关控制，也不会回退成 dashboard）。
         var twinConsole = await client.GetStringAsync("/control-console");
         Assert.Contains("api/twin/snapshot", twinConsole, StringComparison.Ordinal);
         Assert.DoesNotContain("controlConsoleFrame", twinConsole, StringComparison.Ordinal);
 
+        // 登录后统一回到 /control-console（生产环境不再回退到已删除的 /dashboard）。
         var login = await client.PostAsJsonAsync("/api/login", new { username = "operator", password = "123456", role = "operator" });
-        Assert.Equal("/dashboard", (await login.Content.ReadFromJsonAsync<LoginResponse>())?.Redirect);
+        Assert.Equal("/control-console", (await login.Content.ReadFromJsonAsync<LoginResponse>())?.Redirect);
     }
 
     [Fact]

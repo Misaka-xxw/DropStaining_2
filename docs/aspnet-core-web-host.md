@@ -40,7 +40,7 @@ Stop-Process -Id <pid>
 ## Boundaries
 
 - The C# ASP.NET Core service is the formal local web host.
-- The old FastAPI/Jinja source under `src/app` is retained only as prototype reference.
+- The old FastAPI/Jinja source under `src/app` was removed in step 6 (it had existed only as a prototype reference); the formal web UI is now solely `/control-console`.
 - Jinja is not used by the ASP.NET Core host.
 - Business state is read from application services and SQLite. Mock mode is limited to simulated device behavior behind `IDeviceAdapter`.
 - The default binding is local-only (`127.0.0.1`), not LAN-facing.

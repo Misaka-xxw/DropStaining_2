@@ -1,5 +1,7 @@
 # `/control-console` 数字孪生 控件 → 后端 API 映射表
 
+> 注（步骤 6 后）：本文作为对照提到的“operator 主控页（`LegacyUiPageRenderer`）”及其多页面已在步骤 6 删除；当前项目正式 UI 仅剩本页 `/control-console`，文中将 `LegacyUiPageRenderer` 作为对照页的引用仅作历史说明。
+
 > 生成日期：2026-07-14。目标文件：[`wwwroot/twin/index.html`](../backend/Stainer.Web/wwwroot/twin/index.html)（单体 ~6056 行）。本页与 operator 主控页（`LegacyUiPageRenderer`）是**两套独立控制面**：孪生页以 2D 可视化 + 工程调试为主，主控页以表单化操作为主。后端端点为同一套 ASP.NET API（详见 [ui-api-mapping.md](ui-api-mapping.md)）。
 >
 > 鉴权已于本次先期改造为 cookie 范式（`/api/login`、`/api/logout`、`/api/current-user`），移除了原 localStorage 假登录。

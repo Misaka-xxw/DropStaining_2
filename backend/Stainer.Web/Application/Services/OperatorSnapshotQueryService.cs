@@ -265,7 +265,7 @@ public sealed class OperatorSnapshotQueryService(
                     summary.Detail,
                     "Recorded",
                     x.CreatedAtUtc,
-                    "/history");
+                    "/control-console");
             })
             .ToList();
         var commandEvents = commands.Select(x => new OperatorEventResponse(
@@ -275,7 +275,7 @@ public sealed class OperatorSnapshotQueryService(
             $"命令阶段：{x.Status}",
             x.Status,
             x.CompletedAtUtc ?? x.AcknowledgedAtUtc ?? x.CommandSentAtUtc ?? x.CreatedAtUtc,
-            "/run"));
+            "/control-console"));
 
         return audit
             .Concat(commandEvents)

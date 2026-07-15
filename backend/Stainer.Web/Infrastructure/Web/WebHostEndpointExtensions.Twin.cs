@@ -4,13 +4,16 @@ using Stainer.Web.Infrastructure.Twin;
 
 namespace Stainer.Web.Infrastructure.Web;
 
-// 数字孪生（移植自 stainer_twin_fastapi）的页面与 API。
+// 数字孪生页面与 API（早期移植自 stainer_twin_fastapi；该 Python 源已于步骤 6 删除）。
 // /control-console 直接返回孪生 HTML（无旧版外壳、无 iframe），/api/twin/* 与其它只读 API 一致加角色网关。
 public static partial class WebHostEndpointExtensions
 {
     private static void MapTwinEndpoints(WebApplication app)
     {
         var twinHtmlPath = Path.Combine(app.Environment.ContentRootPath, "wwwroot", "twin", "index.html");
+
+        // 根路径统一收敛到 /control-console（唯一正式 Web 页面）；其余旧页面路由已删除，访问即 404。
+        app.MapGet("/", () => Results.Redirect("/control-console", permanent: false));
 
         app.MapGet("/control-console", () => Results.File(twinHtmlPath, "text/html; charset=utf-8"));
 
