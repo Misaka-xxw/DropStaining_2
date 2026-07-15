@@ -2285,7 +2285,7 @@
             </div>
           </div>
           <div class="workspace-pane precheck-pane" id="precheckPane" role="region" aria-label="检测状态">
-            <div class="precheck-intro"><strong>检测流程</strong><button type="button" id="precheckRunAllBtn" data-control-id="precheckRunAllBtn">一键检测所有</button></div>
+            <div class="precheck-intro"><strong>检测流程</strong><button type="button" id="scanReagentsBtn" data-control-id="scanReagentsBtn">Mock 扫描全部试剂</button><button type="button" id="precheckRunAllBtn" data-control-id="precheckRunAllBtn">一键检测所有</button></div>
             <div class="precheck-flow" id="precheckList"></div>
           </div>
           <div class="workspace-pane debug-pane" id="debugPane" role="region" aria-label="工程师调试界面"></div>
@@ -2433,6 +2433,9 @@ let currentStepIndex = 0;
 let estimatedFinishAt = null;
 let totalRuns = 0;
 let demoPromise = null;
+let runtimeState = null;
+let runtimeArmAnimationSeq = 0;
+let lastRuntimeStepId = null;
 let arm = { x:177.75, y:17.0, z1:0, z2:0, fluid1:null, fluid2:null };
 const cameraStates = { reagent:'idle', arm:'idle' };
 let currentTarget = null;
@@ -3743,6 +3746,52 @@ function animateArmTo(x, y, z1, z2, duration=900) {
     requestAnimationFrame(frame);
   });
 }
+function applyRuntimeDrivenState(nextRuntime, nextArm) {
+  if(nextRuntime) {
+    runtimeState = nextRuntime;
+    const status = String(nextRuntime.status || '').toLowerCase();
+    running = ['running','pending'].includes(status);
+    paused = status === 'paused';
+    currentStepIndex = Number(nextRuntime.completedStepCount || 0);
+    const step = nextRuntime.currentStep || null;
+    if(step?.id && step.id !== lastRuntimeStepId) {
+      lastRuntimeStepId = step.id;
+      const channelText = step.drawerCode ? `通道 ${step.drawerCode} · ` : '';
+      setPhaseText(`${channelText}${step.name || step.actionType || step.majorStepCode || '运行中'}`);
+      log(`实际流程步骤 ${step.stepNo || currentStepIndex + 1}：${step.name || step.actionType || step.majorStepCode || '运行中'}`, 'ok', step.drawerCode || null);
+    }
+    if(status === 'completed') setPhaseText('完成');
+    if(status === 'faulted') setPhaseText('故障');
+  }
+
+  if(!nextArm) return;
+  const end = {
+    x:Number(nextArm.x ?? arm.x), y:Number(nextArm.y ?? arm.y),
+    z1:Number(nextArm.z1 ?? arm.z1), z2:Number(nextArm.z2 ?? arm.z2)
+  };
+  const distance = Math.hypot(end.x - arm.x, end.y - arm.y, end.z1 - arm.z1, end.z2 - arm.z2);
+  if(!running || distance < 0.01) {
+    arm = {...arm, ...end};
+    updateArmVisual();
+    return;
+  }
+  const sequence = ++runtimeArmAnimationSeq;
+  const start = {...arm};
+  const startedAt = performance.now();
+  const duration = Math.max(350, Math.min(1800, distance * 12));
+  function frame(now) {
+    if(sequence !== runtimeArmAnimationSeq) return;
+    const t = Math.min(1, (now - startedAt) / duration);
+    const ease = t < .5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2;
+    arm.x = start.x + (end.x-start.x)*ease;
+    arm.y = start.y + (end.y-start.y)*ease;
+    arm.z1 = start.z1 + (end.z1-start.z1)*ease;
+    arm.z2 = start.z2 + (end.z2-start.z2)*ease;
+    updateArmVisual(); updateKpis();
+    if(t < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
 async function runDemo() {
   if(running) return;
   if(!precheckPassed) { showSideTab('precheck'); renderPrecheckList(); setInfoPanel('尚未完成检测', ['请先完成右侧“检测”，全部通过后再开始。']); log('开始被拦截：检测尚未通过', 'warn'); return; }
@@ -4169,8 +4218,10 @@ function updateKpis() {
   const avg = Math.round(channels.reduce((s,c)=>s+c.progress,0)/channels.length);
   const progress = document.getElementById('kpiProgress'); if(progress) progress.textContent = avg + '%';
   const overall = document.getElementById('overallBar'); if(overall) overall.style.width = avg + '%';
-  const step = document.getElementById('kpiStep'); if(step) step.textContent = `${Math.min(currentStepIndex, DEMO_STEPS.length)}/${DEMO_STEPS.length}`;
-  const stepBar = document.getElementById('stepBar'); if(stepBar) stepBar.style.width = (currentStepIndex / DEMO_STEPS.length * 100) + '%';
+  const runtimeTotalSteps = Number(runtimeState?.totalStepCount || DEMO_STEPS.length);
+  const runtimeCompletedSteps = Math.min(currentStepIndex, runtimeTotalSteps);
+  const step = document.getElementById('kpiStep'); if(step) step.textContent = `${runtimeCompletedSteps}/${runtimeTotalSteps}`;
+  const stepBar = document.getElementById('stepBar'); if(stepBar) stepBar.style.width = (runtimeTotalSteps ? runtimeCompletedSteps / runtimeTotalSteps * 100 : 0) + '%';
   const temp = document.getElementById('kpiTemp'); if(temp) temp.textContent = currentReagentTemp();
   updateReagentTempReadout();
 }
@@ -4290,13 +4341,39 @@ function scanSamples() {
   cameraStates.arm = 'complete'; updateArmVisual();
   log(`样本区扫描完成：识别 ${slides.length} 张玻片`, 'ok'); drawSlideOps(); updateVisualStates(); renderChannelCards();
 }
-function scanReagents() {
-  setInfoPanel('试剂区扫描', ['扫描试剂位、更新试剂映射，并刷新余量状态。']);
+async function scanReagents() {
+  if(uiMode !== 'twin') {
+    setInfoPanel('试剂扫码不可用', ['调试和生产模式必须使用真实试剂扫码器，禁止调用 Mock 扫码。']);
+    log('试剂扫码被拦截：当前模式必须使用真实试剂扫码器', 'err');
+    return;
+  }
+  setInfoPanel('试剂区 Mock 扫描', ['正在模拟扫描全部 40 个试剂位，并通过正式扫码会话写入数据库。']);
   cameraStates.reagent = 'active'; drawAuxPorts();
-  (byCategory.get('试剂区') || []).forEach(r => itemState.set(r.name, 'scanned'));
-  setPhaseText('试剂区扫描完成');
-  cameraStates.reagent = 'complete'; drawAuxPorts();
-  log('试剂区扫描完成：5列×8试剂位已映射（S11~S58）', 'ok'); updateVisualStates();
+  try {
+    const result = await backendApi('/api/reagents/scan', {
+      method:'POST',
+      body:JSON.stringify({
+        commandId:makeCommandId('mock-reagent-scan-all'),
+        scope:'all',
+        scenario:'Valid'
+      })
+    });
+    (byCategory.get('试剂区') || []).forEach(r => itemState.set(r.name, 'scanned'));
+    setPhaseText('试剂区 Mock 扫描完成');
+    cameraStates.reagent = 'complete'; drawAuxPorts();
+    log(`试剂区 Mock 扫描完成：已写入 ${result?.positionCount ?? 40} 个试剂位`, 'ok');
+    setInfoPanel('试剂区 Mock 扫描完成', [
+      `扫码会话：${result?.scanSessionId || '已完成'}`,
+      `有效位置：${result?.positionCount ?? 40}/40`,
+      '结果已写入数据库，可重新执行启动预检。'
+    ]);
+    updateVisualStates();
+    await loadDatabaseSnapshot();
+  } catch(err) {
+    cameraStates.reagent = 'idle'; drawAuxPorts();
+    setInfoPanel('试剂区 Mock 扫描失败', [String(err?.message || err)]);
+    log(`试剂区 Mock 扫描失败：${err?.message || err}`, 'err');
+  }
 }
 function simulateLowReagent() {
   setInfoPanel('试剂不足提醒', ['低液位试剂位已在试剂区高亮，可点击具体试剂查看余量。']);
@@ -4423,6 +4500,44 @@ function mapCheckStatus(status) {
     default: return 'error'; // 未知状态一律视为异常，绝不默认通过
   }
 }
+function localizePreflightIssue(issue) {
+  const areaNames = {
+    Device:'设备', Thermal:'温控', Fluidics:'流体系统', Motion:'运动系统',
+    Tasks:'任务', Workflow:'流程', Reagents:'试剂'
+  };
+  const code = String(issue?.code || '');
+  const raw = String(issue?.message || '未知错误');
+  const channel = raw.match(/Channel\s+([^\s.]+)/i)?.[1] || '';
+  const task = raw.match(/Task\s+([^\s.]+)/i)?.[1] || '';
+  const count = raw.match(/(?:has|contains)\s+(\d+)/i)?.[1] || '';
+  const tail = raw.match(/:\s*([^.]*)\.?$/)?.[1] || '';
+  const messages = {
+    device_initialization_required:`当前模式的设备初始化尚未就绪（状态：${raw.match(/Status=([^.]*)/i)?.[1] || '失败'}）。`,
+    no_confirmed_tasks:'没有已确认的染色任务。',
+    channel_batch_required:`任务 ${task} 尚未分配到通道批次。`,
+    channel_batch_needs_manual_resolution:`通道 ${channel} 需要人工确认流程。`,
+    channel_workflow_required:`通道 ${channel} 尚未选择流程。`,
+    drawer_batch_size_invalid:`通道 ${channel} 必须包含 1～4 张玻片。`,
+    channel_experiment_type_mismatch:`通道 ${channel} 的玻片或流程类型与实验类型不一致。`,
+    channel_workflow_mismatch:`通道 ${channel} 的玻片流程与通道流程不一致。`,
+    primary_antibody_required:`通道 ${channel} 有 ${count || '部分'} 张 IHC 玻片未设置一抗编码。`,
+    channel_workflow_incompatible:`通道 ${channel} 存在不兼容的一抗编码：${tail}。`,
+    workflow_version_missing:`通道 ${channel} 的流程版本不存在。`,
+    workflow_version_not_published:`通道 ${channel} 的流程版本尚未发布。`,
+    scan_missing:'尚未完成试剂扫码确认。',
+    scan_has_invalid_items:`最近一次试剂扫码包含 ${count || '若干'} 个无效项目。`,
+    scan_has_unscanned_positions:`最近一次试剂扫码仍有 ${count || '若干'} 个位置未扫描。`,
+    required_reagent_missing:`缺少必需试剂：${tail}。`,
+    required_reagent_expired:`必需试剂已过期：${tail}。`,
+    required_reagent_insufficient:`必需试剂余量不足：${tail}。`,
+    mixer_running:'混匀器正在运行。'
+  };
+  let message = messages[code] || raw;
+  message = message
+    .replace(/Mixer\s+([A-D])\s+is running; fault=none\.?/gi, '混匀器 $1 正在运行，无故障。')
+    .replace(/Device initialization is not ready for the current mode\. Status=([^.]*)\.?/gi, '当前模式的设备初始化尚未就绪（状态：$1）。');
+  return `${areaNames[issue?.area] || issue?.area || '系统'}：${message}`;
+}
 function renderPrecheckList() {
   const wrap = document.getElementById('precheckList');
   const runAllBtn = document.getElementById('precheckRunAllBtn');
@@ -4471,7 +4586,7 @@ function renderPrecheckResultPanel(preflight) {
     log('检测通过：开始按钮已启用', 'ok');
   } else if(allPassed && !precheckPassed) {
     // 设备检查全通过，但业务条件未通过（Workflow/Tasks/Reagents 等）
-    setInfoPanel('设备检查通过，运行条件未通过', failIssues.length ? failIssues.map(x => `${x.area}：${x.message}`) : ['后端运行前校验未通过，请处理后再开始。']);
+    setInfoPanel('设备检查通过，运行条件未通过', failIssues.length ? failIssues.map(localizePreflightIssue) : ['后端运行前校验未通过，请处理后再开始。']);
     log(`检测完成：设备检查通过，但运行条件未通过（${failIssues.length} 项业务问题）`, 'err');
   } else {
     setInfoPanel('检测未通过', failedItems.length ? [`异常项：${failedItems.join('、')}`, '请处理异常后重新检测。'] : ['设备检查未通过，请处理异常后重新检测。']);
@@ -4555,6 +4670,8 @@ async function startRealRun() {
       log('启动前校验未通过，请先完成检测', 'err');
       showSideTab('precheck');
       renderPrecheckList();
+      const blockingIssues = (report?.issues || []).filter(x => String(x.severity || 'Fail').toLowerCase() !== 'warning');
+      setInfoPanel('启动已拦截', blockingIssues.length ? blockingIssues.map(localizePreflightIssue) : ['启动条件尚未满足，请重新检测后再试。']);
       setButtonState('startBtn', { disabled:!precheckPassed });
       return;
     }
@@ -5902,7 +6019,7 @@ async function restoreBackendSession() {
     const res = await fetch('/api/current-user', { credentials:'same-origin', cache:'no-store' });
     if(!res.ok) { setLoginVisible(true); return; }
     const user = await res.json();
-    if(applyServerUser(user)) { setLoginVisible(false); applyUserRoleUi(); renderUserMenu(); loadDatabaseSnapshot(); }
+    if(applyServerUser(user)) { setLoginVisible(false); applyUserRoleUi(); renderUserMenu(); loadDatabaseSnapshot(); startRealtimeSync(); }
     else setLoginVisible(true);
   } catch(e) { setLoginVisible(true); }
 }
@@ -5948,8 +6065,10 @@ async function loginAsRole(role) {
   resetStatusDetailToDefault();
   showSideTab('status');
   loadDatabaseSnapshot();
+  startRealtimeSync();
 }
 async function logoutCurrentUser() {
+  stopRealtimeSync();                  // 先停实时同步：关 WS/重连/轮询/防抖/尾随，避免退出过程或之后补发 snapshot(401)
   try { await fetch('/api/logout', { method:'POST', credentials:'same-origin' }); } catch(e) {}
   CURRENT_USER = { id:'', username:'', name:'未登录', role:'guest' };
   applyUserRoleUi();
@@ -6491,6 +6610,11 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
     uiMode = btn.dataset.mode || 'twin';
+    const mockReagentScanBtn = document.getElementById('scanReagentsBtn');
+    if(mockReagentScanBtn) {
+      mockReagentScanBtn.hidden = uiMode !== 'twin';
+      mockReagentScanBtn.disabled = uiMode !== 'twin';
+    }
     precheckPassed = false;
     for(const step of PRECHECK_STEPS) precheckState[step.id] = 'idle';
     precheckDetails = {};
@@ -6532,30 +6656,48 @@ if(csvInput) csvInput.addEventListener('change', e => { if(e.target.files && e.t
 
 let _snapshotLoadStatus = 'unknown';   // 'ok' | 'error' | 'unknown'，用于节流高频刷新日志
 let _snapshotLoadErrorLoggedAt = 0;
-async function loadDatabaseSnapshot() {
-  try {
-    const response = await fetch('/api/twin/snapshot', { cache:'no-store', credentials:'same-origin' });
-    if(!response.ok) throw new Error(`HTTP ${response.status}`);
-    const snapshot = await response.json();
-    window.digitalTwinDbSnapshot = snapshot;
-    applyDatabaseSnapshot(snapshot);
-    // 高频刷新（SignalR/轮询）下，成功日志只在状态切换时写一次，避免刷屏
-    if(_snapshotLoadStatus !== 'ok') {
-      _snapshotLoadStatus = 'ok';
-      log('数据库快照已加载：前端数值已按 DB/null 策略刷新', 'ok');
-    } else {
-      console.debug('数据库快照已刷新');
-    }
-  } catch(err) {
-    console.warn('数据库快照加载失败', err);
-    // 失败日志同样节流：状态切换或距上次记录 >30s 时才写一条页面日志
-    const now = Date.now();
-    if(_snapshotLoadStatus !== 'error' || now - _snapshotLoadErrorLoggedAt > 30000) {
-      _snapshotLoadStatus = 'error';
-      _snapshotLoadErrorLoggedAt = now;
-      log('数据库快照加载失败：' + err.message, 'err');
-    }
+let _snapshotLoadPromise = null;       // 单例在途 Promise：保证全局唯一并发抓取（覆盖登录/启停运行等所有直接调用方）
+let _snapshotTrailingRefresh = false;  // 在途抓取期间又来了刷新请求（如 SignalR 事件）→ 该次结束后补抓一次，避免丢事件
+function loadDatabaseSnapshot() {
+  if(_snapshotLoadPromise) {                       // 已有在途抓取：复用同一 Promise，绝不并发
+    _snapshotTrailingRefresh = true;               // 在途请求可能早于本次状态变化读取数据 → 标记结束后补抓
+    return _snapshotLoadPromise;
   }
+  const promise = (async () => {
+    try {
+      const response = await fetch('/api/twin/snapshot', { cache:'no-store', credentials:'same-origin' });
+      if(!response.ok) throw new Error(`HTTP ${response.status}`);
+      const snapshot = await response.json();
+      window.digitalTwinDbSnapshot = snapshot;
+      applyDatabaseSnapshot(snapshot);
+      // 高频刷新（SignalR/轮询）下，成功日志只在状态切换时写一次，避免刷屏
+      if(_snapshotLoadStatus !== 'ok') {
+        _snapshotLoadStatus = 'ok';
+        log('数据库快照已加载：前端数值已按 DB/null 策略刷新', 'ok');
+      } else {
+        console.debug('数据库快照已刷新');
+      }
+    } catch(err) {
+      console.warn('数据库快照加载失败', err);
+      // 失败日志同样节流：状态切换或距上次记录 >30s 时才写一条页面日志
+      const now = Date.now();
+      if(_snapshotLoadStatus !== 'error' || now - _snapshotLoadErrorLoggedAt > 30000) {
+        _snapshotLoadStatus = 'error';
+        _snapshotLoadErrorLoggedAt = now;
+        log('数据库快照加载失败：' + err.message, 'err');
+      }
+    } finally {
+      _snapshotLoadPromise = null;                 // 抓取结束（无论成败）后清空，允许下一次
+    }
+  })();
+  _snapshotLoadPromise = promise;
+  promise.finally(() => {                          // 本 Promise 结束后：若在途期间又有刷新请求，补抓一次
+    if(_snapshotTrailingRefresh) {
+      _snapshotTrailingRefresh = false;
+      scheduleDatabaseSnapshotRefresh('trailing');
+    }
+  });
+  return promise;
 }
 function applyNullableMapEntries(map, entries, keyField, valueField) {
   if(!Array.isArray(entries)) return;
@@ -6590,7 +6732,7 @@ function applyDatabaseSnapshot(snapshot) {
   if(payload.liquids) Object.assign(liquids, payload.liquids);
   if(payload.metrics) updateHeaderMetrics(payload.metrics);
   if(payload.cameras) Object.assign(cameraStates, payload.cameras);
-  if(payload.arm) arm = {...arm, ...payload.arm};
+  applyRuntimeDrivenState(payload.runtime || null, payload.arm || null);
   const values = snapshot.control_values || {};
   try {
     Object.entries(values).forEach(([id, value]) => {
@@ -6645,37 +6787,20 @@ window.digitalTwinLoadDatabaseSnapshot = loadDatabaseSnapshot;
 // loadDatabaseSnapshot，绝不直接写复杂 UI 状态。六个演示按钮保留前端模拟逻辑，其瞬态写入
 // 会在下一次 snapshot 刷新时被自动覆盖（瞬态叠加 + 自愈）。
 let _snapshotRefreshTimer = null;       // 防抖定时器：合并短时间内的多次刷新请求
-let _snapshotRefreshInFlight = false;   // 防止并发 loadDatabaseSnapshot
-let _snapshotRefreshQueued = false;     // 在途刷新期间又来了请求，收尾后再补一次
 let _snapshotRefreshLastReason = null;  // 最近一次触发原因，便于日志排查
 const SNAPSHOT_REFRESH_DEBOUNCE_MS = 160;
 
-// 统一刷新入口：合并高频事件（SignalR 风暴 / 连续轮询），防止并发抓取。
+// 统一刷新入口：合并高频事件（SignalR 风暴 / 连续轮询）。
+// 并发保护统一由 loadDatabaseSnapshot 的单例在途 Promise 提供，覆盖所有直接与间接调用方，
+// 因此这里只需防抖触发，无需再维护在途/排队状态。
 function scheduleDatabaseSnapshotRefresh(reason) {
   if(reason) _snapshotRefreshLastReason = reason;
   if(_snapshotRefreshTimer) return;     // 已在防抖窗口内，合并本次请求
   _snapshotRefreshTimer = setTimeout(() => {
     _snapshotRefreshTimer = null;
-    _runScheduledSnapshotRefresh();
-  }, SNAPSHOT_REFRESH_DEBOUNCE_MS);
-}
-
-async function _runScheduledSnapshotRefresh() {
-  if(_snapshotRefreshInFlight) {        // 已有一次在途：收尾后再补一次
-    _snapshotRefreshQueued = true;
-    return;
-  }
-  _snapshotRefreshInFlight = true;
-  try {
     console.debug('刷新 snapshot，原因：' + (_snapshotRefreshLastReason || 'scheduled'));
-    await loadDatabaseSnapshot();
-  } finally {
-    _snapshotRefreshInFlight = false;
-    if(_snapshotRefreshQueued) {
-      _snapshotRefreshQueued = false;
-      scheduleDatabaseSnapshotRefresh(_snapshotRefreshLastReason || 'queued');
-    }
-  }
+    loadDatabaseSnapshot();
+  }, SNAPSHOT_REFRESH_DEBOUNCE_MS);
 }
 window.scheduleDatabaseSnapshotRefresh = scheduleDatabaseSnapshotRefresh;
 
@@ -6683,11 +6808,17 @@ window.scheduleDatabaseSnapshotRefresh = scheduleDatabaseSnapshotRefresh;
 // 连接写法对齐 stainer-host.js 与 RuntimeLedgerExecutorTests：直连 ws(s)://host/hubs/machine，
 // 发送 SignalR JSON 握手帧（\x1e 为记录分隔符），仅消费 type=1 的 machineEvent 调用，
 // 不在客户端直接写复杂 UI 状态；type=6 为 ping，回 pong 保活。
+//
+// 退避策略要点：服务端在 OnConnectedAsync（鉴权）之前就接受 WS 升级并回握手响应 {}，因此
+// 未登录/鉴权失败时 onopen 仍会触发，但连接随即被 abort。故 onopen 不重置退避、不刷新；
+// 只有收到首条真实帧（ping/machineEvent，证明已通过鉴权并加入授权组）才认定连接稳定，
+// 在 _confirmMachineConnection 里重置退避并刷新一次。
 let _machineSocket = null;
-let _machineSocketConnected = false;
+let _machineSocketConnected = false;   // 收到首条真实帧后才置 true（驱动轮询频率与“已连接”判定）
 let _machineReconnectTimer = null;
 let _machineReconnectDelayMs = 1000;
-let _machineEverConnected = false;
+let _machineEverConnected = false;     // 本会话是否曾确认连接过（用于 connected/reconnected 文案）
+let _realtimeSyncStarted = false;      // logout 后置 false，阻止重连与轮询自恢复
 
 function _machineHubConnected() { return !!_machineSocketConnected; }
 
@@ -6697,30 +6828,28 @@ function _machineHubUrl() {
 }
 
 function connectMachineHub() {
+  if(!_realtimeSyncStarted) return;     // 已退出登录：不再重连
   if(!('WebSocket' in window)) return;
   if(_machineSocket && (_machineSocket.readyState === WebSocket.OPEN || _machineSocket.readyState === WebSocket.CONNECTING)) return;
   try {
     _machineSocket = new WebSocket(_machineHubUrl());
     _machineSocket.onopen = () => {
       try { _machineSocket.send(JSON.stringify({ protocol:'json', version:1 }) + '\x1e'); } catch(e) {}
-      const wasReconnect = _machineEverConnected;
-      _machineEverConnected = true;
-      _machineReconnectDelayMs = 1000;
-      _machineSocketConnected = true;
-      // 连接 / 重连成功后立即触发一次 snapshot 刷新（只触发，不直接写状态）
-      scheduleDatabaseSnapshotRefresh(wasReconnect ? 'signalr:reconnected' : 'signalr:connected');
-      scheduleNextSnapshotPoll();        // 已连接：切换到低频轮询
+      // 不在此重置退避、也不在此刷新 snapshot：鉴权失败时 onopen 会触发但连接随即被 abort，
+      // 必须等收到首条真实帧才确认稳定（见 _confirmMachineConnection）。
     };
     _machineSocket.onmessage = event => {
       String(event.data || '').split('\x1e').filter(Boolean).forEach(frame => {
         let message;
         try { message = JSON.parse(frame); } catch(e) { return; }
         if(!message) return;
-        if(message.type === 6) {         // SignalR ping：回 pong 保活
+        if(message.type === 6) {         // SignalR ping：确认连接稳定 + 回 pong 保活
+          _confirmMachineConnection();
           try { _machineSocket.send('{"type":6}\x1e'); } catch(e) {}
           return;
         }
         if(message.type === 1 && message.target === 'machineEvent') {
+          _confirmMachineConnection();
           const evt = message.arguments && message.arguments[0];
           const type = (evt && evt.type) || 'machineEvent';
           // 收到任意机器状态变化通知 → 仅触发一次防抖 snapshot 刷新
@@ -6730,8 +6859,8 @@ function connectMachineHub() {
     };
     _machineSocket.onclose = () => {
       _machineSocketConnected = false;
-      _scheduleMachineReconnect();
-      scheduleNextSnapshotPoll();        // 断线：切换到加速轮询兜底
+      _scheduleMachineReconnect();      // 未确认连接时退避会继续增长
+      scheduleNextSnapshotPoll();       // 断线：切换到加速轮询兜底
     };
     _machineSocket.onerror = () => { try { _machineSocket.close(); } catch(e) {} };
   } catch(e) {
@@ -6740,7 +6869,20 @@ function connectMachineHub() {
   }
 }
 
+// 收到首条真实帧（ping/machineEvent）= 已通过鉴权并加入授权组 → 认定连接稳定：
+// 重置退避、标记已连接、刷新一次 snapshot。
+function _confirmMachineConnection() {
+  const firstEver = !_machineEverConnected;
+  _machineEverConnected = true;
+  if(_machineSocketConnected) return;   // 已确认过，避免重复刷新
+  _machineSocketConnected = true;
+  _machineReconnectDelayMs = 1000;      // 稳定连接：重置退避
+  scheduleDatabaseSnapshotRefresh(firstEver ? 'signalr:connected' : 'signalr:reconnected');
+  scheduleNextSnapshotPoll();           // 已确认连接：切换到低频轮询
+}
+
 function _scheduleMachineReconnect() {
+  if(!_realtimeSyncStarted) return;     // 已退出登录：不再重连
   if(_machineReconnectTimer) return;
   _machineReconnectTimer = setTimeout(() => {
     _machineReconnectTimer = null;
@@ -6749,28 +6891,56 @@ function _scheduleMachineReconnect() {
   }, _machineReconnectDelayMs);
 }
 
-// ===== 低频轮询兜底（SignalR 已连接时降速，断线时加速）=====
+// ===== 低频轮询兜底（SignalR 已确认连接时降速，断线时加速）=====
 const SNAPSHOT_POLL_CONNECTED_MS = 20000;
 const SNAPSHOT_POLL_DISCONNECTED_MS = 5000;
 let _snapshotPollTimer = null;
 
 function scheduleNextSnapshotPoll() {
   if(_snapshotPollTimer) clearTimeout(_snapshotPollTimer);
+  if(!_realtimeSyncStarted) return;     // 已退出登录：停止轮询
   const delay = _machineHubConnected() ? SNAPSHOT_POLL_CONNECTED_MS : SNAPSHOT_POLL_DISCONNECTED_MS;
   _snapshotPollTimer = setTimeout(() => {
     _snapshotPollTimer = null;
+    if(!_realtimeSyncStarted) return;   // 已退出登录：不再自恢复
     scheduleDatabaseSnapshotRefresh('poll');
     scheduleNextSnapshotPoll();
   }, delay);
+}
+
+// ===== 实时同步生命周期：登录后启动，退出登录时彻底关闭连接/重连/轮询 =====
+function startRealtimeSync() {
+  _realtimeSyncStarted = true;
+  connectMachineHub();                  // 已在连接则内部自行跳过，安全幂等
+  scheduleNextSnapshotPoll();
+}
+
+function stopRealtimeSync() {
+  _realtimeSyncStarted = false;
+  if(_snapshotRefreshTimer) { clearTimeout(_snapshotRefreshTimer); _snapshotRefreshTimer = null; } // 取消已排队的防抖刷新
+  _snapshotTrailingRefresh = false;   // 在途抓取结束后不再补抓，避免退出后多发一次 snapshot(401)
+  if(_snapshotPollTimer) { clearTimeout(_snapshotPollTimer); _snapshotPollTimer = null; }
+  if(_machineReconnectTimer) { clearTimeout(_machineReconnectTimer); _machineReconnectTimer = null; }
+  _machineReconnectDelayMs = 1000;
+  _machineEverConnected = false;
+  if(_machineSocket) {
+    // 先摘掉回调，避免主动 close 触发 onclose→重连/轮询自恢复
+    try {
+      _machineSocket.onopen = null;
+      _machineSocket.onmessage = null;
+      _machineSocket.onclose = null;
+      _machineSocket.onerror = null;
+      _machineSocket.close();
+    } catch(e) {}
+    _machineSocket = null;
+  }
+  _machineSocketConnected = false;
 }
 
 setInterval(() => { updateSideHeaderStatus(); updateKpis(); updateHeaderMetrics(); }, 1000);
 
 resetDemo();
 restoreBackendSession();
-// 启动实时刷新：SignalR 推送 + 低频轮询兜底，统一收敛到 scheduleDatabaseSnapshotRefresh
-connectMachineHub();
-scheduleNextSnapshotPoll();
 [1,2,3,4].forEach(id => { if(channelConfigAssignments[id] && !getProfileById(channelConfigAssignments[id])) channelConfigAssignments[id] = null; assignConfigToChannel(id, channelConfigAssignments[id], false); });
   if(window.digitalTwin?.engineering) {
     window.digitalTwin.engineering.getConfigSectionForm = function(sectionKey) {
