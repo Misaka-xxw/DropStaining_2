@@ -2,6 +2,8 @@ namespace Stainer.Web.Application.Requests;
 
 public sealed record StartDeviceInitializationRequest(string CommandId);
 
+public sealed record PrecheckRunRequest(string CommandId, string? RunMode = null);
+
 public sealed record RetryDeviceInitializationRequest(
     string CommandId,
     string Reason);

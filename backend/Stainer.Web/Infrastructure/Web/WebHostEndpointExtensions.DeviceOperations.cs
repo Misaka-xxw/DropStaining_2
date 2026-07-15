@@ -220,6 +220,18 @@ public static partial class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.RetryAsync(initializationRunId, request, actor, cancellationToken));
             }));
+        app.MapPost("/api/prechecks", async (HttpContext context, PrecheckRunRequest request, UserSessionService sessionService, DevicePrecheckService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.RunAllAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/prechecks/{checkId}", async (HttpContext context, string checkId, PrecheckRunRequest request, UserSessionService sessionService, DevicePrecheckService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.RunOneAsync(checkId, request, actor, cancellationToken));
+            }));
         app.MapGet("/api/executor/lease", (MachineExecutorLeaseService service) => Results.Ok(service.GetStatus()));
         app.MapPost("/api/startup/recovery", async (HttpContext context, UserSessionService sessionService, StartupRecoveryService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>

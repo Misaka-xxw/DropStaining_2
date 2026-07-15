@@ -234,6 +234,7 @@
   .precheck-step.running .precheck-dot { background:#2563eb; animation:pulseCamera .8s infinite; box-shadow:0 0 0 4px rgba(37,99,235,.20), 0 0 16px rgba(37,99,235,.45); }
   .precheck-step.pass .precheck-dot { background:#22c55e; box-shadow:0 0 0 4px rgba(34,197,94,.18), 0 0 12px rgba(34,197,94,.35); }
   .precheck-step.error .precheck-dot { background:#ef4444; animation:pulseErr .8s infinite; box-shadow:0 0 0 4px rgba(239,68,68,.18); }
+  .precheck-step.unavailable .precheck-dot { background:#f59e0b; box-shadow:0 0 0 4px rgba(245,158,11,.18); }
   .precheck-main { display:grid; gap:1px; }
   .precheck-name { font-weight:800; color:#0f172a; }
   .precheck-api { color:#64748b; font-size:11px; font-family:ui-monospace, SFMono-Regular, Consolas, monospace; }
@@ -241,6 +242,7 @@
   .precheck-step.running .precheck-status { color:#1d4ed8; background:#dbeafe; }
   .precheck-step.pass .precheck-status { color:#047857; background:#d1fae5; }
   .precheck-step.error .precheck-status { color:#be123c; background:#ffe4e6; }
+  .precheck-step.unavailable .precheck-status { color:#b45309; background:#fef3c7; }
   .reagent-temp-text { fill:#0891b2; font-size:11px; font-weight:600; paint-order:stroke; stroke:#fff; stroke-width:2.2px; }
   .work-op-legend-box { fill:rgba(240,249,255,.88); stroke:#38bdf8; stroke-width:1.1; rx:10; filter:url(#softShadow); }
   .work-op-legend-title { fill:#0f172a; font-size:8.5px; font-weight:900; paint-order:stroke; stroke:#fff; stroke-width:2px; }
@@ -2443,21 +2445,23 @@ let appSettings = loadAppSettings();
 let channelScanningBusy = false;
 const channels = Array.from({length:4}, (_,i)=>({ id:i+1, state:'idle', progress:0, slides:[['HE','IHC','PAS','IF'], ['IHC','HE','MAS','HE'], ['PAS','HE','IHC','MAS'], ['IF','PAS','HE','IHC']][i], pulled:false, configProfileId:null }));
 const PRECHECK_STEPS = [
-  { label:'主控连接', api:'precheck.mainControl.connect' },
-  { label:'机械臂回零', api:'precheck.arm.home' },
-  { label:'制冷连接', api:'precheck.cooling.connect' },
-  { label:'样本扫码器在线', api:'precheck.sampleScanner.online' },
-  { label:'试剂扫码器在线', api:'precheck.reagentScanner.online' },
-  { label:'液位/传感器读取', api:'precheck.levelSensor.read' },
-  { label:'洗针准备', api:'precheck.needleWash.ready' },
-  { label:'纯水可用', api:'precheck.pureWater.available' },
-  { label:'PBS可用', api:'precheck.pbs.available' },
-  { label:'废液未满', api:'precheck.waste.notFull' },
-  { label:'排毒桶未满', api:'precheck.toxic.notFull' }
+  { id:'device.controller.connected', label:'主控连接' },
+  { id:'motion.arm.home', label:'机械臂回零' },
+  { id:'thermal.cooling.connected', label:'制冷连接' },
+  { id:'scanner.sample.online', label:'样本扫码器在线' },
+  { id:'scanner.reagent.online', label:'试剂扫码器在线' },
+  { id:'fluidics.level-sensors.readable', label:'液位/传感器读取' },
+  { id:'motion.needle-wash.ready', label:'洗针准备' },
+  { id:'fluidics.system-water.available', label:'纯水可用' },
+  { id:'fluidics.pbs.available', label:'PBS可用' },
+  { id:'fluidics.waste.not-full', label:'废液未满' },
+  { id:'fluidics.toxic-waste.not-full', label:'排毒桶未满' }
 ];
+const PRECHECK_BY_ID = Object.fromEntries(PRECHECK_STEPS.map(s => [s.id, s]));
 let precheckPassed = false;
 let precheckRunning = false;
-let precheckState = PRECHECK_STEPS.map(() => 'idle');
+let precheckState = Object.fromEntries(PRECHECK_STEPS.map(s => [s.id, 'idle']));
+let precheckDetails = {};
 let CURRENT_USER = { id:'', username:'', name:'未登录', role:'guest' };
 let backendUsers = [];
 let backendRoles = [];
@@ -4410,98 +4414,125 @@ function showSideTab(target) {
 }
 
 
+function mapCheckStatus(status) {
+  switch(status) {
+    case 'Passed': return 'pass';
+    case 'Failed': return 'error';
+    case 'Unavailable': return 'unavailable';
+    case 'Running': return 'running';
+    default: return 'error'; // 未知状态一律视为异常，绝不默认通过
+  }
+}
 function renderPrecheckList() {
   const wrap = document.getElementById('precheckList');
   const runAllBtn = document.getElementById('precheckRunAllBtn');
   if(runAllBtn) { runAllBtn.disabled = precheckRunning; runAllBtn.onclick = runPrecheck; }
   if(!wrap) return;
-  const statusLabel = { idle:'待检查', running:'检查中', pass:'通过', error:'异常' };
+  const statusLabel = { idle:'待检查', running:'检查中', pass:'通过', error:'异常', unavailable:'不可用' };
   wrap.innerHTML = PRECHECK_STEPS.map((step, idx) => {
-    const state = precheckState[idx] || 'idle';
+    const state = precheckState[step.id] || 'idle';
     const stepId = `precheckStep${idx + 1}`;
-    return `<div class="precheck-step ${state}" id="${stepId}" data-control-id="${stepId}"><span class="precheck-dot" id="${stepId}StatusDot"></span><span class="precheck-main" id="${stepId}Content"><span class="precheck-name" id="${stepId}Name">${escapeHtml(step.label)}</span></span><span class="precheck-status" id="${stepId}StatusText">${statusLabel[state] || state}</span><button type="button" class="precheck-run-btn" id="${stepId}RunBtn" data-precheck-run="${idx}" ${precheckRunning?'disabled':''}>检测</button></div>`;
+    return `<div class="precheck-step ${state}" id="${stepId}" data-control-id="${stepId}"><span class="precheck-dot" id="${stepId}StatusDot"></span><span class="precheck-main" id="${stepId}Content"><span class="precheck-name" id="${stepId}Name">${escapeHtml(step.label)}</span></span><span class="precheck-status" id="${stepId}StatusText">${statusLabel[state] || state}</span><button type="button" class="precheck-run-btn" id="${stepId}RunBtn" data-precheck-run="${escapeHtml(step.id)}" ${precheckRunning?'disabled':''}>检测</button></div>`;
   }).join('');
-  document.querySelectorAll('[data-precheck-run]').forEach(btn => { btn.onclick = () => runSinglePrecheck(Number(btn.dataset.precheckRun)); });
+  document.querySelectorAll('[data-precheck-run]').forEach(btn => { btn.onclick = () => runSinglePrecheck(btn.dataset.precheckRun); });
 }
-async function runSinglePrecheck(index) {
-  if(precheckRunning || !PRECHECK_STEPS[index]) return;
+function applyPrecheckChecks(checks) {
+  // 按 checkId 映射后端真实结果；缺失/未知一律异常，绝不默认通过。
+  for(const step of PRECHECK_STEPS) precheckState[step.id] = 'error';
+  precheckDetails = {};
+  if(Array.isArray(checks)) {
+    for(const check of checks) {
+      if(check && PRECHECK_BY_ID[check.checkId]) {
+        precheckState[check.checkId] = mapCheckStatus(check.status);
+        precheckDetails[check.checkId] = check;
+      }
+    }
+  }
+}
+async function refreshPreflightGate() {
+  // 开始按钮最终只由最新 GET /api/run/preflight 的 canStart 决定。
+  let preflight = null;
+  try { preflight = await apiGetOrNull('/api/run/preflight'); } catch(e) { preflight = null; }
+  const canStart = !!(preflight && preflight.canStart);
+  precheckPassed = canStart;
+  const settingsPreText = document.getElementById('settingsPrecheckText'); if(settingsPreText) settingsPreText.textContent = canStart ? '已通过' : '未完成';
+  setButtonState('startBtn', { disabled:!canStart });
+  return preflight;
+}
+function renderPrecheckResultPanel(preflight) {
+  const allPassed = PRECHECK_STEPS.every(s => precheckState[s.id] === 'pass');
+  const failedItems = PRECHECK_STEPS.filter(s => precheckState[s.id] !== 'pass').map(s => {
+    const detail = precheckDetails[s.id];
+    return detail?.message ? `${s.label}：${detail.message}` : s.label;
+  });
+  const failIssues = (preflight?.issues || []).filter(x => String(x.severity || 'Fail').toLowerCase() !== 'warning');
+  if(allPassed && precheckPassed) {
+    setInfoPanel('检测通过', ['11 项设备检查全部通过，运行条件齐备。', '现在可以点击顶部“开始”执行染色流程。']);
+    log('检测通过：开始按钮已启用', 'ok');
+  } else if(allPassed && !precheckPassed) {
+    // 设备检查全通过，但业务条件未通过（Workflow/Tasks/Reagents 等）
+    setInfoPanel('设备检查通过，运行条件未通过', failIssues.length ? failIssues.map(x => `${x.area}：${x.message}`) : ['后端运行前校验未通过，请处理后再开始。']);
+    log(`检测完成：设备检查通过，但运行条件未通过（${failIssues.length} 项业务问题）`, 'err');
+  } else {
+    setInfoPanel('检测未通过', failedItems.length ? [`异常项：${failedItems.join('、')}`, '请处理异常后重新检测。'] : ['设备检查未通过，请处理异常后重新检测。']);
+    log(`检测完成：共 ${failedItems.length} 项异常`, 'err');
+  }
+}
+async function runSinglePrecheck(checkId) {
+  const step = PRECHECK_BY_ID[checkId];
+  if(precheckRunning || !step) return;
   precheckRunning = true;
-  precheckPassed = false;
   setButtonState('startBtn', { disabled:true });
   showSideTab('precheck');
-  precheckState[index] = 'running';
+  precheckState[step.id] = 'running';
   renderPrecheckList();
-  log(`单项检测：${PRECHECK_STEPS[index].label}`, 'ok');
-  await sleep(260);
-  const precheckResults = window.digitalTwinPrecheckResults || {};
-  const precheckFailures = window.digitalTwinPrecheckFailures || [];
-  const ok = precheckResults[PRECHECK_STEPS[index].label] !== false && !precheckFailures.includes(PRECHECK_STEPS[index].label);
-  precheckState[index] = ok ? 'pass' : 'error';
+  log(`单项检测：${step.label}`, 'ok');
+  let check = null;
+  try {
+    const report = await backendApi(`/api/prechecks/${encodeURIComponent(step.id)}`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('precheck-one'), runMode: uiMode === 'twin' ? 'Twin' : (uiMode === 'debug' ? 'Debug' : 'Production') }) });
+    check = Array.isArray(report?.checks) ? report.checks.find(c => c && c.checkId === step.id) : null;
+  } catch(e) {
+    log(`单项检测请求失败：${step.label}（${e?.message || e}）`, 'err');
+  }
+  // 请求失败或响应缺失该项 → 绝不显示通过（unavailable/error）。
+  precheckState[step.id] = check ? mapCheckStatus(check.status) : 'unavailable';
+  if(check) precheckDetails[step.id] = check;
   precheckRunning = false;
-  precheckPassed = precheckState.every(state => state === 'pass');
-  setButtonState('startBtn', { disabled:!precheckPassed });
   renderPrecheckList();
-  if(ok) log(`单项检测通过：${PRECHECK_STEPS[index].label}`, 'ok');
-  else log(`单项检测失败：${PRECHECK_STEPS[index].label}`, 'err');
+  const ok = precheckState[step.id] === 'pass';
+  log(ok ? `单项检测通过：${step.label}` : `单项检测未通过：${step.label}`, ok ? 'ok' : 'err');
+  const preflight = await refreshPreflightGate(); // 单项通过不代表整体通过，仍以 preflight.canStart 为准
+  precheckPassed = false;
+  setButtonState('startBtn', { disabled:true });
+  renderPrecheckResultPanel(preflight);
+  await loadDatabaseSnapshot();
 }
 async function runPrecheck() {
   if(precheckRunning) return;
   precheckRunning = true;
   precheckPassed = false;
-  precheckState = PRECHECK_STEPS.map(() => 'idle');
+  for(const step of PRECHECK_STEPS) precheckState[step.id] = 'running';
   setButtonState('startBtn', { disabled:true });
   showSideTab('precheck');
   renderPrecheckList();
-  log('检测启动：读取后端设备初始化与运行前校验', 'ok');
-  let deviceInit = null;
-  let preflight = null;
+  log('检测启动：执行 11 项真实设备检查', 'ok');
+  let checks = null;
+  let report = null;
   try {
-    // 触发设备初始化(POST)，失败(如已有初始化在跑)则回退到读取最近一次记录(GET)
-    try {
-      deviceInit = await backendApi('/api/device-initialization', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('device-init') }) });
-    } catch(e) { deviceInit = await apiGetOrNull('/api/device-initialization'); }
-    preflight = await apiGetOrNull('/api/run/preflight');
-  } catch(err) {
-    precheckRunning = false;
-    setButtonState('startBtn', { disabled:false });
-    await loadDatabaseSnapshot();
-    return;
+    report = await backendApi('/api/prechecks', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('precheck-all'), runMode: uiMode === 'twin' ? 'Twin' : (uiMode === 'debug' ? 'Debug' : 'Production') }) });
+    checks = Array.isArray(report?.checks) ? report.checks : null;
+  } catch(e) {
+    log(`一键检测请求失败：${e?.message || e}`, 'err');
   }
-  const deviceOk = !!deviceInit?.ok || !!deviceInit?.completedAtUtc;
-  const failures = (preflight?.issues || []).filter(x => String(x.severity || 'Fail').toLowerCase() !== 'warning');
-  const deviceFailure = failures.some(x => x.area === 'Device');
-  const reagentFailure = failures.some(x => x.area === 'Reagents');
-  const realResults = {};
-  PRECHECK_STEPS.forEach((step, idx) => {
-    const isReagentStep = idx >= 7;
-    realResults[step.label] = isReagentStep ? !reagentFailure : (deviceOk && !deviceFailure);
-  });
-  window.digitalTwinPrecheckResults = realResults;
-  window.digitalTwinPrecheckFailures = [];
-  const failedSteps = [];
-  for(let i=0; i<PRECHECK_STEPS.length; i++) {
-    precheckState[i] = 'running';
-    renderPrecheckList();
-    log(`检测：${PRECHECK_STEPS[i].label}`, '');
-    await sleep(180);
-    const ok = realResults[PRECHECK_STEPS[i].label] !== false;
-    precheckState[i] = ok ? 'pass' : 'error';
-    renderPrecheckList();
-    if(!ok) {
-      failedSteps.push(PRECHECK_STEPS[i].label);
-      log(`检测失败：${PRECHECK_STEPS[i].label}`, 'err');
-    }
-    await sleep(60);
-  }
+  applyPrecheckChecks(checks); // 请求失败 → checks 为 null → 全部异常
   precheckRunning = false;
-  precheckPassed = !!preflight?.ok && Object.values(realResults).every(v => v !== false);
-  const settingsPreText = document.getElementById('settingsPrecheckText'); if(settingsPreText) settingsPreText.textContent = precheckPassed ? '已通过' : '未完成';
-  setButtonState('startBtn', { disabled:!precheckPassed });
   renderPrecheckList();
-  setInfoPanel(precheckPassed ? '检测通过' : '检测未通过', precheckPassed
-    ? ['主控、机械臂、制冷、扫码器、液位传感器、洗针和废液/排毒桶状态均正常。', '现在可以点击顶部“开始”执行染色流程。']
-    : (failedSteps.length ? [`异常项：${failedSteps.join('、')}`, '请处理异常后重新检测。'] : ['后端预检或设备初始化未通过，请处理异常后重新检测。']));
-  log(precheckPassed ? '检测通过：开始按钮已启用' : `检测完成：共 ${failedSteps.length} 项异常`, precheckPassed ? 'ok' : 'err');
+  const preflight = await refreshPreflightGate();
+  if(!report?.ok) {
+    precheckPassed = false;
+    setButtonState('startBtn', { disabled:true });
+  }
+  renderPrecheckResultPanel(preflight);
   await loadDatabaseSnapshot();
 }
 
@@ -6460,6 +6491,10 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
     uiMode = btn.dataset.mode || 'twin';
+    precheckPassed = false;
+    for(const step of PRECHECK_STEPS) precheckState[step.id] = 'idle';
+    precheckDetails = {};
+    setButtonState('startBtn', { disabled:true });
     const settingsModeText = document.getElementById('settingsModeText'); if(settingsModeText) settingsModeText.textContent = btn.textContent;
     const labels = { twin:'孪生模拟', debug:'调试', production:'生产' };
     setInfoPanel('运行模式切换', [`当前模式：${labels[uiMode] || uiMode}`, '模式切换结果统一显示在状态卡片中。']);
@@ -6495,18 +6530,31 @@ document.querySelectorAll('[data-side-tab]').forEach(btn => {
 const csvInput = document.getElementById('csvInput');
 if(csvInput) csvInput.addEventListener('change', e => { if(e.target.files && e.target.files[0]) loadCsvFile(e.target.files[0]); });
 
+let _snapshotLoadStatus = 'unknown';   // 'ok' | 'error' | 'unknown'，用于节流高频刷新日志
+let _snapshotLoadErrorLoggedAt = 0;
 async function loadDatabaseSnapshot() {
   try {
     const response = await fetch('/api/twin/snapshot', { cache:'no-store', credentials:'same-origin' });
     if(!response.ok) throw new Error(`HTTP ${response.status}`);
     const snapshot = await response.json();
     window.digitalTwinDbSnapshot = snapshot;
-    if(snapshot.precheckResults) window.digitalTwinPrecheckResults = snapshot.precheckResults;
     applyDatabaseSnapshot(snapshot);
-    log('数据库快照已加载：前端数值已按 DB/null 策略刷新', 'ok');
+    // 高频刷新（SignalR/轮询）下，成功日志只在状态切换时写一次，避免刷屏
+    if(_snapshotLoadStatus !== 'ok') {
+      _snapshotLoadStatus = 'ok';
+      log('数据库快照已加载：前端数值已按 DB/null 策略刷新', 'ok');
+    } else {
+      console.debug('数据库快照已刷新');
+    }
   } catch(err) {
     console.warn('数据库快照加载失败', err);
-    log('数据库快照加载失败：' + err.message, 'err');
+    // 失败日志同样节流：状态切换或距上次记录 >30s 时才写一条页面日志
+    const now = Date.now();
+    if(_snapshotLoadStatus !== 'error' || now - _snapshotLoadErrorLoggedAt > 30000) {
+      _snapshotLoadStatus = 'error';
+      _snapshotLoadErrorLoggedAt = now;
+      log('数据库快照加载失败：' + err.message, 'err');
+    }
   }
 }
 function applyNullableMapEntries(map, entries, keyField, valueField) {
@@ -6591,10 +6639,138 @@ function applyDatabaseSnapshot(snapshot) {
 }
 window.digitalTwinLoadDatabaseSnapshot = loadDatabaseSnapshot;
 
+// ===== 统一 UI 状态刷新机制 =====
+// /api/twin/snapshot 是真实 UI 状态的唯一主干；SignalR /hubs/machine 与低频轮询都只作为
+// “状态已变化”的通知源，统一收敛到 scheduleDatabaseSnapshotRefresh(reason) 触发一次防抖的
+// loadDatabaseSnapshot，绝不直接写复杂 UI 状态。六个演示按钮保留前端模拟逻辑，其瞬态写入
+// 会在下一次 snapshot 刷新时被自动覆盖（瞬态叠加 + 自愈）。
+let _snapshotRefreshTimer = null;       // 防抖定时器：合并短时间内的多次刷新请求
+let _snapshotRefreshInFlight = false;   // 防止并发 loadDatabaseSnapshot
+let _snapshotRefreshQueued = false;     // 在途刷新期间又来了请求，收尾后再补一次
+let _snapshotRefreshLastReason = null;  // 最近一次触发原因，便于日志排查
+const SNAPSHOT_REFRESH_DEBOUNCE_MS = 160;
+
+// 统一刷新入口：合并高频事件（SignalR 风暴 / 连续轮询），防止并发抓取。
+function scheduleDatabaseSnapshotRefresh(reason) {
+  if(reason) _snapshotRefreshLastReason = reason;
+  if(_snapshotRefreshTimer) return;     // 已在防抖窗口内，合并本次请求
+  _snapshotRefreshTimer = setTimeout(() => {
+    _snapshotRefreshTimer = null;
+    _runScheduledSnapshotRefresh();
+  }, SNAPSHOT_REFRESH_DEBOUNCE_MS);
+}
+
+async function _runScheduledSnapshotRefresh() {
+  if(_snapshotRefreshInFlight) {        // 已有一次在途：收尾后再补一次
+    _snapshotRefreshQueued = true;
+    return;
+  }
+  _snapshotRefreshInFlight = true;
+  try {
+    console.debug('刷新 snapshot，原因：' + (_snapshotRefreshLastReason || 'scheduled'));
+    await loadDatabaseSnapshot();
+  } finally {
+    _snapshotRefreshInFlight = false;
+    if(_snapshotRefreshQueued) {
+      _snapshotRefreshQueued = false;
+      scheduleDatabaseSnapshotRefresh(_snapshotRefreshLastReason || 'queued');
+    }
+  }
+}
+window.scheduleDatabaseSnapshotRefresh = scheduleDatabaseSnapshotRefresh;
+
+// ===== SignalR /hubs/machine（原始 WebSocket，仅触发 snapshot 刷新）=====
+// 连接写法对齐 stainer-host.js 与 RuntimeLedgerExecutorTests：直连 ws(s)://host/hubs/machine，
+// 发送 SignalR JSON 握手帧（\x1e 为记录分隔符），仅消费 type=1 的 machineEvent 调用，
+// 不在客户端直接写复杂 UI 状态；type=6 为 ping，回 pong 保活。
+let _machineSocket = null;
+let _machineSocketConnected = false;
+let _machineReconnectTimer = null;
+let _machineReconnectDelayMs = 1000;
+let _machineEverConnected = false;
+
+function _machineHubConnected() { return !!_machineSocketConnected; }
+
+function _machineHubUrl() {
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return scheme + '//' + location.host + '/hubs/machine';
+}
+
+function connectMachineHub() {
+  if(!('WebSocket' in window)) return;
+  if(_machineSocket && (_machineSocket.readyState === WebSocket.OPEN || _machineSocket.readyState === WebSocket.CONNECTING)) return;
+  try {
+    _machineSocket = new WebSocket(_machineHubUrl());
+    _machineSocket.onopen = () => {
+      try { _machineSocket.send(JSON.stringify({ protocol:'json', version:1 }) + '\x1e'); } catch(e) {}
+      const wasReconnect = _machineEverConnected;
+      _machineEverConnected = true;
+      _machineReconnectDelayMs = 1000;
+      _machineSocketConnected = true;
+      // 连接 / 重连成功后立即触发一次 snapshot 刷新（只触发，不直接写状态）
+      scheduleDatabaseSnapshotRefresh(wasReconnect ? 'signalr:reconnected' : 'signalr:connected');
+      scheduleNextSnapshotPoll();        // 已连接：切换到低频轮询
+    };
+    _machineSocket.onmessage = event => {
+      String(event.data || '').split('\x1e').filter(Boolean).forEach(frame => {
+        let message;
+        try { message = JSON.parse(frame); } catch(e) { return; }
+        if(!message) return;
+        if(message.type === 6) {         // SignalR ping：回 pong 保活
+          try { _machineSocket.send('{"type":6}\x1e'); } catch(e) {}
+          return;
+        }
+        if(message.type === 1 && message.target === 'machineEvent') {
+          const evt = message.arguments && message.arguments[0];
+          const type = (evt && evt.type) || 'machineEvent';
+          // 收到任意机器状态变化通知 → 仅触发一次防抖 snapshot 刷新
+          scheduleDatabaseSnapshotRefresh('signalr:' + type);
+        }
+      });
+    };
+    _machineSocket.onclose = () => {
+      _machineSocketConnected = false;
+      _scheduleMachineReconnect();
+      scheduleNextSnapshotPoll();        // 断线：切换到加速轮询兜底
+    };
+    _machineSocket.onerror = () => { try { _machineSocket.close(); } catch(e) {} };
+  } catch(e) {
+    _machineSocketConnected = false;
+    _scheduleMachineReconnect();
+  }
+}
+
+function _scheduleMachineReconnect() {
+  if(_machineReconnectTimer) return;
+  _machineReconnectTimer = setTimeout(() => {
+    _machineReconnectTimer = null;
+    connectMachineHub();
+    _machineReconnectDelayMs = Math.min(_machineReconnectDelayMs * 2, 10000);
+  }, _machineReconnectDelayMs);
+}
+
+// ===== 低频轮询兜底（SignalR 已连接时降速，断线时加速）=====
+const SNAPSHOT_POLL_CONNECTED_MS = 20000;
+const SNAPSHOT_POLL_DISCONNECTED_MS = 5000;
+let _snapshotPollTimer = null;
+
+function scheduleNextSnapshotPoll() {
+  if(_snapshotPollTimer) clearTimeout(_snapshotPollTimer);
+  const delay = _machineHubConnected() ? SNAPSHOT_POLL_CONNECTED_MS : SNAPSHOT_POLL_DISCONNECTED_MS;
+  _snapshotPollTimer = setTimeout(() => {
+    _snapshotPollTimer = null;
+    scheduleDatabaseSnapshotRefresh('poll');
+    scheduleNextSnapshotPoll();
+  }, delay);
+}
+
 setInterval(() => { updateSideHeaderStatus(); updateKpis(); updateHeaderMetrics(); }, 1000);
 
 resetDemo();
 restoreBackendSession();
+// 启动实时刷新：SignalR 推送 + 低频轮询兜底，统一收敛到 scheduleDatabaseSnapshotRefresh
+connectMachineHub();
+scheduleNextSnapshotPoll();
 [1,2,3,4].forEach(id => { if(channelConfigAssignments[id] && !getProfileById(channelConfigAssignments[id])) channelConfigAssignments[id] = null; assignConfigToChannel(id, channelConfigAssignments[id], false); });
   if(window.digitalTwin?.engineering) {
     window.digitalTwin.engineering.getConfigSectionForm = function(sectionKey) {

@@ -103,6 +103,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<FluidicsControlService>();
         services.AddScoped<MotionControlService>();
         services.AddScoped<DeviceInitializationService>();
+        services.AddScoped<DevicePrecheckService>();
         services.AddSingleton<StartupDeviceInitializationRunner>();
         services.AddScoped<StartupRecoveryService>();
         services.AddScoped<DatabaseMaintenanceService>();
@@ -118,29 +119,20 @@ public static class ServiceCollectionExtensions
     private static IServiceCollection AddDeviceServices(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         services.AddSingleton<MockDeviceStateStore>();
+        services.AddSingleton<MockDeviceOperations>();
         var requestedMode = DeviceModes.Normalize(configuration["Device:Mode"]);
-        var debugMode = IsEnabled(configuration["Device:DebugMode"]) || environment.IsDevelopment();
-        var hardwareAvailable = IsEnabled(configuration["Device:HardwareAvailable"]);
-        var useMockFallback = !bool.TryParse(configuration["Device:UseMockWhenHardwareUnavailable"], out var configuredFallback)
-            || configuredFallback;
-        if (requestedMode != DeviceModes.Real || debugMode || (!hardwareAvailable && useMockFallback))
-        {
-            services.AddSingleton<IDeviceAdapter, MockDeviceOperations>();
-        }
-        else
-        {
-            var dcr55Configuration = configuration
+        var dcr55Configuration = configuration
                 .GetSection("Device:Dcr55")
                 .Get<Dcr55ConnectionOptions>() ?? new Dcr55ConnectionOptions();
-            services.AddSingleton(dcr55Configuration);
+        services.AddSingleton(dcr55Configuration);
 
             // P1-03-01：主控（Main Controller）串口连接配置。
             // 串口参数全部来自配置（appsettings 的 Device:MainController 节），
             // 不硬编码任何 COM 口，不自动扫描 / 枚举 USB 设备。
-            var mainControllerConfiguration = configuration
+        var mainControllerConfiguration = configuration
                 .GetSection("Device:MainController")
                 .Get<MainControllerConnectionOptions>() ?? new MainControllerConnectionOptions();
-            services.AddSingleton(mainControllerConfiguration);
+        services.AddSingleton(mainControllerConfiguration);
 
             // DCR55-02 / P1-03-01：在 Real 模式下注册真实串口 Transport。
             // SerialPort 仅存在于 Dcr55SerialTransport / MainControllerSerialTransport（Transport 层），
@@ -152,23 +144,26 @@ public static class ServiceCollectionExtensions
             //   - main-controller-v1.0.4 -> MainControllerSerialTransport
             //   - dcr55-sample-scanner    -> Dcr55SerialTransport
             // 这样 Application 层依赖保持不变，而两个真实串口各自独立配置与协议。
-            var mainControllerTransport = new MainControllerSerialTransport(mainControllerConfiguration);
-            var dcr55Transport = new Dcr55SerialTransport(dcr55Configuration);
-            services.AddSingleton(mainControllerTransport);
-            services.AddSingleton(dcr55Transport);
-            services.AddSingleton<IDeviceByteTransport>(new CompositeDeviceByteTransport(mainControllerTransport, dcr55Transport));
+        var mainControllerTransport = new MainControllerSerialTransport(mainControllerConfiguration);
+        var dcr55Transport = new Dcr55SerialTransport(dcr55Configuration);
+        services.AddSingleton(mainControllerTransport);
+        services.AddSingleton(dcr55Transport);
+        services.AddSingleton<IDeviceByteTransport>(new CompositeDeviceByteTransport(mainControllerTransport, dcr55Transport));
+        services.AddSingleton<IDcr55Adapter>(serviceProvider =>
+            new Dcr55RealAdapter(
+                serviceProvider.GetRequiredService<IDeviceByteTransport>(),
+                serviceProvider.GetRequiredService<Dcr55ConnectionOptions>()));
+        services.AddSingleton<UnavailableRealDeviceAdapter>(serviceProvider =>
+            new UnavailableRealDeviceAdapter(serviceProvider.GetRequiredService<IDeviceByteTransport>()));
+        services.AddSingleton<IRealDeviceReadAdapter>(serviceProvider =>
+            serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
 
-            services.AddSingleton<IDcr55Adapter>(serviceProvider =>
-                new Dcr55RealAdapter(
-                    serviceProvider.GetService<IDeviceByteTransport>(),
-                    serviceProvider.GetRequiredService<Dcr55ConnectionOptions>()));
-            services.AddSingleton<UnavailableRealDeviceAdapter>(serviceProvider =>
-                new UnavailableRealDeviceAdapter(serviceProvider.GetService<IDeviceByteTransport>()));
-            services.AddSingleton<IDeviceAdapter>(serviceProvider =>
-                serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
-            services.AddSingleton<IRealDeviceReadAdapter>(serviceProvider =>
-                serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
-        }
+        // The configured global adapter is fail-closed: Real never falls back to Mock.
+        // DevicePrecheckService resolves both concrete adapters and selects by requested runtime mode.
+        services.AddSingleton<IDeviceAdapter>(serviceProvider =>
+            requestedMode == DeviceModes.Real
+                ? serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>()
+                : serviceProvider.GetRequiredService<MockDeviceOperations>());
 
         return services;
     }

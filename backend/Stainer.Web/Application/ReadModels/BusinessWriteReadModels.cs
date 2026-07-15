@@ -186,7 +186,8 @@ public sealed record PreflightValidationReportResponse(
     string? ReportId = null,
     bool CanStart = false,
     int WarningCount = 0,
-    string? StateHash = null);
+    string? StateHash = null,
+    IReadOnlyList<PrecheckCheckResponse>? Checks = null);
 
 public sealed record PreflightValidationIssueResponse(
     string Area,

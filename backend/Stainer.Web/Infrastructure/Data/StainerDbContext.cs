@@ -59,6 +59,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<DeviceCommandExecution> DeviceCommandExecutions => Set<DeviceCommandExecution>();
     public DbSet<DeviceInitializationRun> DeviceInitializationRuns => Set<DeviceInitializationRun>();
     public DbSet<DeviceInitializationCheck> DeviceInitializationChecks => Set<DeviceInitializationCheck>();
+    public DbSet<DevicePrecheckRun> DevicePrecheckRuns => Set<DevicePrecheckRun>();
     public DbSet<ThermalPointState> ThermalPointStates => Set<ThermalPointState>();
     public DbSet<CoolingUnitState> CoolingUnitStates => Set<CoolingUnitState>();
     public DbSet<TemperatureTelemetry> TemperatureTelemetry => Set<TemperatureTelemetry>();

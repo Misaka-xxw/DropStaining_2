@@ -13,7 +13,8 @@ public sealed class PreflightValidationService(
     DeviceInitializationService deviceInitializationService,
     ThermalControlService thermalControlService,
     FluidicsControlService fluidicsControlService,
-    MotionControlService motionControlService)
+    MotionControlService motionControlService,
+    DevicePrecheckService devicePrecheckService)
 {
     public async Task<PreflightValidationReportResponse> ValidateAsync(CancellationToken cancellationToken = default)
     {
@@ -254,16 +255,20 @@ public sealed class PreflightValidationService(
         var failCount = issues.Count(x => !x.Severity.Equals("Warning", StringComparison.OrdinalIgnoreCase));
         var warningCount = issues.Count - failCount;
         var stateHash = await BuildStateHashAsync(cancellationToken);
+        var checks = await devicePrecheckService.EvaluateReadOnlyAsync(cancellationToken);
+        // Ok 与 CanStart 统一为综合结果：业务 issues 无 Fail，且 11 项 blocking checks 全部 Passed。两者同时满足才视为整体通过/可启动。
+        var canStart = failCount == 0 && checks.Count > 0 && checks.All(x => PrecheckStatuses.IsPassing(x.Status));
         return new PreflightValidationReportResponse(
-            failCount == 0,
+            canStart,
             tasks.Count,
             failCount,
             issues,
             generatedAtUtc,
             Guid.NewGuid().ToString("N"),
-            failCount == 0,
+            canStart,
             warningCount,
-            stateHash);
+            stateHash,
+            checks);
     }
 
     private async Task<string> BuildStateHashAsync(CancellationToken cancellationToken)

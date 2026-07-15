@@ -66,6 +66,54 @@ public sealed class DeviceInitializationService(
             : ToResponse(run, false);
     }
 
+    /// <summary>
+    /// 启动期 11 个生命周期步骤的数量（与 <see cref="ExecuteStartupStepAsync"/> 的 stepIndex 一一对应，0 基）。
+    /// 供 DevicePrecheckService 复用同一套步骤逻辑，避免在外部复制近似实现。
+    /// </summary>
+    public int StartupStepCount => Steps.Count;
+
+    /// <summary>
+    /// 执行单个启动期步骤，复用与完整设备初始化完全相同的 <see cref="ExecuteStepAsync"/> 分发逻辑
+    /// （含机械臂回零、洗针、制冷连接、扫码器在线探测、液位读取、液量校验等），并写入通信持久化。
+    /// 不创建 DeviceInitializationRun；只返回该步骤的设备命令结果，供预检按项映射。
+    /// </summary>
+    public async Task<DeviceCommandResult> ExecuteStartupStepAsync(
+        int stepIndex,
+        string commandId,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        if ((uint)stepIndex >= (uint)Steps.Count)
+        {
+            throw new BusinessRuleException(
+                "device_initialization_step_invalid",
+                $"Startup step index {stepIndex} is out of range.",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var step = Steps[stepIndex];
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var operationRequest = new DeviceOperationRequest(
+            new DeviceCommandContext($"{commandId}:step-{stepIndex + 1:00}:{step.ModuleCode}", commandId, actor.Username, nameof(DeviceInitializationService)),
+            step.ModuleCode,
+            step.Action,
+            CreateStepParameters(step));
+        var communicationRecord = communicationPersistence.Begin(operationRequest);
+        DeviceCommandResult result;
+        try
+        {
+            result = await ExecuteStepAsync(step, operationRequest, startedAtUtc, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            result = ExceptionResult(operationRequest, startedAtUtc, ex);
+        }
+
+        result = result with { Data = Merge(operationRequest.Parameters, result.Data) };
+        communicationPersistence.Complete(communicationRecord, result);
+        return result;
+    }
+
     public Task<DeviceInitializationResponse> InitializeAsync(
         StartDeviceInitializationRequest request,
         AuthenticatedUser actor,
