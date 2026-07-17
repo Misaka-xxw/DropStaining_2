@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:browser": "node tools/browser-acceptance/mock-stage-acceptance.mjs"
+    "test:browser": "node tools/browser-acceptance/mock-stage-acceptance.mjs",
+    "test:workflow-browser": "node tools/browser-acceptance/workflow-config-acceptance.mjs",
+    "test:timeline-browser": "node tools/browser-acceptance/timeline-visual-acceptance.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.55.0"
