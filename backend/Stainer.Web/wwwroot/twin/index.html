@@ -5710,7 +5710,7 @@ function renderDebugPane() {
     com: `<div class="subtab-pane debug-subpane ${activeDebugSection==='com'?'active':''}" id="debugSubpaneCom" data-debug-pane="com" role="tabpanel" aria-labelledby="debugSubtabCom"><section class="engineering-card" id="debugComCard" data-control-id="debugComCard"><strong>COM 设置 <span class="engineering-pill">默认 115200 / 8N1</span></strong><div class="engineering-form-grid"><label>COM口<select id="debugComPortSelect" data-control-id="debugComPortSelect"><option>COM1</option><option>COM2</option><option>COM3</option><option>COM4</option></select></label><label>波特率<select id="debugBaudRateSelect" data-control-id="debugBaudRateSelect"><option selected>115200</option><option>57600</option><option>38400</option><option>9600</option></select></label><label>数据位<select id="debugDataBitsSelect" data-control-id="debugDataBitsSelect"><option selected>8 bits</option><option>7 bits</option></select></label><label>停止位<select id="debugStopBitsSelect" data-control-id="debugStopBitsSelect"><option selected>1 bits</option><option>2 bits</option></select></label><label>校验位<select id="debugParitySelect" data-control-id="debugParitySelect"><option selected>无</option><option>Odd</option><option>Even</option></select></label><label>连接状态<input id="debugComStatusText" data-control-id="debugComStatusText" value="未连接 / 模拟" readonly></label></div><div class="engineering-actions">${engineeringButton('设置COM口','调试：设置COM口参数','primary-lite')}${engineeringButton('读取COM口','调试：读取COM口参数')}${engineeringButton('重启通讯','调试：重启串口通讯','warn-lite')}</div><div class="engineering-note">串口参数预置为 115200、8 数据位、1 停止位、无校验；后续可直接映射到上位机串口参数。</div></section>${consoleHtml}</div>`,
     precision: `<div class="subtab-pane debug-subpane ${activeDebugSection==='precision'?'active':''}" id="debugSubpanePrecision" data-debug-pane="precision" role="tabpanel" aria-labelledby="debugSubtabPrecision"><section class="engineering-card" id="debugPrecisionCard" data-control-id="debugPrecisionCard"><strong>精度校正</strong><div class="engineering-form-grid"><label>X 校正偏差 / mm<input id="debugMovePrecisionXInput" data-control-id="debugMovePrecisionXInput" type="number" step="0.001" value="0.000"></label><label>Y 校正偏差 / mm<input id="debugMovePrecisionYInput" data-control-id="debugMovePrecisionYInput" type="number" step="0.001" value="0.000"></label><label>加样体积目标 / μL<input id="debugDispenseTargetInput" data-control-id="debugDispenseTargetInput" type="number" step="1" value="100"></label><label>实测体积 / μL<input id="debugDispenseMeasuredInput" data-control-id="debugDispenseMeasuredInput" type="number" step="0.1" placeholder="请输入"></label></div><div class="engineering-actions">${engineeringButton('校正移位精度确认','调试：校正移位精度确认','ok-lite')}${engineeringButton('校正加样精度确认','调试：校正加样精度确认','ok-lite')}</div><div class="engineering-note">两个 Z 轴可独立控制；这里预留移动校正和加样精度校正指令。</div></section>${consoleHtml}</div>`,
     liquid: `<div class="subtab-pane debug-subpane ${activeDebugSection==='liquid'?'active':''}" id="debugSubpaneLiquid" data-debug-pane="liquid" role="tabpanel" aria-labelledby="debugSubtabLiquid"><section class="engineering-card" id="debugLiquidClassCard" data-control-id="debugLiquidClassCard"><strong>液体类型</strong><div class="engineering-kv"><div><span>当前 Liquid Class</span><b id="debugLiquidClassName">Ab</b></div><div><span>吸液速度</span><b id="debugLiquidAspSpeedText">待配置</b></div><div><span>加液速度</span><b id="debugLiquidDispSpeedText">待配置</b></div><div><span>空气段参数</span><b>System / Leading / Trailing</b></div></div><div class="engineering-actions">${engineeringButton('打开液体类型配置','调试：打开液体类型配置','primary-lite')}${engineeringButton('读取当前液体类型','调试：读取当前液体类型')}${engineeringButton('保存当前液体类型','调试：保存当前液体类型','ok-lite')}</div><div class="engineering-note">完整参数在“配置 → 液体类型”中维护，包括探液、空气段、额外量、Conditioning Volume 和 Blow-out。</div></section>${consoleHtml}</div>`,
-    module: `<div class="subtab-pane debug-subpane ${activeDebugSection==='module'?'active':''}" id="debugSubpaneModule" data-debug-pane="module" role="tabpanel" aria-labelledby="debugSubtabModule"><section class="engineering-card" id="debugModuleTestCard" data-control-id="debugModuleTestCard"><strong>模块测试</strong><div class="module-control-grid" id="debugModuleControlGrid" data-control-id="debugModuleControlGrid">${engineeringButton('加样臂测试','调试：加样臂测试')}${engineeringButton('条码扫描测试','调试：条码扫描测试')}${engineeringButton('混匀测试','调试：混匀测试')}${engineeringButton('清洗控制测试','调试：清洗控制测试')}${engineeringButton('打开校验光','调试：打开校验光')}${engineeringButton('停止全部测试','调试：停止全部测试','warn-lite')}</div><div class="engineering-note">用于单独验证加样臂、条码扫描、混匀、清洗等模块。实际动作指令后续接 DCR55、运动控制和泵阀控制协议。</div></section>${consoleHtml}</div>`
+    module: `<div class="subtab-pane debug-subpane ${activeDebugSection==='module'?'active':''}" id="debugSubpaneModule" data-debug-pane="module" role="tabpanel" aria-labelledby="debugSubtabModule"><section class="engineering-card" id="debugModuleTestCard" data-control-id="debugModuleTestCard"><strong>模块测试</strong>${moduleTestParamsHtml()}<div class="module-control-grid" id="debugModuleControlGrid" data-control-id="debugModuleControlGrid">${engineeringButton('加样臂测试','调试：加样臂测试')}${engineeringButton('条码扫描测试','调试：条码扫描测试')}${engineeringButton('混匀测试','调试：混匀测试')}${engineeringButton('清洗控制测试','调试：清洗控制测试')}${engineeringButton('打开校验光','调试：打开校验光')}${engineeringButton('停止全部测试','调试：停止全部测试','warn-lite')}</div><div class="engineering-note">已接入正式后端命令端点：加样臂→pipetting-tests（需工程会话）、条码扫描→reagent-scanner/qr、混匀→fluidics/mixers、清洗→fluidics/wash、校验光→scanners/calibration-light。命令经幂等与审计写入数据库；Mock/Twin 模式可执行，Real 模式 fail-closed。</div></section>${consoleHtml}</div>`
   };
   pane.innerHTML = `<div class="debug-module" id="debugModule" data-control-id="debugModule">
     <div class="subtab-nav debug-subtabs" id="debugSubtabs" role="tablist" aria-label="工程师调试子页面">
@@ -5722,6 +5722,9 @@ function renderDebugPane() {
     btn.addEventListener('click', () => { activeDebugSection = btn.getAttribute('data-debug-section') || 'com'; renderDebugPane(); });
   });
   bindEngineeringControlHandlers(pane);
+  if(activeDebugSection === 'com') autoLoadDebugComConfig();
+  if(activeDebugSection === 'module') autoLoadModuleTestDeps();
+  if(activeDebugSection === 'precision') autoLoadDebugPrecisionConfig();
 }
 
 function configNumberInput(id, label, unit='', value='', placeholder='请输入内容') {
@@ -6085,6 +6088,52 @@ function liquidClassFormParams() {
   return out;
 }
 
+// ===== 液体类型下拉框 ↔ 后端 GET /api/engineering/liquid-classes =====
+// 调试模块有 3 处液体类型下拉框（liquidClassSelect / positionLiquidClassSelect / pipetteLiquidClassSelect）。
+// 渲染时先用静态默认值占位，bindConfigHandlers 后异步从数据库拉取并回填，保证下拉框始终来自数据库。
+const DEFAULT_LIQUID_CLASS_CODES = ['Ab','AR','DAB','Wash','PBS','PureWater','Custom'];
+const LIQUID_CLASS_SELECT_IDS = ['liquidClassSelect','positionLiquidClassSelect','pipetteLiquidClassSelect'];
+let liquidClassOptionsCache = null;      // [{code,name}]，最近一次成功从数据库拉取的结果
+let liquidClassOptionsPromise = null;    // 并发去重
+
+function rebuildLiquidClassSelect(selectEl, preferredValue) {
+  if(!selectEl) return;
+  const prev = (preferredValue !== undefined && preferredValue !== null && preferredValue !== '')
+    ? String(preferredValue)
+    : String(selectEl.value || '');
+  let items = (liquidClassOptionsCache && liquidClassOptionsCache.length)
+    ? liquidClassOptionsCache.slice()
+    : DEFAULT_LIQUID_CLASS_CODES.map(code => ({ code, name: code }));
+  // 当前选中值若尚未落库（例如刚输入的自定义 code），保留为可选项，避免回填丢失。
+  if(prev && !items.some(x => String(x.code) === prev)) items = [{ code: prev, name: prev }, ...items];
+  selectEl.innerHTML = items.map(x => `<option value="${escapeHtml(String(x.code))}" ${String(x.code)===prev?'selected':''}>${escapeHtml(String(x.name || x.code))}</option>`).join('');
+}
+
+function hydrateLiquidClassSelects(preferredByMap) {
+  LIQUID_CLASS_SELECT_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if(el) rebuildLiquidClassSelect(el, preferredByMap && preferredByMap[id]);
+  });
+}
+
+async function refreshLiquidClassOptionsCache() {
+  if(liquidClassOptionsPromise) return liquidClassOptionsPromise;
+  liquidClassOptionsPromise = (async () => {
+    try {
+      const list = await backendApi('/api/engineering/liquid-classes');
+      const arr = Array.isArray(list) ? list : [];
+      if(arr.length) liquidClassOptionsCache = arr.map(x => ({ code: String(x.code || ''), name: String(x.name || x.code || '') })).filter(x => x.code);
+    } catch(e) { /* 未登录或接口异常时保留现有缓存/默认值，不抛出 */ }
+    finally { liquidClassOptionsPromise = null; }
+  })();
+  return liquidClassOptionsPromise;
+}
+
+async function loadLiquidClassSelectsFromBackend(preferredByMap) {
+  await refreshLiquidClassOptionsCache();
+  hydrateLiquidClassSelects(preferredByMap);
+}
+
 async function saveLiquidClassParams(isCreate) {
   const code = String(document.getElementById('liquidClassSelect')?.value || '').trim();
   const newName = String(document.getElementById('liquidClassNewNameInput')?.value || '').trim();
@@ -6094,6 +6143,8 @@ async function saveLiquidClassParams(isCreate) {
   await writeApi('/api/engineering/liquid-classes', { method:'POST', body: JSON.stringify(body) });
   log(`${isCreate ? '新建' : '保存'}液体类型 ${code} 已下发，需管理员 + 工程会话`, 'ok');
   await loadDatabaseSnapshot();
+  // 保存后从数据库重新拉取，刷新所有液体类型下拉框（保留当前选中值）。
+  await loadLiquidClassSelectsFromBackend({ liquidClassSelect: code, positionLiquidClassSelect: code, pipetteLiquidClassSelect: code });
 }
 
 async function readLiquidClassParams() {
@@ -6101,25 +6152,36 @@ async function readLiquidClassParams() {
   let list = [];
   try { list = await backendApi('/api/engineering/liquid-classes'); } catch(e) { list = []; }
   const arr = Array.isArray(list) ? list : [];
+  // 顺便刷新下拉框缓存，使「读取」也能同步数据库里新增的液体类型。
+  if(arr.length) liquidClassOptionsCache = arr.map(x => ({ code: String(x.code || ''), name: String(x.name || x.code || '') })).filter(x => x.code);
+  hydrateLiquidClassSelects({ liquidClassSelect: code });
   const match = arr.find(x => x.code === code) || arr[0];
   if(!match) { log(`未读取到液体类型 ${code}`, 'warn'); return; }
+  // 后端 LiquidClassResponse 的版本级参数（液面探测/跟随深度/回撤/断液/延时/吹干等）只存在于 versions[]，
+  // profile 级只有少量共享字段。这里解析出启用/可引用版本作为运行期权威值。
+  const vers = Array.isArray(match.versions) ? match.versions : [];
+  const ver = vers.find(v => v && v.isReferenceable) || vers.find(v => v && v.status === 'Enabled') || vers[0] || {};
+  const num = (src, k) => { const x = src && src[k]; return (x !== null && x !== undefined && Number.isFinite(x)) ? x : null; };
+  const vp = k => { let x = num(ver, k); if(x === null) x = num(match, k); return x; }; // 版本级优先，回退 profile 级
   const setVal = (id, v) => { const el = document.getElementById(id); if(el && v !== null && v !== undefined && Number.isFinite(v)) el.value = v; };
-  setVal('aspSpeedInput', match.aspirateSpeedUlPerSecond);
-  setVal('dispSpeedInput', match.dispenseSpeedUlPerSecond);
-  setVal('aspLeadingAirGapInput', match.leadingAirGapUl);
-  setVal('aspTrailingAirGapInput', match.trailingAirGapUl);
-  setVal('aspExcessVolumeInput', match.excessVolumeUl);
-  setVal('aspConditioningVolumeInput', match.conditioningVolumeUl);
-  setVal('aspUseLldSelect', match.liquidDetectionEnabled === true ? '是' : (match.liquidDetectionEnabled === false ? '否' : null));
-  setVal('aspLldSensitivityInput', match.liquidDetectionSensitivityPercent);
-  setVal('aspLldDownSpeedInput', match.liquidDetectionSpeedUmPerSecond != null ? match.liquidDetectionSpeedUmPerSecond / 1000 : null);
-  setVal('aspFollowDepthInput', match.liquidFollowingDepthUm != null ? match.liquidFollowingDepthUm / 1000 : null);
-  setVal('aspPreDelayInput', match.aspirateDelayMs);
-  setVal('dispPreDelayInput', match.dispenseDelayMs);
-  setVal('dispBlowoutVolumeInput', match.blowoutVolumeUl);
-  setVal('dispBreakoffSpeedInput', match.breakoffSpeedUlPerSecond);
-  setVal('aspRetractSpeedInput', match.retractSpeedUmPerSecond != null ? match.retractSpeedUmPerSecond / 1000 : null);
-  log(`已读取液体类型 ${match.code || match.name} 参数（μm 字段已 ÷1000 回显为 mm/mm·s⁻¹）`, 'ok');
+  const umToMm = um => (um !== null && um !== undefined && Number.isFinite(um)) ? um / 1000 : null;
+  setVal('aspSpeedInput', vp('aspirateSpeedUlPerSecond'));
+  setVal('dispSpeedInput', vp('dispenseSpeedUlPerSecond'));
+  setVal('aspLeadingAirGapInput', vp('leadingAirGapUl'));
+  setVal('aspTrailingAirGapInput', vp('trailingAirGapUl'));
+  setVal('aspExcessVolumeInput', num(match, 'excessVolumeUl'));                 // excess 仅 profile 级
+  setVal('aspConditioningVolumeInput', num(ver, 'conditioningVolumeUl'));       // 仅版本级
+  setVal('aspUseLldSelect', ver.liquidDetectionEnabled === true ? '是' : (ver.liquidDetectionEnabled === false ? '否' : null));
+  setVal('aspLldSensitivityInput', num(ver, 'liquidDetectionSensitivityPercent'));
+  setVal('aspLldDownSpeedInput', umToMm(num(ver, 'liquidDetectionSpeedUmPerSecond')));
+  setVal('aspFollowDepthInput', umToMm(num(ver, 'liquidFollowingDepthUm')));
+  setVal('aspPreDelayInput', vp('aspirateDelayMs'));
+  setVal('dispPreDelayInput', vp('dispenseDelayMs'));
+  setVal('dispBlowoutVolumeInput', num(ver, 'blowoutVolumeUl'));
+  setVal('dispBreakoffSpeedInput', num(ver, 'breakoffSpeedUlPerSecond'));
+  setVal('aspRetractSpeedInput', umToMm(num(ver, 'retractSpeedUmPerSecond')));
+  const label = match.code || match.name || code;
+  log(`已读取液体类型 ${label} 参数（启用版本 v${ver.versionNo ?? '-'}，μm 字段 ÷1000 回显为 mm/mm·s⁻¹）`, 'ok');
 }
 
 // 样本清洗启停（wash = 一次性执行命令；wash-stop = 独立业务停止契约，非裸 PWM=0）。
@@ -6144,6 +6206,185 @@ async function stopSampleWash() {
 }
 
 // 调试/配置页 [data-action-log] 工程动作分发器。通道选择 -> drawer A-D（与 4.2 一致）。
+// ===== 调试模块 COM 设置 ↔ 后端 serial_connection_profiles（main-controller）=====
+// UI 文本↔后端值映射：数据位 "8 bits"↔8；停止位 "1 bits"↔One / "2 bits"↔Two；校验 "无"↔None。
+function debugComUiToBackend() {
+  const text = id => (document.getElementById(id)?.value || '').trim();
+  const stop = text('debugStopBitsSelect');
+  const parity = text('debugParitySelect');
+  const dataRaw = text('debugDataBitsSelect').replace(/[^\d]/g, '');
+  return {
+    portName: text('debugComPortSelect') || null,
+    baudRate: Number(text('debugBaudRateSelect')) || 115200,
+    dataBits: dataRaw ? Number(dataRaw) : 8,
+    parity: parity === '无' ? 'None' : (parity || 'None'),
+    stopBits: stop.startsWith('2') ? 'Two' : 'One',
+    handshake: 'None'
+  };
+}
+function applyDebugComFromBackend(cfg) {
+  if(!cfg) return;
+  const setSelect = (id, v) => {
+    const sel = document.getElementById(id);
+    if(sel && v != null && v !== '' && Array.from(sel.options).some(o => o.value === String(v))) sel.value = String(v);
+  };
+  setSelect('debugComPortSelect', cfg.portName);
+  setSelect('debugBaudRateSelect', cfg.baudRate);
+  setSelect('debugDataBitsSelect', cfg.dataBits != null ? `${cfg.dataBits} bits` : null);
+  setSelect('debugStopBitsSelect', cfg.stopBits === 'Two' ? '2 bits' : '1 bits');
+  setSelect('debugParitySelect', (!cfg.parity || cfg.parity === 'None') ? '无' : cfg.parity);
+  const status = document.getElementById('debugComStatusText');
+  if(status) status.value = `${cfg.portName || '未配置'} @ ${cfg.baudRate || 115200}（已保存到数据库，未开真实端口）`;
+}
+async function readDebugComConfig() {
+  const cfg = await backendApi('/api/engineering/serial-config/main-controller');
+  applyDebugComFromBackend(cfg);
+  log(`已读取主控串口配置：${cfg.portName || '未配置'} @ ${cfg.baudRate || 115200}，${cfg.dataBits || 8}${(cfg.parity || 'None')[0]}${cfg.stopBits === 'Two' ? 2 : 1}`, 'ok');
+}
+async function saveDebugComConfig() {
+  const body = debugComUiToBackend();
+  await writeApi('/api/engineering/serial-config/main-controller', { method:'PUT', body: JSON.stringify(Object.assign({
+    commandId: makeCommandId('debug-com'), reason: '调试：设置COM口参数'
+  }, body)) });
+  log(`COM 口已保存到数据库：${body.portName || '未配置'} @ ${body.baudRate}，${body.dataBits}/${body.parity[0]}/${body.stopBits}`, 'ok');
+  await readDebugComConfig();
+}
+async function autoLoadDebugComConfig() {
+  try { applyDebugComFromBackend(await backendApi('/api/engineering/serial-config/main-controller')); }
+  catch(e) { /* 进入调试 COM 子页时静默回填后端配置，失败不阻塞 */ }
+}
+
+// ===== 调试模块 模块测试 ↔ 后端命令端点（DB 落地：命令幂等 + 审计 + 设备通讯持久化）=====
+// 加样臂→pipetting-tests(需工程会话)  条码扫描→reagent-scanner/qr  混匀→fluidics/mixers
+// 清洗→fluidics/wash  校验光→scanners/calibration-light  停止全部→上述各停止端点逐项下发
+function moduleTestParamsHtml() {
+  return `<div class="engineering-form-grid">
+    ${configSelect('debugModuleChannelSelect','通道',['通道1','通道2','通道3','通道4'],'通道1')}
+    ${configNumberInput('debugModuleArmVolumeInput','加样臂体积','μL',100)}
+    <label>工程会话密码<input id="debugModuleEngPasswordInput" data-control-id="debugModuleEngPasswordInput" type="password" placeholder="加样臂测试需要（管理员登录密码）" autocomplete="off"></label>
+    ${configSelect('debugModuleWashHoleSelect','清洗孔位',[['WashInnerLeft','内壁左(WashInnerLeft)'],['WashInnerRight','内壁右(WashInnerRight)'],['WashOuterLeft','外壁左(WashOuterLeft)'],['WashOuterRight','外壁右(WashOuterRight)']],'WashInnerLeft')}
+    ${configNumberInput('debugModuleWashSpeedInput','清洗速度','%',50)}
+    ${configSelect('debugModuleScannerSelect','扫码器',[['','(未加载)']],'')}
+  </div>`;
+}
+function moduleDrawerCode() { return drawerFromChannelSelect('debugModuleChannelSelect') || 'A'; }
+async function autoLoadModuleTestDeps() {
+  try {
+    const scanners = await backendApi('/api/scanners');
+    const sel = document.getElementById('debugModuleScannerSelect'); if(!sel) return;
+    const list = Array.isArray(scanners) ? scanners : [];
+    if(!list.length) { sel.innerHTML = '<option value="">(无扫码器，请到 配置/扫码器 创建)</option>'; return; }
+    sel.innerHTML = list.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name || s.id)}（${escapeHtml(s.scannerType || '')}）</option>`).join('');
+  } catch(e) { /* 进入模块测试子页时静默加载扫码器列表，失败不阻塞 */ }
+}
+async function ensureModuleEngineeringSession(target, reason) {
+  try { const s = await backendApi('/api/engineering/session'); if(s && String(s.status||'').toLowerCase()==='active' && new Date(s.expiresAtUtc) > new Date()) return true; } catch(_) {}
+  const inp = document.getElementById('debugModuleEngPasswordInput');
+  let pwd = (inp?.value || '').trim();
+  if(!pwd) pwd = (window.prompt('加样臂测试需要工程会话。请输入管理员登录密码：') || '').trim();
+  if(!pwd) { log('已取消：加样臂测试需要工程会话密码', 'warn'); return false; }
+  await writeApi('/api/engineering/session', { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-eng-session'), Password: pwd, Reason: reason, Target: target, DangerousOperationConfirmed: true, DurationMinutes: 30 }) });
+  if(inp) inp.value = '';
+  log('工程会话已开启（30 分钟内有效，期间加样臂测试可直接复用）', 'ok');
+  return true;
+}
+async function runModuleArmTest() {
+  const channel = (String(document.getElementById('debugModuleChannelSelect')?.value || '通道1').replace(/[^\d]/g,'')) || '1';
+  const volume = Number(document.getElementById('debugModuleArmVolumeInput')?.value) || 100;
+  if(!(await ensureModuleEngineeringSession('pipetting-test:dispense', '调试：加样臂测试'))) return;
+  await writeApi('/api/engineering/pipetting-tests/dispense', { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-arm'), Channel: channel, VolumeUl: volume, Reason:'调试：加样臂测试', DangerousOperationConfirmed:true }) });
+  log(`加样臂测试已下发：通道${channel} 加液${volume}μL（已写入数据库命令日志）`, 'ok');
+  await loadDatabaseSnapshot();
+}
+async function runModuleBarcodeTest() {
+  const start = await writeApi('/api/device/reagent-scanner/qr/start', { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-scan-start') }) });
+  const sessionId = start?.scanSessionId || start?.ScanSessionId || '';
+  let detail = '';
+  try { const st = await writeApi('/api/device/reagent-scanner/qr/status', { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-scan-status'), ScanSessionId: sessionId }) }); detail = st?.text || st?.Text || st?.status || st?.Status || (st ? JSON.stringify(st).slice(0,120) : ''); } catch(_) {}
+  log(`条码扫描测试已下发（session ${sessionId || 'n/a'}）${detail ? '，结果：'+detail : ''}（已写入数据库）`, 'ok');
+  await loadDatabaseSnapshot();
+}
+async function runModuleMixTest() {
+  const drawer = moduleDrawerCode();
+  await writeApi(`/api/fluidics/mixers/${encodeURIComponent(drawer)}/start`, { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-mix') }) });
+  log(`混匀测试已下发（通道${drawer}），已写入数据库`, 'ok');
+  await loadDatabaseSnapshot();
+}
+async function runModuleWashTest() {
+  const target = document.getElementById('debugModuleWashHoleSelect')?.value || '洗针孔1';
+  const speed = Number(document.getElementById('debugModuleWashSpeedInput')?.value) || 50;
+  await writeApi('/api/fluidics/wash', { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-wash'), TargetPointCode: target, SpeedPercent: speed, Reason:'调试：清洗控制测试' }) });
+  log(`清洗控制测试已下发：${target} @ ${speed}%（已写入数据库）`, 'ok');
+  await loadDatabaseSnapshot();
+}
+async function enableModuleCalibrationLight() {
+  const id = document.getElementById('debugModuleScannerSelect')?.value;
+  if(!id) { log('请先选择扫码器（列表为空时请到 配置/扫码器 创建）', 'warn'); return; }
+  await writeApi(`/api/scanners/${encodeURIComponent(id)}/calibration-light/enable`, { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-callight'), Reason:'调试：打开校验光' }) });
+  log(`校验光已打开（扫码器 ${id}），已写入数据库`, 'ok');
+  await loadDatabaseSnapshot();
+}
+async function stopAllModuleTests() {
+  const jobs = [];
+  jobs.push((async()=>{ try{ await writeApi('/api/fluidics/wash-stop',{method:'POST',body:JSON.stringify({CommandId:makeCommandId('debug-stop-wash'),Reason:'调试：停止全部测试'})}); log('已停止清洗','ok'); }catch(_){} })());
+  for(const d of ['A','B','C','D']) jobs.push((async()=>{ try{ await writeApi(`/api/fluidics/mixers/${d}/stop`,{method:'POST',body:JSON.stringify({CommandId:makeCommandId('debug-stop-mix-'+d)})}); log(`已停止混匀 ${d}`,'ok'); }catch(_){} })());
+  const sid = document.getElementById('debugModuleScannerSelect')?.value;
+  if(sid) jobs.push((async()=>{ try{ await writeApi(`/api/scanners/${encodeURIComponent(sid)}/calibration-light/disable`,{method:'POST',body:JSON.stringify({CommandId:makeCommandId('debug-stop-callight'),Reason:'调试：停止全部测试'})}); log('已关闭校验光','ok'); }catch(_){} })());
+  await Promise.all(jobs);
+  log('停止全部测试：已逐项下发（单项失败不中断，失败项见上方日志）', 'ok');
+  await loadDatabaseSnapshot();
+}
+
+// ===== 调试模块 精度校正 ↔ 后端 precision_calibration_profiles（scope=move|dispense）=====
+// move scope → X/Y 校正偏差(mm)；dispense scope → 加样目标/实测体积(μL)，后端派生校正因子 = measured/target。
+function debugPrecisionNumber(id) {
+  const raw = (document.getElementById(id)?.value || '').toString().trim();
+  if(raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+function applyDebugPrecisionFromBackend(moveCfg, dispenseCfg) {
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null) el.value = v; };
+  if(moveCfg) {
+    setVal('debugMovePrecisionXInput', moveCfg.moveOffsetXMm != null ? Number(moveCfg.moveOffsetXMm).toFixed(3) : null);
+    setVal('debugMovePrecisionYInput', moveCfg.moveOffsetYMm != null ? Number(moveCfg.moveOffsetYMm).toFixed(3) : null);
+  }
+  if(dispenseCfg) {
+    setVal('debugDispenseTargetInput', dispenseCfg.dispenseTargetVolumeUl != null ? Number(dispenseCfg.dispenseTargetVolumeUl) : null);
+    setVal('debugDispenseMeasuredInput', dispenseCfg.dispenseMeasuredVolumeUl != null ? Number(dispenseCfg.dispenseMeasuredVolumeUl) : null);
+  }
+}
+async function readDebugPrecisionConfig(scope) {
+  const cfg = await backendApi(`/api/engineering/precision-calibration/${encodeURIComponent(scope)}`);
+  if(scope === 'move') {
+    applyDebugPrecisionFromBackend(cfg, null);
+    log(`已读取移动精度校正：X=${cfg.moveOffsetXMm ?? 0}mm Y=${cfg.moveOffsetYMm ?? 0}mm（已保存到数据库，未触发机械动作）`, 'ok');
+  } else {
+    applyDebugPrecisionFromBackend(null, cfg);
+    const factor = cfg.dispenseCalibrationFactor != null ? Number(cfg.dispenseCalibrationFactor).toFixed(4) : '—';
+    log(`已读取加样精度校正：目标=${cfg.dispenseTargetVolumeUl ?? '—'}μL 实测=${cfg.dispenseMeasuredVolumeUl ?? '—'}μL 校正因子=${factor}`, 'ok');
+  }
+}
+async function saveDebugPrecisionConfig(scope) {
+  const body = scope === 'move'
+    ? { moveOffsetXMm: debugPrecisionNumber('debugMovePrecisionXInput'), moveOffsetYMm: debugPrecisionNumber('debugMovePrecisionYInput') }
+    : { dispenseTargetVolumeUl: debugPrecisionNumber('debugDispenseTargetInput'), dispenseMeasuredVolumeUl: debugPrecisionNumber('debugDispenseMeasuredInput') };
+  await writeApi(`/api/engineering/precision-calibration/${encodeURIComponent(scope)}`, { method:'PUT', body: JSON.stringify(Object.assign({
+    commandId: makeCommandId('debug-precision-' + scope), reason: scope === 'move' ? '调试：校正移位精度确认' : '调试：校正加样精度确认'
+  }, body)) });
+  log(`${scope === 'move' ? '移动' : '加样'}精度校正已保存到数据库${scope === 'dispense' && body.dispenseMeasuredVolumeUl != null && body.dispenseTargetVolumeUl ? '（因子需 admin 提交后由后端计算）' : ''}`, 'ok');
+  await readDebugPrecisionConfig(scope);
+}
+async function autoLoadDebugPrecisionConfig() {
+  try {
+    const [move, dispense] = await Promise.all([
+      backendApi('/api/engineering/precision-calibration/move'),
+      backendApi('/api/engineering/precision-calibration/dispense')
+    ]);
+    applyDebugPrecisionFromBackend(move, dispense);
+  } catch(e) { /* 进入精度校正子页时静默回填后端配置，失败不阻塞 */ }
+}
+
 async function dispatchEngineeringAction(action, btn) {
   if(btn) flashControl(btn);
   const consoleNode = document.querySelector('.test-console');
@@ -6191,6 +6432,16 @@ async function dispatchEngineeringAction(action, btn) {
     if(action === '配置/液体类型：读取液体类型参数') return await readLiquidClassParams();
     if(action === '配置/扫码器：创建扫码器') return await createScannerProfile();
     if(['配置/扫码器：设置ROI','配置/扫码器：打开校验光','配置/扫码器：关闭校验光','配置/扫码器：重新启动'].includes(action)) return await scannerControl(action);
+    if(action === '调试：校正移位精度确认') return await saveDebugPrecisionConfig('move');
+    if(action === '调试：校正加样精度确认') return await saveDebugPrecisionConfig('dispense');
+    if(action === '调试：设置COM口参数') return await saveDebugComConfig();
+    if(action === '调试：读取COM口参数') return await readDebugComConfig();
+    if(action === '调试：加样臂测试') return await runModuleArmTest();
+    if(action === '调试：条码扫描测试') return await runModuleBarcodeTest();
+    if(action === '调试：混匀测试') return await runModuleMixTest();
+    if(action === '调试：清洗控制测试') return await runModuleWashTest();
+    if(action === '调试：打开校验光') return await enableModuleCalibrationLight();
+    if(action === '调试：停止全部测试') return await stopAllModuleTests();
     log(`${action}：暂未接入（样本清洗三按钮按约定保留原样，不绑后端）`, 'warn');
   } catch(err) { /* routed by writeApi where used */ }
   if(consoleNode) consoleNode.textContent += `\n[${new Date().toLocaleTimeString()}] ${action}`;
@@ -6341,6 +6592,11 @@ function bindConfigHandlers() {
   bindChannelBindingHandlers(root);
   bindEngineeringControlHandlers(root);
   bindSvgTargetLinks(root);
+  // 液体类型下拉框：先用缓存/默认值立即回填，再异步从数据库拉取刷新（仅当本子页含相关下拉框时）。
+  if(LIQUID_CLASS_SELECT_IDS.some(id => document.getElementById(id))) {
+    hydrateLiquidClassSelects();
+    loadLiquidClassSelectsFromBackend();
+  }
 }
 
 function requireEditableProfile() {

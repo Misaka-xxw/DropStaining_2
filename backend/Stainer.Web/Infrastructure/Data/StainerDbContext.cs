@@ -20,6 +20,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<DeviceProfile> DeviceProfiles => Set<DeviceProfile>();
     public DbSet<ScannerProfile> ScannerProfiles => Set<ScannerProfile>();
     public DbSet<ScannerRegion> ScannerRegions => Set<ScannerRegion>();
+    public DbSet<SerialConnectionProfile> SerialConnectionProfiles => Set<SerialConnectionProfile>();
+    public DbSet<PrecisionCalibrationProfile> PrecisionCalibrationProfiles => Set<PrecisionCalibrationProfile>();
     public DbSet<CoordinateProfile> CoordinateProfiles => Set<CoordinateProfile>();
     public DbSet<CoordinateProfileVersion> CoordinateProfileVersions => Set<CoordinateProfileVersion>();
     public DbSet<CoordinatePoint> CoordinatePoints => Set<CoordinatePoint>();
@@ -98,6 +100,8 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureDeviceProfile(modelBuilder);
         ConfigureScannerProfile(modelBuilder);
         ConfigureScannerRegion(modelBuilder);
+        ConfigureSerialConnectionProfile(modelBuilder);
+        ConfigurePrecisionCalibrationProfile(modelBuilder);
         ConfigureCoordinateProfile(modelBuilder);
         ConfigureCoordinateProfileVersion(modelBuilder);
         ConfigureCoordinatePoint(modelBuilder);
@@ -881,6 +885,45 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
         entity.HasIndex(x => new { x.ScannerType, x.Enabled });
+    }
+
+    private static void ConfigureSerialConnectionProfile(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<SerialConnectionProfile>();
+        entity.ToTable("serial_connection_profiles");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.DeviceKey).HasColumnName("device_key").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.PortName).HasColumnName("port_name").HasMaxLength(128);
+        entity.Property(x => x.BaudRate).HasColumnName("baud_rate");
+        entity.Property(x => x.DataBits).HasColumnName("data_bits");
+        entity.Property(x => x.Parity).HasColumnName("parity").HasMaxLength(32).IsRequired();
+        entity.Property(x => x.StopBits).HasColumnName("stop_bits").HasMaxLength(32).IsRequired();
+        entity.Property(x => x.Handshake).HasColumnName("handshake").HasMaxLength(32).IsRequired();
+        entity.Property(x => x.ReadTimeoutMilliseconds).HasColumnName("read_timeout_milliseconds");
+        entity.Property(x => x.WriteTimeoutMilliseconds).HasColumnName("write_timeout_milliseconds");
+        entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.DeviceKey).IsUnique();
+    }
+
+    private static void ConfigurePrecisionCalibrationProfile(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<PrecisionCalibrationProfile>();
+        entity.ToTable("precision_calibration_profiles");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.ScopeKey).HasColumnName("scope_key").HasMaxLength(64).IsRequired();
+        entity.Property(x => x.MoveOffsetXMm).HasColumnName("move_offset_x_mm");
+        entity.Property(x => x.MoveOffsetYMm).HasColumnName("move_offset_y_mm");
+        entity.Property(x => x.DispenseTargetVolumeUl).HasColumnName("dispense_target_volume_ul");
+        entity.Property(x => x.DispenseMeasuredVolumeUl).HasColumnName("dispense_measured_volume_ul");
+        entity.Property(x => x.DispenseCalibrationFactor).HasColumnName("dispense_calibration_factor");
+        entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.ScopeKey).IsUnique();
     }
 
     private static void ConfigureScannerRegion(ModelBuilder modelBuilder)

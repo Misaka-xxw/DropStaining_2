@@ -97,6 +97,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<DeviceControlService>();
         services.AddScoped<ReagentQrScannerDeviceOperationService>();
         services.AddScoped<ScannerConfigurationService>();
+        services.AddScoped<SerialConnectionConfigService>();
+        services.AddScoped<PrecisionCalibrationConfigService>();
+        services.AddScoped<SerialConnectionConfigService>();
         services.AddScoped<ReagentCoordinateAnchorService>();
         services.AddScoped<ReagentCoordinateGenerationService>();
         services.AddScoped<ScannerControlService>();

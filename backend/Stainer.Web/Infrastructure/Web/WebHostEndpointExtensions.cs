@@ -19,6 +19,8 @@ public static partial class WebHostEndpointExtensions
         MapEngineeringEndpoints(app);
         MapDabEndpoints(app);
         MapScannerConfigurationEndpoints(app);
+        MapSerialConnectionEndpoints(app);
+        MapPrecisionCalibrationEndpoints(app);
         MapTraceabilityEndpoints(app);
         MapTaskAndReagentEndpoints(app);
         MapRunEndpoints(app);

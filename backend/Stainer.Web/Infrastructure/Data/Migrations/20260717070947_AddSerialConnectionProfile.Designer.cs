@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Stainer.Web.Infrastructure.Data;
 
@@ -10,9 +11,11 @@ using Stainer.Web.Infrastructure.Data;
 namespace Stainer.Web.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(StainerDbContext))]
-    partial class StainerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260717070947_AddSerialConnectionProfile")]
+    partial class AddSerialConnectionProfile
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
@@ -3344,59 +3347,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                     b.HasIndex("MachineRunId", "WorkflowStepExecutionId");
 
                     b.ToTable("pipetting_operations", (string)null);
-                });
-
-            modelBuilder.Entity("Stainer.Web.Domain.Entities.PrecisionCalibrationProfile", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(36)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("created_at_utc");
-
-                    b.Property<double?>("DispenseCalibrationFactor")
-                        .HasColumnType("REAL")
-                        .HasColumnName("dispense_calibration_factor");
-
-                    b.Property<double?>("DispenseMeasuredVolumeUl")
-                        .HasColumnType("REAL")
-                        .HasColumnName("dispense_measured_volume_ul");
-
-                    b.Property<double?>("DispenseTargetVolumeUl")
-                        .HasColumnType("REAL")
-                        .HasColumnName("dispense_target_volume_ul");
-
-                    b.Property<bool>("Enabled")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("enabled");
-
-                    b.Property<double?>("MoveOffsetXMm")
-                        .HasColumnType("REAL")
-                        .HasColumnName("move_offset_x_mm");
-
-                    b.Property<double?>("MoveOffsetYMm")
-                        .HasColumnType("REAL")
-                        .HasColumnName("move_offset_y_mm");
-
-                    b.Property<string>("ScopeKey")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("scope_key");
-
-                    b.Property<DateTimeOffset?>("UpdatedAtUtc")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("updated_at_utc");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ScopeKey")
-                        .IsUnique();
-
-                    b.ToTable("precision_calibration_profiles", (string)null);
                 });
 
             modelBuilder.Entity("Stainer.Web.Domain.Entities.PrimaryAntibodyWorkflowMapping", b =>
