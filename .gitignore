@@ -115,6 +115,12 @@ data/backups/
 # Temp files
 *.tmp
 
+# Local build, database probe, and backup artifacts
+/tmp-build/
+/tmp-dbprobe/
+/data/*.bak
+/data/*.bak.*
+
 # Stainer validation artifacts
 work/verify-empty-sqlite-*/
 tmp-*.log
