@@ -8,6 +8,7 @@ public sealed class WorkflowVersion
     public string VersionLabel { get; set; } = string.Empty;
     public string Status { get; set; } = WorkflowVersionStatus.Draft;
     public string ChangeNote { get; set; } = string.Empty;
+    public string PlanningRulesJson { get; set; } = "{}";
     public string? DefaultExperimentType { get; set; }
     public DateTimeOffset? PublishedAtUtc { get; set; }
     public DateTimeOffset? RetiredAtUtc { get; set; }

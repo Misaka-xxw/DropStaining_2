@@ -1097,6 +1097,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.VersionLabel).HasColumnName("version_label").HasMaxLength(64).IsRequired();
         entity.Property(x => x.Status).HasColumnName("status").HasMaxLength(32).IsRequired();
         entity.Property(x => x.ChangeNote).HasColumnName("change_note").HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.PlanningRulesJson).HasColumnName("planning_rules_json").HasDefaultValue("{}").IsRequired();
         entity.Property(x => x.DefaultExperimentType).HasColumnName("default_experiment_type").HasMaxLength(8);
         entity.Property(x => x.PublishedAtUtc).HasColumnName("published_at_utc");
         entity.Property(x => x.RetiredAtUtc).HasColumnName("retired_at_utc");
