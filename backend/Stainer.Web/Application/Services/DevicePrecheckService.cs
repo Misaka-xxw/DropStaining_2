@@ -33,6 +33,9 @@ public sealed class DevicePrecheckService(
     /// <summary>液位传感器读数新鲜度上限：超过则视为数据过期。</summary>
     private static readonly TimeSpan MaxLiquidDataAge = TimeSpan.FromHours(24);
 
+    /// <summary>Mock 回零坐标允许误差：100 μm（0.1 mm）。</summary>
+    private const long HomeCoordinateToleranceUm = 100;
+
     /// <summary>“活动运行”状态集合（与 EngineeringConfigService/StartupRecoveryService 一致）。
     /// 处于这些状态时禁止回零/洗针等危险动作。</summary>
     private static readonly string[] ActiveRunStatuses =
@@ -90,7 +93,7 @@ public sealed class DevicePrecheckService(
                 foreach (var definition in Checks)
                 {
                     checks.Add(runMode == RuntimeModes.Twin
-                        ? MockPassed(definition)
+                        ? await ExecuteActiveAsync(definition, request.CommandId, actor, cancellationToken)
                         : await ExecuteRealActiveAsync(definition, cancellationToken));
                 }
 
@@ -119,7 +122,7 @@ public sealed class DevicePrecheckService(
                 // 必须重新“一键检测”才能形成可启动的全量报告。避免旧报告掩盖单项复测失败。
                 await InvalidateFullReportsAsync(DeviceModeFor(runMode), cancellationToken);
                 var check = runMode == RuntimeModes.Twin
-                    ? MockPassed(definition)
+                    ? await ExecuteActiveAsync(definition, request.CommandId, actor, cancellationToken)
                     : await ExecuteRealActiveAsync(definition, cancellationToken);
                 var report = BuildReport(Guid.NewGuid().ToString("N"), request.CommandId, runMode, [check]);
                 return new CommandExecutionResult<PrecheckReportResponse>(report, "PrecheckReport", report.ReportId);
@@ -134,22 +137,6 @@ public sealed class DevicePrecheckService(
     /// </summary>
     public async Task<IReadOnlyList<PrecheckCheckResponse>> EvaluateReadOnlyAsync(CancellationToken cancellationToken = default)
     {
-        if (deviceAdapter.Mode == DeviceModes.Mock)
-        {
-            var reports = await dbContext.DevicePrecheckRuns.AsNoTracking()
-                .Where(x => x.DeviceMode == DeviceModes.Mock && x.RunMode == RuntimeModes.Twin)
-                .ToListAsync(cancellationToken);
-            var latest = reports.OrderByDescending(x => x.GeneratedAtUtc).FirstOrDefault();
-            if (latest is null || !latest.Ok || latest.GeneratedAtUtc < DateTimeOffset.UtcNow - MaxReportAge)
-            {
-                return Checks.Select(definition => Failed(
-                    definition, "mock_precheck_required", "A current Twin Mock precheck is required before start.",
-                    DateTimeOffset.UtcNow, new Dictionary<string, object?> { ["source"] = "Mock" }, PrecheckStatuses.Unavailable)).ToList();
-            }
-
-            return Checks.Select(MockPassed).ToList();
-        }
-
         var context = await LoadProbeContextAsync(cancellationToken);
         var results = new List<PrecheckCheckResponse>();
         foreach (var definition in Checks)
@@ -311,7 +298,7 @@ public sealed class DevicePrecheckService(
         return Failed(definition, missingCode, missingMessage, at, data, PrecheckStatuses.Unavailable);
     }
 
-    // 机械臂：RobotArmStates，要求连接、已回零、无错误，且状态可确认（只读，不回零）。
+    // 机械臂：RobotArmStates，要求连接、已回零、位于 Home 坐标容差内、无错误，且状态可确认（只读，不回零）。
     private async Task<PrecheckCheckResponse> EvaluateArmReadOnlyAsync(CheckDefinition definition, DateTimeOffset at, CancellationToken cancellationToken)
     {
         var arm = await dbContext.RobotArmStates.AsNoTracking().FirstOrDefaultAsync(cancellationToken);
@@ -320,14 +307,25 @@ public sealed class DevicePrecheckService(
             return Failed(definition, "robot_arm_not_found", "机械臂状态记录不存在。", at, null, PrecheckStatuses.Unavailable);
         }
 
-        var data = ArmData(arm);
+        var coordinatesAtHome = IsHomeCoordinate(arm.CurrentXUm)
+            && IsHomeCoordinate(arm.CurrentYUm)
+            && IsHomeCoordinate(arm.CurrentZUm);
+        var targetAtHome = string.Equals(arm.CurrentTargetPointCode, "Home", StringComparison.OrdinalIgnoreCase);
+        var data = ArmData(arm, coordinatesAtHome, targetAtHome);
         var ok = arm.IsConnected
             && arm.IsHomed
+            && coordinatesAtHome
+            && targetAtHome
             && string.IsNullOrEmpty(arm.LastErrorCode)
             && !IsUncertainMotionStatus(arm.Status);
+        var failureCode = arm.LastErrorCode
+            ?? (!coordinatesAtHome || !targetAtHome ? "robot_arm_home_coordinate_invalid" : "robot_arm_not_ready");
         return ok
             ? Passed(definition, data, at)
-            : Failed(definition, arm.LastErrorCode ?? "robot_arm_not_ready", $"机械臂未就绪：homed={arm.IsHomed}, connected={arm.IsConnected}, status={arm.Status}.", at, data);
+            : Failed(definition, failureCode,
+                $"机械臂未在回零位置：homed={arm.IsHomed}, connected={arm.IsConnected}, target={arm.CurrentTargetPointCode ?? "—"}, " +
+                $"xyz=({arm.CurrentXUm?.ToString() ?? "—"},{arm.CurrentYUm?.ToString() ?? "—"},{arm.CurrentZUm?.ToString() ?? "—"})μm, status={arm.Status}.",
+                at, data);
     }
 
     // 制冷：ThermalControlService 数据源（CoolingUnitState），要求在线、无故障且状态可确认（只读）。
@@ -592,15 +590,6 @@ public sealed class DevicePrecheckService(
     private static string DeviceModeFor(string runMode) =>
         runMode == RuntimeModes.Twin ? DeviceModes.Mock : DeviceModes.Real;
 
-    private static PrecheckCheckResponse MockPassed(CheckDefinition definition)
-    {
-        var at = DateTimeOffset.UtcNow;
-        return new PrecheckCheckResponse(
-            definition.CheckId, definition.Label, definition.Category, PrecheckStatuses.Passed, true,
-            null, $"{definition.Label} passed by deterministic Mock rule.", at,
-            new Dictionary<string, object?> { ["source"] = "Mock", ["hardwareAccessed"] = false });
-    }
-
     private static CheckDefinition Resolve(string checkId)
     {
         if (string.IsNullOrWhiteSpace(checkId) || !ChecksById.TryGetValue(checkId, out var definition))
@@ -623,12 +612,22 @@ public sealed class DevicePrecheckService(
 
     private static string DefaultCode(CheckDefinition definition) => definition.CheckId.Replace('.', '_') + "_failed";
 
-    private static Dictionary<string, object?> ArmData(RobotArmState arm) => new()
+    private static bool IsHomeCoordinate(long? coordinateUm) =>
+        coordinateUm.HasValue && coordinateUm.Value >= -HomeCoordinateToleranceUm && coordinateUm.Value <= HomeCoordinateToleranceUm;
+
+    private static Dictionary<string, object?> ArmData(RobotArmState arm, bool coordinatesAtHome, bool targetAtHome) => new()
     {
         ["isHomed"] = arm.IsHomed,
         ["isConnected"] = arm.IsConnected,
         ["status"] = arm.Status,
-        ["lastErrorCode"] = arm.LastErrorCode
+        ["lastErrorCode"] = arm.LastErrorCode,
+        ["currentTargetPointCode"] = arm.CurrentTargetPointCode,
+        ["currentXUm"] = arm.CurrentXUm,
+        ["currentYUm"] = arm.CurrentYUm,
+        ["currentZUm"] = arm.CurrentZUm,
+        ["homeCoordinateToleranceUm"] = HomeCoordinateToleranceUm,
+        ["coordinatesAtHome"] = coordinatesAtHome,
+        ["targetAtHome"] = targetAtHome
     };
 
     private static Dictionary<string, object?> CoolingData(CoolingUnitState cooling) => new()

@@ -137,6 +137,67 @@ public sealed class DevicePrecheckTests
     }
 
     [Fact]
+    public async Task Mock_arm_home_check_moves_arm_to_home_coordinates()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            db.RobotArmStates.Add(new RobotArmState
+            {
+                IsHomed = false,
+                IsConnected = true,
+                Status = MotionStatuses.Idle,
+                CurrentTargetPointCode = "R23",
+                CurrentXUm = 420_000,
+                CurrentYUm = 210_000,
+                CurrentZUm = 7_000
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var report = await PostJsonAsync<PrecheckReportResponse>(client, "/api/prechecks/motion.arm.home", new { commandId = "cmd-arm-home-coordinates" });
+        Assert.Equal(PrecheckStatuses.Passed, Assert.Single(report.Checks).Status);
+
+        await using var verify = factory.Services.CreateAsyncScope();
+        var verifyDb = verify.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var armAfter = await verifyDb.RobotArmStates.AsNoTracking().SingleAsync();
+        Assert.True(armAfter.IsHomed);
+        Assert.Equal("Home", armAfter.CurrentTargetPointCode);
+        Assert.Equal(0, armAfter.CurrentXUm);
+        Assert.Equal(0, armAfter.CurrentYUm);
+        Assert.Equal(0, armAfter.CurrentZUm);
+    }
+
+    [Fact]
+    public async Task Preflight_rejects_homed_flag_when_arm_coordinates_are_not_home()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin");
+        await PostJsonAsync<PrecheckReportResponse>(client, "/api/prechecks", new { commandId = "cmd-seed-home-coordinate-check" });
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var arm = await db.RobotArmStates.SingleAsync();
+            arm.IsHomed = true;
+            arm.CurrentTargetPointCode = "Home";
+            arm.CurrentXUm = 1_000;
+            await db.SaveChangesAsync();
+        }
+
+        var preflight = await GetJsonAsync<PreflightValidationReportResponse>(client, "/api/run/preflight");
+        var armCheck = preflight.Checks!.Single(c => c.CheckId == "motion.arm.home");
+        Assert.Equal(PrecheckStatuses.Failed, armCheck.Status);
+        Assert.Equal("robot_arm_home_coordinate_invalid", armCheck.Code);
+        Assert.False(preflight.CanStart);
+    }
+
+    [Fact]
     public async Task Needle_needs_wash_or_has_volume_fails_in_preflight()
     {
         await using var factory = CreateFactory();
@@ -431,6 +492,36 @@ public sealed class DevicePrecheckTests
 
         var one = await PostJsonAsync<PrecheckReportResponse>(client, "/api/prechecks/fluidics.level-sensors.readable", new { commandId = "cmd-level-missing" });
         Assert.NotEqual(PrecheckStatuses.Passed, one.Checks[0].Status);
+    }
+
+    [Fact]
+    public async Task Mock_level_sensor_read_refreshes_stale_sample_timestamps()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin");
+        await PostJsonAsync<PrecheckReportResponse>(client, "/api/prechecks", new { commandId = "cmd-seed-stale-levels" });
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            var liquids = await db.LiquidContainerStates.ToListAsync();
+            foreach (var liquid in liquids)
+            {
+                liquid.UpdatedAtUtc = DateTimeOffset.UtcNow.AddDays(-2);
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var readStartedAt = DateTimeOffset.UtcNow;
+        var one = await PostJsonAsync<PrecheckReportResponse>(client, "/api/prechecks/fluidics.level-sensors.readable", new { commandId = "cmd-refresh-stale-levels" });
+        Assert.Equal(PrecheckStatuses.Passed, one.Checks[0].Status);
+
+        await using var verify = factory.Services.CreateAsyncScope();
+        var verifyDb = verify.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var refreshed = await verifyDb.LiquidContainerStates.AsNoTracking().ToListAsync();
+        Assert.NotEmpty(refreshed);
+        Assert.All(refreshed, liquid => Assert.True(liquid.UpdatedAtUtc >= readStartedAt));
     }
 
     [Fact]

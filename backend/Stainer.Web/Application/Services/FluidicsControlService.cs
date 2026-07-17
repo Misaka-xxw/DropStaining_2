@@ -529,8 +529,13 @@ public sealed class FluidicsControlService(
         {
             await EnsureSeededCoreAsync(cancellationToken);
             var liquids = await dbContext.LiquidContainerStates.ToListAsync(cancellationToken);
+            var sampledAtUtc = DateTimeOffset.UtcNow;
             foreach (var liquid in liquids)
             {
+                // A successful Mock sensor read represents a new sample of the current
+                // simulated values. Keep the values/faults intact, but refresh their age
+                // so the subsequent strict precheck validates this read, not seed age.
+                liquid.UpdatedAtUtc = sampledAtUtc;
                 AddLiquidTelemetry(
                     liquid,
                     FluidicsTelemetryEventTypes.LiquidLevelChanged,
