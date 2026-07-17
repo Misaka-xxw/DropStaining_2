@@ -47,6 +47,13 @@ public static partial class WebHostEndpointExtensions
                 var actor = await sessionService.RequireRoleAsync(context, "admin", cancellationToken);
                 return Results.Ok(await service.UpdateVersionAsync(workflowVersionId, request, actor, cancellationToken));
             }));
+        app.MapDelete("/api/workflow-versions/{workflowVersionId}", async (HttpContext context, string workflowVersionId, UserSessionService sessionService, WorkflowMaintenanceService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireRoleAsync(context, "admin", cancellationToken);
+                var commandId = context.Request.Query["commandId"].ToString();
+                return Results.Ok(await service.DeleteDraftAsync(workflowVersionId, commandId, actor, cancellationToken));
+            }));
         app.MapPost("/api/workflow-versions/{workflowVersionId}/copy-draft", async (HttpContext context, string workflowVersionId, CopyWorkflowVersionDraftRequest request, UserSessionService sessionService, WorkflowMaintenanceService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

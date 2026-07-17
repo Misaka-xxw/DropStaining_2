@@ -1,5 +1,16 @@
 namespace Stainer.Web.Application.ReadModels;
 
+public sealed record DabSourceBottleResponse(
+    string Id,
+    string ReagentCode,
+    string Name,
+    string FullBarcode,
+    int InitialVolumeUl,
+    int RemainingVolumeUl,
+    DateOnly ExpirationDate,
+    string Status,
+    DateTimeOffset? LastScannedAtUtc);
+
 public sealed record DabMixPositionResponse(
     string Id,
     string Code,

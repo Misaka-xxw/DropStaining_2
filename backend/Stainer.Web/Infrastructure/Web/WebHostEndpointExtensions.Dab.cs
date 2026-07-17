@@ -20,6 +20,12 @@ public static partial class WebHostEndpointExtensions
                 _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.ListPositionsAsync(cancellationToken));
             }));
+        app.MapGet("/api/dab/sources", async (HttpContext context, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.ListSourceBottlesAsync(cancellationToken));
+            }));
         app.MapGet("/api/dab/batches/{batchId}", async (HttpContext context, string batchId, UserSessionService sessionService, DabLifecycleService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
