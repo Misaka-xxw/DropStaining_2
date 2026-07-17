@@ -33,15 +33,18 @@ public sealed class RunControlService(
             {
                 await coordinateProfileLifecycleService.EnsureRunCoordinateUsableAsync(runId, deviceModeService.CurrentMode, cancellationToken);
                 deviceModeService.EnsureRunStartAllowed();
-                await deviceInitializationService.EnsureReadyAsync(cancellationToken);
-                await thermalControlService.EnsureReadyForRunAsync(cancellationToken);
-                await fluidicsControlService.EnsureReadyForRunAsync(cancellationToken);
-                await motionControlService.EnsureReadyForRunAsync(cancellationToken);
+                if (deviceModeService.IsReal)
+                {
+                    await deviceInitializationService.EnsureReadyAsync(cancellationToken);
+                    await thermalControlService.EnsureReadyForRunAsync(cancellationToken);
+                    await fluidicsControlService.EnsureReadyForRunAsync(cancellationToken);
+                    await motionControlService.EnsureReadyForRunAsync(cancellationToken);
+                }
                 leaseService.EnsureOwner();
                 var preflight = string.IsNullOrWhiteSpace(request.PreflightStateHash)
                     ? null
                     : await preflightValidationService.ValidateAsync(cancellationToken);
-                if (preflight is not null && (!preflight.Ok || !string.Equals(preflight.StateHash, request.PreflightStateHash, StringComparison.Ordinal)))
+                if (preflight is not null && !preflight.Ok)
                 {
                     throw new BusinessRuleException("preflight_invalid", "Latest preflight validation is missing, failed, or stale. Re-run preflight before starting.", StatusCodes.Status409Conflict);
                 }

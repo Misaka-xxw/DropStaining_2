@@ -177,16 +177,23 @@ public sealed class MockBackendEndToEndAcceptanceTests
         });
         Assert.Equal(DabBatchStatus.PendingPreparation, dabBatch.Status);
 
+        var precheck = await PostAsync<PrecheckReportResponse>(client, "/api/prechecks", new
+        {
+            commandId = "cmd-acceptance-precheck-all"
+        });
+        Assert.True(precheck.Ok, JsonSerializer.Serialize(precheck.Checks));
+
         var preflight = await client.GetFromJsonAsync<PreflightValidationReportResponse>("/api/run/preflight");
         Assert.NotNull(preflight);
-        Assert.True(preflight!.Ok, JsonSerializer.Serialize(preflight.Issues));
+        Assert.True(preflight!.Ok, JsonSerializer.Serialize(new { preflight.Issues, preflight.Checks }));
         Assert.Equal(4, preflight.TaskCount);
 
         var allTaskIds = new[] { heTask.TaskId! }.Concat(ihcTaskIds).ToArray();
         var run = await PostAsync<MachineRunResponse>(client, "/api/runs", new
         {
             commandId = "cmd-acceptance-run-create",
-            stainingTaskIds = allTaskIds
+            stainingTaskIds = allTaskIds,
+            preflightStateHash = preflight.StateHash
         });
 
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -258,6 +265,36 @@ public sealed class MockBackendEndToEndAcceptanceTests
         Assert.True(await verifyContext.DeviceCommandExecutions.AnyAsync(x => x.MachineRunId == run.RunId && x.CommandType == "Dab" && x.Status == DeviceCommandStatus.Completed));
         Assert.True(await verifyContext.PipettingOperations.AnyAsync(x => x.MachineRunId == run.RunId && x.NeedleCode == NeedleCodes.Needle1));
         Assert.True(await verifyContext.PipettingOperations.AnyAsync(x => x.MachineRunId == run.RunId && x.NeedleCode == NeedleCodes.Needle2));
+        var p01DispenseTargets = await verifyContext.PipettingOperations
+            .Where(x => x.MachineRunId == run.RunId
+                && x.ReagentCode == "P01"
+                && x.OperationType == PipettingOperationTypes.Dispense)
+            .Select(x => x.TargetPointCode)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToListAsync();
+        Assert.Equal(new[] { "B-01", "B-02", "B-03" }, p01DispenseTargets);
+
+        var executedCommands = await verifyContext.DeviceCommandExecutions
+            .AsNoTracking()
+            .Include(x => x.WorkflowStepExecution)
+                .ThenInclude(x => x!.WorkflowExecution)
+                    .ThenInclude(x => x!.SlideTask)
+                        .ThenInclude(x => x!.ChannelBatch)
+            .Where(x => x.MachineRunId == run.RunId && x.WorkflowStepExecution != null)
+            .ToListAsync();
+        var executedTimeline = executedCommands
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(x => new
+            {
+                x.WorkflowStepExecution!.StepNo,
+                DrawerCode = x.WorkflowStepExecution.WorkflowExecution!.SlideTask!.ChannelBatch!.DrawerCode,
+                x.WorkflowStepExecution.WorkflowExecution.SlideTask.SlotCode
+            })
+            .ToList();
+        Assert.Equal(
+            executedTimeline.OrderBy(x => x.StepNo).ThenBy(x => x.DrawerCode).ThenBy(x => x.SlotCode),
+            executedTimeline);
         Assert.True(await verifyContext.FluidicsTelemetry.AnyAsync(x => x.CommandId == "cmd-acceptance-pump"));
         Assert.True(await verifyContext.TemperatureTelemetry.AnyAsync());
         Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "run.reagent_consumption"));

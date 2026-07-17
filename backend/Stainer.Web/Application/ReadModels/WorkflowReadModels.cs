@@ -43,7 +43,8 @@ public sealed record WorkflowVersionDetailResponse(
     DateTimeOffset? UpdatedAtUtc,
     IReadOnlyList<WorkflowStepResponse> Steps,
     IReadOnlyList<WorkflowReagentRequirementResponse> ReagentRequirements,
-    string? DefaultExperimentType = null);
+    string? DefaultExperimentType = null,
+    string PlanningRulesJson = "{}");
 
 public sealed record WorkflowStepResponse(
     string Id,
@@ -55,7 +56,10 @@ public sealed record WorkflowStepResponse(
     int? VolumeUl,
     int? DurationSeconds,
     int? TargetTemperatureDeciC,
-    string FailureStrategy);
+    string FailureStrategy,
+    string MixParametersJson = "{}",
+    string WashParametersJson = "{}",
+    string LegacyParametersJson = "{}");
 
 public sealed record WorkflowReagentRequirementResponse(
     string Id,
@@ -80,7 +84,8 @@ public sealed record WorkflowVersionMaintenanceResponse(
     DateTimeOffset? RetiredAtUtc,
     IReadOnlyList<WorkflowStepResponse> Steps,
     IReadOnlyList<WorkflowReagentRequirementResponse> ReagentRequirements,
-    string? DefaultExperimentType = null);
+    string? DefaultExperimentType = null,
+    string PlanningRulesJson = "{}");
 
 public sealed record PublishValidationResponse(
     string WorkflowVersionId,

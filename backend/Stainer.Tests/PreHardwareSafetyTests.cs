@@ -30,8 +30,7 @@ public sealed class PreHardwareSafetyTests
         Assert.True(mode.IsMock);
         Assert.True(mode.CanStartRuns);
 
-        var dashboard = await operatorClient.GetStringAsync("/dashboard");
-        Assert.Contains("metricDeviceMode", dashboard);
+        // 旧 /dashboard 页面已删除；设备模式改由 /api/device-mode 直接读取（已在上方断言）。
 
         var forbidden = await operatorClient.PostAsJsonAsync("/api/device-mode/change", new
         {

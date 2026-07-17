@@ -90,7 +90,10 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
                             step.VolumeUl,
                             step.DurationSeconds,
                             step.TargetTemperatureDeciC,
-                            step.FailureStrategy))
+                            step.FailureStrategy,
+                            step.MixParametersJson,
+                            step.WashParametersJson,
+                            step.LegacyParametersJson))
                         .ToList(),
                     x.ReagentRequirements
                         .OrderBy(requirement => requirement.ReagentCode)
@@ -101,7 +104,8 @@ public sealed class EfWorkflowReadRepository(StainerDbContext dbContext) : IWork
                             requirement.RequiredVolumeUl,
                             requirement.IsRequired))
                         .ToList(),
-                    x.DefaultExperimentType))
+                    x.DefaultExperimentType,
+                    x.PlanningRulesJson))
                 .ToList());
     }
 

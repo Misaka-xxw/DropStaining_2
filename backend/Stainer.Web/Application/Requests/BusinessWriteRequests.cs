@@ -61,7 +61,8 @@ public sealed record UpdateWorkflowVersionRequest(
     string? Description,
     bool? IsEnabled,
     string? VersionLabel,
-    string? ChangeNote);
+    string? ChangeNote,
+    string? PlanningRulesJson = null);
 
 public sealed record SaveWorkflowStepRequest(
     string CommandId,

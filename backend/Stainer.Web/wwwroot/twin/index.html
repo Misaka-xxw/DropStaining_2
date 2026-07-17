@@ -2285,7 +2285,7 @@
             </div>
           </div>
           <div class="workspace-pane precheck-pane" id="precheckPane" role="region" aria-label="检测状态">
-            <div class="precheck-intro"><strong>检测流程</strong><button type="button" id="scanReagentsBtn" data-control-id="scanReagentsBtn">Mock 扫描全部试剂</button><button type="button" id="precheckRunAllBtn" data-control-id="precheckRunAllBtn">一键检测所有</button></div>
+            <div class="precheck-intro"><strong>检测流程</strong><button type="button" id="scanReagentsBtn" data-control-id="scanReagentsBtn">Mock 扫描全部试剂</button><button type="button" id="mockRuntimeResetBtn" data-control-id="mockRuntimeResetBtn">Mock 恢复初始状态</button><button type="button" id="precheckRunAllBtn" data-control-id="precheckRunAllBtn">一键检测所有</button></div>
             <div class="precheck-flow" id="precheckList"></div>
           </div>
           <div class="workspace-pane debug-pane" id="debugPane" role="region" aria-label="工程师调试界面"></div>
@@ -2420,6 +2420,7 @@ let defaultCoordByName = new Map(coords.map(item => [item.name, { x:item.x, y:it
 let transform = null;
 let itemState = new Map();
 let itemLevels = new Map();
+let itemReagentCodes = new Map();
 let slideOps = new Map();
 let slideTemps = new Map();
 let selectedName = null;
@@ -2435,6 +2436,7 @@ let totalRuns = 0;
 let demoPromise = null;
 let runtimeState = null;
 let runtimeArmAnimationSeq = 0;
+let runtimeArmTargetKey = null;
 let lastRuntimeStepId = null;
 let arm = { x:177.75, y:17.0, z1:0, z2:0, fluid1:null, fluid2:null };
 const cameraStates = { reagent:'idle', arm:'idle' };
@@ -2915,6 +2917,45 @@ function reagentTypeLabel(item) {
   return reagentType(item).label;
 }
 function letterForChannel(channelId) { return 'ABCD'[(channelId - 1)] || 'A'; }
+function normalizeSlideSlotInput(value, drawerLetter) {
+  const raw = String(value || '').trim().toUpperCase();
+  if(!raw) return null;
+  const compact = raw.replace(/\s+/g, '');
+  if(/^[1-4]$/.test(compact)) return `${drawerLetter}-${compact.padStart(2, '0')}`;
+  const fullMatch = compact.match(/^([A-D])[-_]?0?([1-4])$/);
+  if(fullMatch && fullMatch[1] === drawerLetter) return `${drawerLetter}-${fullMatch[2].padStart(2, '0')}`;
+  return null;
+}
+function parseHeSlideSlots(input, drawerLetter) {
+  const seen = new Set();
+  return String(input || '')
+    .split(/[,\s，、;；]+/)
+    .map(x => normalizeSlideSlotInput(x, drawerLetter))
+    .filter(Boolean)
+    .filter(slot => {
+      if(seen.has(slot)) return false;
+      seen.add(slot);
+      return true;
+    });
+}
+function parseIhcSlideSlotRows(input, drawerLetter) {
+  const rows = [];
+  const seen = new Set();
+  for(const line of String(input || '').split(/\r?\n|[;；]+/)) {
+    const trimmed = line.trim();
+    if(!trimmed) continue;
+    const parts = trimmed.split(/[=:：]/);
+    if(parts.length < 2) return { error:`格式错误：${trimmed}` };
+    const slotCode = normalizeSlideSlotInput(parts.shift(), drawerLetter);
+    const rawCode = parts.join(':').trim();
+    if(!slotCode) return { error:`槽位不属于通道 ${drawerLetter}：${trimmed}` };
+    if(!rawCode) return { error:`${slotCode} 缺少样本码/一抗码` };
+    if(seen.has(slotCode)) return { error:`槽位重复：${slotCode}` };
+    seen.add(slotCode);
+    rows.push({ slotCode, rawCode });
+  }
+  return { rows };
+}
 
 // 样本入库 = 创建染色任务。注意：当前后端没有专用的「样本扫码器/样本入库」硬件 API，
 // 只有 /api/device/reagent-scanner/qr/*（试剂扫码器）。样本侧的真实落点是任务创建链路，
@@ -2966,6 +3007,102 @@ async function intakeChannelSamples(channelId) {
     else { ch.barcodeReady = true; }
     await loadDatabaseSnapshot();
   } catch(err) { /* routed by writeApi */ }
+  finally { channelScanningBusy = false; }
+}
+
+async function intakeChannelSamples(channelId) {
+  const letter = letterForChannel(channelId);
+  const ch = channels[channelId - 1];
+  if(!ch) return;
+  if(channelScanningBusy) { log(`通道${letter} 正在处理入库，请稍后再试`, 'warn', channelId); return; }
+  const experimentType = String(prompt(`通道 ${letter} 样本入库\n实验类型（HE / IHC）：`, 'HE') || '').trim().toUpperCase();
+  if(!['HE','IHC'].includes(experimentType)) { log(`通道${letter} 样本入库已取消`, 'warn', channelId); return; }
+
+  let requestedSlides = [];
+  if(experimentType === 'HE') {
+    const slotInput = prompt(`通道 ${letter} HE：请输入实际放置玻片槽位\n可输入：1,3 或 ${letter}-01,${letter}-03`, '1');
+    requestedSlides = parseHeSlideSlots(slotInput, letter).map(slotCode => ({ slotCode, rawCode:null }));
+    if(!requestedSlides.length) { log(`通道${letter} 未选择任何 HE 玻片槽位`, 'warn', channelId); return; }
+  } else {
+    const ihcInput = prompt(`通道 ${letter} IHC：逐行输入 实际槽位=样本码/一抗码\n示例：\n1=P01\n3=P02`, '1=P01');
+    const parsed = parseIhcSlideSlotRows(ihcInput, letter);
+    if(parsed.error) { log(parsed.error, 'warn', channelId); return; }
+    requestedSlides = parsed.rows || [];
+    if(!requestedSlides.length) { log(`通道${letter} 未选择任何 IHC 玻片槽位`, 'warn', channelId); return; }
+  }
+
+  channelScanningBusy = true;
+  try {
+    setInfoPanel(`通道${letter} 样本入库中`, [
+      `实验类型：${experimentType}`,
+      `实际槽位：${requestedSlides.map(x => x.slotCode).join('、')}`,
+      '正在建立通道批次并创建任务...'
+    ]);
+    const activeResp = await writeApi('/api/channel-batches/active', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-active'), drawerCode: letter }) });
+    const batchExperimentType = String(activeResp?.experimentType || '').toUpperCase();
+    const occupiedSlots = new Set((activeResp?.occupiedSlotCodes || []).map(x => String(x || '').toUpperCase()));
+    if(batchExperimentType && batchExperimentType !== experimentType) {
+      setInfoPanel(`通道${letter} 样本入库未执行`, [
+        `当前通道批次类型：${batchExperimentType}`,
+        `本次选择类型：${experimentType}`,
+        '同一通道批次内不能混合 HE 和 IHC。请换空通道，或先完成/清理当前通道批次。'
+      ]);
+      log(`通道${letter} 已是 ${batchExperimentType} 批次，不能再加入 ${experimentType} 玻片`, 'warn', channelId);
+      return;
+    }
+    const duplicatedSlots = requestedSlides.map(x => x.slotCode).filter(x => occupiedSlots.has(x));
+    if(duplicatedSlots.length) {
+      setInfoPanel(`通道${letter} 样本入库未执行`, [
+        `已占用槽位：${Array.from(occupiedSlots).join('、') || '--'}`,
+        `本次重复选择：${duplicatedSlots.join('、')}`,
+        '请只选择实际空闲槽位，或先清理当前通道批次。'
+      ]);
+      log(`通道${letter} 槽位已占用：${duplicatedSlots.join('、')}`, 'warn', channelId);
+      return;
+    }
+    if(activeResp?.workflowSelectionStatus !== 'Selected') {
+      await writeApi('/api/channel-batches/experiment-type-selection', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('channel-exp-type'), drawerCode: letter, experimentType }) });
+    }
+    const channelBatchId = activeResp?.channelBatchId || null;
+    if(!channelBatchId) { log(`通道${letter} 未获取到活动通道批次`, 'err', channelId); return; }
+
+    let createdCount = 0;
+    for(const slide of requestedSlides) {
+      let lis = null;
+      if(experimentType === 'IHC') {
+        lis = await writeApi('/api/lis/mock-query', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('lis-query'), rawCode:slide.rawCode }) });
+      }
+      const body = experimentType === 'HE'
+        ? { commandId: makeCommandId('task-he'), slotCode:slide.slotCode, drawerCode:letter, channelBatchId }
+        : { commandId: makeCommandId('task-ihc'), inputMode:'PrimaryAntibody', rawCode:slide.rawCode, slotCode:slide.slotCode, drawerCode:letter, channelBatchId, selectedPrimaryAntibodyCode: lis?.candidatePrimaryAntibodyCodes?.[0] || slide.rawCode, lisQueryLogId: lis?.lisQueryLogId || null };
+      try {
+        await backendApi('/api/tasks/' + (experimentType === 'HE' ? 'he' : 'ihc'), { method:'POST', body: JSON.stringify(body) });
+        createdCount++;
+        log(`通道${letter} 玻片入库完成：${slide.slotCode} (${experimentType})`, 'ok', channelId);
+      } catch(err) {
+        if(err?.status === 409 && (err?.data?.code === 'slot_not_idle' || /not idle/i.test(err.message || ''))) {
+          log(`通道${letter} ${slide.slotCode} 已占用，请核对实际放片位置`, 'warn', channelId);
+          continue;
+        }
+        routeWriteError(err);
+      }
+    }
+    if(createdCount) {
+      ch.barcodeReady = true;
+      log(`通道${letter} 已按实际槽位入库 ${createdCount}/${requestedSlides.length} 张玻片`, createdCount === requestedSlides.length ? 'ok' : 'warn', channelId);
+    } else {
+      log(`通道${letter} 未创建任何玻片任务`, 'warn', channelId);
+    }
+    await loadDatabaseSnapshot();
+  } catch(err) {
+    const message = err?.message || '请查看日志获取详细原因';
+    setInfoPanel(`通道${letter} 样本入库失败`, [
+      `实验类型：${experimentType}`,
+      `实际槽位：${requestedSlides.map(x => x.slotCode).join('、') || '--'}`,
+      message
+    ]);
+    log(`通道${letter} 样本入库失败：${message}`, 'err', channelId);
+  }
   finally { channelScanningBusy = false; }
 }
 
@@ -3161,7 +3298,7 @@ function getControlIdRegistry() {
   const staticHtmlControls = [
     'modeTwinBtn','modeDebugBtn','modeProductionBtn','startBtn','pauseBtn','userBtn',
     'precheckTab','debugTab','configTab','productionTab','settingsTab',
-    'metricTotalSamples','metricTodaySamples','metricActiveSamples','precheckRunAllBtn','productionPane','statusPane','productionLogPanel','productionWarnPanel','detailBox','precheckList','logList','warnList','logFilterInput','logFilterClearBtn','logChannelFilterSelect','warnFilterInput','warnFilterClearBtn','warnChannelFilterSelect','rightPanelWidthToggleGroup','rightPanelQuickToggle','rightPanelTools','sideTimeReadout','sideClockText','sideEtaLine','sideEtaText','debugPane','debugModule','debugCommandConsole','configSectionLiquidClass','configSectionMixHeat','configSectionThermal','configPane','settingsPane','configRulesCard','configPipetteWorkbench','configPipetteParamCard','configPipetteActionCard','configPipetteConsoleCard','mixHeatMainCard',
+    'metricTotalSamples','metricTodaySamples','metricActiveSamples','precheckRunAllBtn','mockRuntimeResetBtn','productionPane','statusPane','productionLogPanel','productionWarnPanel','detailBox','precheckList','logList','warnList','logFilterInput','logFilterClearBtn','logChannelFilterSelect','warnFilterInput','warnFilterClearBtn','warnChannelFilterSelect','rightPanelWidthToggleGroup','rightPanelQuickToggle','rightPanelTools','sideTimeReadout','sideClockText','sideEtaLine','sideEtaText','debugPane','debugModule','debugCommandConsole','configSectionLiquidClass','configSectionMixHeat','configSectionThermal','configPane','settingsPane','configRulesCard','configPipetteWorkbench','configPipetteParamCard','configPipetteActionCard','configPipetteConsoleCard','mixHeatMainCard',
     'configProfileSelect','configNewProfileBtn','configDuplicateProfileBtn','configDeleteProfileBtn','configExportBtn','configImportBtn','configEditorTimeline','configStepEditor','settingsTabRuntime','settingsTabCommunication','settingsTabDevice','settingsTabSafety','settingsTabUi','settingsSaveBtn','settingsResetBtn'
   ];
   const htmlControls = Array.from(new Set([...staticHtmlControls, ...Array.from(document.querySelectorAll('[id]')).map(node => node.id)])).filter(Boolean);
@@ -3506,15 +3643,23 @@ function drawSlideOps() {
 }
 function drawPath() {
   clearLayer(pathLayer);
-  const pts = DEMO_STEPS.map(s => s.target ? findTarget(s.target) : null).filter(Boolean).map(t => mmToPx(t.x, t.y));
+  const runtimeSteps = Array.isArray(runtimeState?.steps) ? runtimeState.steps : [];
+  const routeSteps = runtimeSteps.length ? runtimeSteps : DEMO_STEPS;
+  const targets = routeSteps.map(s => runtimeSteps.length ? runtimeStepTarget(s) : (s.target ? findTarget(s.target) : null));
+  const indexedTargets = targets.map((target, index) => ({ target, index })).filter(x => x.target);
+  const pts = indexedTargets.map(x => mmToPx(x.target.x, x.target.y));
   if(pts.length < 2) return;
-  const cursor = Math.max(0, Math.min(currentStepIndex, pts.length - 1));
+  const rawCursor = runtimeSteps.length && runtimeState?.currentStep?.id
+    ? runtimeSteps.findIndex(s => s.id === runtimeState.currentStep.id)
+    : currentStepIndex;
+  const currentRouteIndex = indexedTargets.findIndex(x => x.index >= Math.max(0, rawCursor));
+  const cursor = Math.max(0, Math.min(currentRouteIndex < 0 ? pts.length - 1 : currentRouteIndex, pts.length - 1));
   const startSeg = Math.max(0, cursor - 3);
   const endSeg = Math.min(pts.length - 2, cursor + 2);
   for(let i = startSeg; i <= endSeg; i++) {
     const cls = i < cursor ? 'path-segment path-past' : 'path-segment path-future';
     const p1 = pts[i], p2 = pts[i+1];
-    pathLayer.appendChild(el('line', { id:`svg-demo-path-segment-${i + 1}`, 'data-control-id':`svg-demo-path-segment-${i + 1}`, x1:p1[0], y1:p1[1], x2:p2[0], y2:p2[1], class:cls }));
+    pathLayer.appendChild(el('line', { id:`svg-runtime-path-segment-${i + 1}`, 'data-control-id':`svg-runtime-path-segment-${i + 1}`, x1:p1[0], y1:p1[1], x2:p2[0], y2:p2[1], class:cls }));
   }
 }
 
@@ -3747,10 +3892,34 @@ function animateArmTo(x, y, z1, z2, duration=900) {
   });
 }
 function runtimeStepTarget(step) {
-  const match = String(step?.slotCode || '').toUpperCase().match(/^([A-D])-(0?[1-4])$/);
-  if(!match) return null;
-  const channelNo = match[1].charCodeAt(0) - 64;
-  return findTarget(`R${channelNo}${Number(match[2])}`) || null;
+  const pointCode = String(step?.targetPointCode || '').trim();
+  const pointSlot = pointCode.toUpperCase().match(/^([A-D])-(0?[1-4])$/);
+  if(pointSlot) {
+    const channelNo = pointSlot[1].charCodeAt(0) - 64;
+    return findTarget(`R${channelNo}${Number(pointSlot[2])}`) || null;
+  }
+  if(/^washouter/i.test(pointCode)) return findTarget('洗针头_左列_洗外壁_R1');
+  if(/^(washinner|needlewash)/i.test(pointCode)) return findTarget('洗针头_右列_洗内壁_R1');
+
+  const slotMatch = String(step?.slotCode || '').toUpperCase().match(/^([A-D])-(0?[1-4])$/);
+  if(slotMatch) {
+    const channelNo = slotMatch[1].charCodeAt(0) - 64;
+    return findTarget(`R${channelNo}${Number(slotMatch[2])}`) || null;
+  }
+
+  const action = `${step?.majorStepCode || ''} ${step?.actionType || ''}`.toLowerCase();
+  if(action.includes('wash')) return findTarget('洗针头_右列_洗内壁_R1');
+  const reagentCode = String(step?.reagentCode || '').toUpperCase();
+  if(reagentCode === 'DAB') {
+    const mixTargets = byCategory.get('混合液体配液区') || [];
+    const activeMix = mixTargets.find(item => ['ready','running','active'].includes(String(itemState.get(item.name) || '').toLowerCase()));
+    if(activeMix) return activeMix;
+  }
+  if(reagentCode) {
+    const reagentName = [...itemReagentCodes.entries()].find(([, code]) => String(code || '').toUpperCase() === reagentCode)?.[0];
+    if(reagentName) return findTarget(reagentName);
+  }
+  return pointCode ? findTarget(pointCode) : null;
 }
 function applyRuntimeDrivenState(nextRuntime, nextArm) {
   let runtimeStep = null;
@@ -3773,14 +3942,26 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
   }
 
   const stepTarget = runtimeStepTarget(runtimeStep);
-  if(!nextArm && !stepTarget) return;
+  // 后端的 Home 是机械坐标 (0,0,0)；平面示意图的可视原点是洗针站内壁位。
+  // 两套坐标系不能直接相加，否则 Mock 回零后机械臂会画到 SVG 左上角。
+  const isBackendHome = String(nextArm?.targetPointCode || '').toLowerCase() === 'home';
+  const homeVisualTarget = isBackendHome ? findTarget(HOME_TARGET_NAME) : null;
+  const visualTarget = homeVisualTarget || stepTarget;
+  currentTarget = visualTarget || null;
+  if(!nextArm && !visualTarget) return;
+  const armMatchesStep = !!(runtimeStep?.id && nextArm?.workflowStepExecutionId === runtimeStep.id);
+  const preferTimelineTarget = !!(running && stepTarget && !armMatchesStep);
   const end = {
-    x:Number(nextArm?.x ?? stepTarget?.x ?? arm.x), y:Number(nextArm?.y ?? stepTarget?.y ?? arm.y),
+    x:Number(homeVisualTarget?.x ?? (preferTimelineTarget ? stepTarget?.x : nextArm?.x) ?? stepTarget?.x ?? arm.x),
+    y:Number(homeVisualTarget?.y ?? (preferTimelineTarget ? stepTarget?.y : nextArm?.y) ?? stepTarget?.y ?? arm.y),
     z1:Number(nextArm?.z1 ?? (running ? .65 : arm.z1)), z2:Number(nextArm?.z2 ?? (running ? .35 : arm.z2))
   };
+  const targetKey = `${runtimeStep?.id || ''}|${nextArm?.targetPointCode || ''}|${end.x.toFixed(3)}|${end.y.toFixed(3)}|${end.z1.toFixed(3)}|${end.z2.toFixed(3)}|${running}`;
+  if(targetKey === runtimeArmTargetKey) return;
+  runtimeArmTargetKey = targetKey;
   const distance = Math.hypot(end.x - arm.x, end.y - arm.y, end.z1 - arm.z1, end.z2 - arm.z2);
   const sequence = ++runtimeArmAnimationSeq;
-  if(!running || distance < 0.01) {
+  if((!running && !isBackendHome) || distance < 0.01) {
     arm = {...arm, ...end};
     updateArmVisual();
     return;
@@ -4384,6 +4565,42 @@ async function scanReagents() {
     log(`试剂区 Mock 扫描失败：${err?.message || err}`, 'err');
   }
 }
+async function resetMockRuntime() {
+  if(uiMode !== 'twin') {
+    setInfoPanel('Mock 恢复不可用', ['该操作只允许在 Mock / 孪生模式下执行。']);
+    log('Mock 恢复初始状态被拒绝：当前不是 Mock / 孪生模式', 'err');
+    return;
+  }
+  const ok = window.confirm('确认恢复 Mock 初始状态？\n\n将清空当前数据库中的玻片任务、样本扫码、通道批次、试剂瓶、试剂摆放和试剂扫码记录。流程模板和基础配置不会删除。');
+  if(!ok) return;
+  setInfoPanel('Mock 恢复初始状态', ['正在清空当前玻片信息和试剂信息，请稍候……']);
+  try {
+    const result = await backendApi('/api/mock-runtime/reset', {
+      method:'POST',
+      body:JSON.stringify({ commandId:makeCommandId('mock-runtime-reset') })
+    });
+    precheckPassed = false;
+    precheckDetails = {};
+    for(const step of PRECHECK_STEPS) precheckState[step.id] = 'idle';
+    resetDemo();
+    cameraStates.reagent = 'idle';
+    cameraStates.arm = 'idle';
+    await loadDatabaseSnapshot();
+    renderPrecheckList();
+    updateVisualStates();
+    renderAll();
+    setButtonState('startBtn', { disabled:true });
+    setInfoPanel('Mock 已恢复初始状态', [
+      '当前数据库中的玻片任务、样本扫码、通道批次、试剂瓶、试剂摆放和试剂扫码记录已清空。',
+      '流程模板、试剂定义、坐标和设备基础配置已保留。',
+      result?.message || 'Mock runtime reset completed.'
+    ]);
+    log('Mock 已恢复初始状态：数据库玻片信息和试剂信息已清空', 'ok');
+  } catch(err) {
+    setInfoPanel('Mock 恢复初始状态失败', [String(err?.message || err)]);
+    log(`Mock 恢复初始状态失败：${err?.message || err}`, 'err');
+  }
+}
 function simulateLowReagent() {
   setInfoPanel('试剂不足提醒', ['低液位试剂位已在试剂区高亮，可点击具体试剂查看余量。']);
   const reagents = byCategory.get('试剂区') || [];
@@ -4433,6 +4650,7 @@ let sideTabSwitching = false;
 let pendingConfigRender = null;
 let pendingConfigRenderFrame = null;
 let configRenderToken = 0;
+let configTabActivationToken = 0;
 function cancelScheduledConfigRender() {
   if(pendingConfigRender) {
     clearTimeout(pendingConfigRender);
@@ -4458,6 +4676,19 @@ function scheduleConfigPaneRender(section=activeConfigSection) {
     }, 0);
   });
 }
+function activeConfigPaneMatches(token) {
+  return token === configTabActivationToken
+    && document.getElementById('configPane')?.classList.contains('active');
+}
+async function loadAndRenderActiveConfig(token, force=false) {
+  try {
+    await loadWorkflowProfilesFromBackend(force);
+    if(activeConfigPaneMatches(token)) renderConfigPane(activeConfigSection);
+  } catch(err) {
+    if(activeConfigPaneMatches(token)) renderConfigErrorShell(activeConfigSection, err);
+    routeWriteError(err);
+  }
+}
 function showSideTab(target) {
   if(sideTabSwitching) return;
   sideTabSwitching = true;
@@ -4473,7 +4704,10 @@ function showSideTab(target) {
   const card = document.getElementById('rightConsoleCard');
   const flowWideView = view === 'config' && normalizeConfigSectionKey(activeConfigSection) === 'files';
   if(card) card.dataset.view = flowWideView ? 'config-edit' : view;
-  if(view !== 'config') cancelScheduledConfigRender();
+  if(view !== 'config') {
+    cancelScheduledConfigRender();
+    configTabActivationToken++;
+  }
   const configPaneEl = document.getElementById('configPane');
   const leavingConfig = view !== 'config' && configPaneEl?.classList.contains('active');
   if(leavingConfig) configPaneEl.replaceChildren();
@@ -4492,7 +4726,15 @@ function showSideTab(target) {
     bindProductionSubTabs();
     showProductionSubTab(requestedProductionSection || activeProductionSection || 'status');
   }
-  if(view === 'config') scheduleConfigPaneRender(activeConfigSection);
+  if(view === 'config') {
+    const activationToken = ++configTabActivationToken;
+    if(!CURRENT_USER.id || backendWorkflowsLoaded) {
+      renderConfigPane(activeConfigSection);
+    } else {
+      renderConfigLoadingShell(activeConfigSection, '正在从数据库加载 HE / IHC 脚本…');
+      void loadAndRenderActiveConfig(activationToken, false);
+    }
+  }
   if(view === 'debug') renderDebugPane();
   } finally {
     sideTabSwitching = false;
@@ -4660,14 +4902,26 @@ async function runPrecheck() {
   await loadDatabaseSnapshot();
 }
 
-async function collectStainingTaskIds() {
+async function collectStainingTaskPlan() {
   try {
     const snap = await backendApi('/api/operator/snapshot');
-    return (snap?.channels || [])
-      .flatMap(ch => ch.slides || [])
-      .map(s => s?.stainingTaskId)
+    const selectedChannels = (snap?.channels || [])
+      .filter(ch => String(ch?.workflowSelectionStatus || '').toLowerCase() === 'selected')
+      .filter(ch => Array.isArray(ch?.slides));
+    const taskIds = selectedChannels
+      .flatMap(ch => ch.slides)
+      .map(slide => slide?.stainingTaskId)
       .filter(Boolean);
-  } catch(err) { return []; }
+    const dabTaskIds = selectedChannels
+      .filter(ch => String(ch?.experimentType || '').toUpperCase() === 'IHC')
+      .flatMap(ch => ch.slides)
+      .map(slide => slide?.stainingTaskId)
+      .filter(Boolean);
+    return {
+      taskIds:[...new Set(taskIds.map(String))],
+      dabTaskIds:[...new Set(dabTaskIds.map(String))]
+    };
+  } catch(err) { return { taskIds:[], dabTaskIds:[] }; }
 }
 
 async function ensureMockDabBatch(taskIds) {
@@ -4730,14 +4984,16 @@ async function startRealRun() {
     }
     const terminalRunStatuses = ['completed', 'stopped', 'failed', 'unknown'];
     if(!run || terminalRunStatuses.includes(currentRunStatus)) {
-      const taskIds = await collectStainingTaskIds();
+      const { taskIds, dabTaskIds } = await collectStainingTaskPlan();
       if(!taskIds.length) {
         setInfoPanel('暂无可运行任务', ['请先扫码/创建任务后再开始。']);
         log('没有可运行的任务：请先扫码/创建任务', 'warn');
         setButtonState('startBtn', { disabled:!precheckPassed });
         return;
       }
-      await ensureMockDabBatch(taskIds);
+      // DAB batches belong only to IHC tasks. Passing HE tasks here makes the
+      // backend correctly reject the batch because an HE workflow must not have DAB.
+      await ensureMockDabBatch(dabTaskIds);
       const created = await writeApi('/api/runs', { method:'POST', body: JSON.stringify({ commandId: makeCommandId('run-create'), stainingTaskIds: taskIds, preflightStateHash: report.stateHash || null }) });
       run = await apiGetOrNull(`/api/runs/${encodeURIComponent(created.runId)}`) || { id: created.runId, status: created.status };
     }
@@ -4810,33 +5066,192 @@ function loadCsvFile(file) {
 function safeStorageGet(key) { try { return localStorage.getItem(key); } catch(e) { return null; } }
 function safeStorageSet(key, value) { try { localStorage.setItem(key, value); } catch(e) { console.warn('localStorage unavailable', e); } }
 function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+function parseJsonObject(value) {
+  if(value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if(typeof value !== 'string' || !value.trim()) return {};
+  try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; }
+  catch(e) { return {}; }
+}
 function normalizeProfile(profile, fallbackName='未命名配置') {
   const p = deepClone(profile || {});
+  const planning = parseJsonObject(p.planningRulesJson);
   p.id = String(p.id || `profile-${Date.now()}-${Math.random().toString(36).slice(2,7)}`);
   p.name = String(p.name || fallbackName);
-  p.stainType = String(p.stainType || 'IHC');
+  p.stainType = String(p.stainType || p.workflowType || 'IHC').toUpperCase();
   p.version = String(p.version || '1.0.0');
   p.description = String(p.description || '');
+  p.workflowDefinitionId = String(p.workflowDefinitionId || '');
+  p.workflowCode = String(p.workflowCode || p.code || '');
+  p.status = String(p.status || (p.persisted ? 'Draft' : 'Template'));
+  p.defaultExperimentType = p.defaultExperimentType ? String(p.defaultExperimentType).toUpperCase() : null;
+  p.persisted = p.persisted === true || !!p.workflowDefinitionId || ['Draft','Published','Retired'].includes(p.status);
+  p.targetTempC = p.targetTempC ?? planning.targetTempC ?? null;
+  p.tempControlFromStep = p.tempControlFromStep ?? planning.tempControlFromStep ?? null;
+  p.dabRatio = p.dabRatio ?? planning.dabRatio ?? null;
+  p.notes = String(p.notes ?? planning.notes ?? '');
   p.steps = Array.isArray(p.steps) ? p.steps.slice(0, 12).map((step, idx) => normalizeConfigStep(step, idx)) : [];
-  p.allowMultiPrimary = !!p.allowMultiPrimary;
+  p.allowMultiPrimary = !!(p.allowMultiPrimary ?? planning.allowMultiPrimary);
   return p;
 }
 function normalizeConfigStep(step={}, idx=0) {
-  const opKey = step.opKey || step.key || 'water';
+  const legacy = parseJsonObject(step.legacyParametersJson);
+  const ui = parseJsonObject(legacy.ui || legacy.frontend);
+  const opKey = ui.opKey || step.opKey || step.key || backendStepOpKey(step.majorStepCode, step.actionType);
   const op = OP_DEF_BY_KEY[opKey] || OP_DEFS[0];
   return {
     id:String(step.id || `step-${Date.now()}-${idx}-${Math.random().toString(36).slice(2,6)}`),
     opKey:op.key,
-    label:String(step.label || op.label),
-    durationSec:Math.max(0, Number(step.durationSec ?? step.duration ?? 0) || 0),
-    toleranceSec:Math.max(0, Number(step.toleranceSec ?? step.tolerance ?? 0) || 0),
+    label:String(ui.label || step.label || step.stepName || op.label),
+    durationSec:Math.max(0, Number(step.durationSec ?? step.durationSeconds ?? step.duration ?? 0) || 0),
+    toleranceSec:Math.max(0, Number(ui.toleranceSec ?? step.toleranceSec ?? step.tolerance ?? 0) || 0),
+    immediateAfterPrev:!!(ui.immediateAfterPrev ?? step.immediateAfterPrev),
+    requiresTemp:!!(ui.requiresTemp ?? step.requiresTemp ?? (step.targetTemperatureDeciC != null)),
+    targetTempC:(() => {
+      const value = step.targetTempC ?? (step.targetTemperatureDeciC == null ? null : Number(step.targetTemperatureDeciC) / 10);
+      return value === null || value === '' || value === undefined ? null : Number(value);
+    })(),
+    reagentRole:String(ui.reagentRole ?? step.reagentRole ?? ''),
+    reagentCode:String(step.reagentCode || ''),
+    volumeUl:step.volumeUl === null || step.volumeUl === '' || step.volumeUl === undefined ? null : Math.max(0, Number(step.volumeUl) || 0),
+    majorStepCode:String(step.majorStepCode || ''),
+    actionType:String(step.actionType || ''),
+    failureStrategy:String(step.failureStrategy || 'Stop'),
+    mixParametersJson:String(step.mixParametersJson || '{}'),
+    washParametersJson:String(step.washParametersJson || '{}'),
+    allowMultiPrimary:!!(ui.allowMultiPrimary ?? step.allowMultiPrimary),
+    notes:String(ui.notes ?? step.notes ?? '')
+  };
+}
+function backendStepOpKey(majorStepCode='', actionType='') {
+  const major = String(majorStepCode || '').toUpperCase();
+  if(major.includes('HEMATOXYLIN') || major === 'HEM') return 'hematoxylin';
+  if(major.includes('PRIMARY')) return 'primary';
+  if(major.includes('SECONDARY')) return 'secondary';
+  if(major.includes('BLOCK')) return 'block';
+  if(major.includes('DAB') && major.includes('PREP')) return 'dabMix';
+  if(major.includes('DAB')) return 'dabColor';
+  if(major.includes('EOSIN')) return 'eosin';
+  if(major.includes('ETHANOL')) return 'ethanol';
+  if(major.includes('ACID')) return 'acid';
+  if(major.includes('NEEDLE')) return 'needleWash';
+  if(major.includes('WASH')) return 'water';
+  const action = String(actionType || '').toLowerCase();
+  if(action === 'dab') return 'dabColor';
+  if(action === 'heat') return 'temp';
+  if(action === 'mix') return 'reagentMix';
+  if(action === 'wash') return 'water';
+  return 'water';
+}
+function backendStepIdentity(profile, step, idx) {
+  const opKey = step.opKey || 'water';
+  const prev = profile?.steps?.[idx - 1]?.opKey || '';
+  const isLast = idx === (profile?.steps?.length || 0) - 1;
+  if(opKey === 'water') {
+    if(isLast) return { majorStepCode:'FINAL_WASH', actionType:'Wash' };
+    if(prev === 'primary') return { majorStepCode:'WASH_AFTER_PRIMARY', actionType:'Wash' };
+    if(prev === 'secondary') return { majorStepCode:'WASH_AFTER_SECONDARY', actionType:'Wash' };
+    if(prev === 'dabColor') return { majorStepCode:'WASH_AFTER_DAB', actionType:'Wash' };
+    return { majorStepCode:'WASH', actionType:'Wash' };
+  }
+  return ({
+    hematoxylin:{majorStepCode:'HEMATOXYLIN',actionType:'Dispense'}, acid:{majorStepCode:'ACID_WASH',actionType:'Dispense'},
+    ethanol:{majorStepCode:'ETHANOL_WASH',actionType:'Dispense'}, eosin:{majorStepCode:'EOSIN',actionType:'Dispense'},
+    block:{majorStepCode:'BLOCKING',actionType:'Dispense'}, primary:{majorStepCode:'PRIMARY_ANTIBODY',actionType:'Dispense'},
+    secondary:{majorStepCode:'SECONDARY_ANTIBODY',actionType:'Dispense'}, dabMix:{majorStepCode:'DAB_PREPARATION',actionType:'Mix'},
+    dabColor:{majorStepCode:'DAB',actionType:'Dab'}, temp:{majorStepCode:'TEMPERATURE_CONTROL',actionType:'Heat'},
+    reagentMix:{majorStepCode:'REAGENT_MIX',actionType:'Mix'}, needleWash:{majorStepCode:'NEEDLE_WASH',actionType:'Wash'}
+  })[opKey] || { majorStepCode:String(step.majorStepCode || opKey).toUpperCase(), actionType:step.actionType || 'Dispense' };
+}
+function defaultReagentCode(step) {
+  if(step.reagentCode) return String(step.reagentCode).trim().toUpperCase();
+  const role = String(step.reagentRole || '').trim().toLowerCase();
+  return ({ blocker:'BLK', block:'BLK', primary:'P01', secondary:'SEC', dab:'DAB', hematoxylin:'HEM', wash:'WAS', water:'WAS', eosin:'EOS', acid:'ACD', ethanol:'ETH' })[role]
+    || ({ block:'BLK', primary:'P01', secondary:'SEC', dabColor:'DAB', hematoxylin:'HEM', water:'WAS', eosin:'EOS', acid:'ACD', ethanol:'ETH' })[step.opKey]
+    || '';
+}
+function planningRulesJson(profile) {
+  return JSON.stringify({
+    schemaVersion:1,
+    targetTempC:profile.targetTempC ?? null,
+    tempControlFromStep:profile.tempControlFromStep ?? null,
+    allowMultiPrimary:!!profile.allowMultiPrimary,
+    dabRatio:profile.dabRatio || null,
+    notes:profile.notes || ''
+  });
+}
+function profileStepRequest(profile, step, idx, commandPrefix='workflow-step') {
+  const identity = backendStepIdentity(profile, step, idx);
+  const reagentCode = defaultReagentCode(step);
+  const volume = step.volumeUl == null ? (reagentCode ? 100 : null) : Math.max(0, Number(step.volumeUl) || 0);
+  const legacy = parseJsonObject(step.legacyParametersJson);
+  legacy.ui = {
+    opKey:step.opKey,
+    label:step.label,
+    toleranceSec:Math.max(0, Number(step.toleranceSec) || 0),
     immediateAfterPrev:!!step.immediateAfterPrev,
     requiresTemp:!!step.requiresTemp,
-    targetTempC:step.targetTempC === null || step.targetTempC === '' || step.targetTempC === undefined ? null : Number(step.targetTempC),
-    reagentRole:String(step.reagentRole || ''),
+    reagentRole:step.reagentRole || '',
     allowMultiPrimary:!!step.allowMultiPrimary,
-    notes:String(step.notes || '')
+    notes:step.notes || ''
   };
+  return {
+    commandId:makeCommandId(commandPrefix),
+    stepNo:idx + 1,
+    majorStepCode:identity.majorStepCode,
+    stepName:step.label || OP_DEF_BY_KEY[step.opKey]?.label || identity.majorStepCode,
+    actionType:identity.actionType,
+    reagentCode:reagentCode || null,
+    volumeUl:volume,
+    durationSeconds:Math.max(0, Math.round(Number(step.durationSec) || 0)),
+    targetTemperatureDeciC:step.requiresTemp && (step.targetTempC ?? profile.targetTempC) != null
+      ? Math.round(Number(step.targetTempC ?? profile.targetTempC) * 10)
+      : null,
+    mixParametersJson:step.mixParametersJson || '{}',
+    washParametersJson:step.washParametersJson || '{}',
+    legacyParametersJson:JSON.stringify(legacy),
+    failureStrategy:step.failureStrategy || 'Stop'
+  };
+}
+function workflowDetailToProfile(detail) {
+  const profile = normalizeProfile({
+    id:detail.workflowVersionId || detail.id,
+    workflowDefinitionId:detail.workflowDefinitionId,
+    workflowCode:detail.code,
+    name:detail.name,
+    stainType:detail.workflowType,
+    description:detail.description,
+    version:detail.versionLabel || detail.versionNo,
+    status:detail.status,
+    defaultExperimentType:detail.defaultExperimentType,
+    planningRulesJson:detail.planningRulesJson || '{}',
+    persisted:true,
+    steps:detail.steps || []
+  });
+  profile.reagentRequirements = Array.isArray(detail.reagentRequirements) ? detail.reagentRequirements : [];
+  return profile;
+}
+let backendWorkflowsLoaded = false;
+let backendWorkflowLoadPromise = null;
+async function loadWorkflowProfilesFromBackend(force=false) {
+  if(backendWorkflowLoadPromise) return backendWorkflowLoadPromise;
+  if(backendWorkflowsLoaded && !force) return configProfiles;
+  backendWorkflowLoadPromise = (async () => {
+    const previousId = selectedConfigId;
+    const workflows = await backendApi('/api/workflows');
+    const versionIds = (Array.isArray(workflows) ? workflows : []).flatMap(w => (w.versions || []).map(v => v.id || v.workflowVersionId)).filter(Boolean);
+    const details = await Promise.all(versionIds.map(id => backendApi(`/api/workflow-versions/${encodeURIComponent(id)}`)));
+    const profiles = details.filter(Boolean).map(workflowDetailToProfile).filter(p => p.status !== 'Retired');
+    const statusRank = { Published:0, Draft:1, Retired:2 };
+    profiles.sort((a,b) => Number(!!b.defaultExperimentType) - Number(!!a.defaultExperimentType)
+      || (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9)
+      || a.name.localeCompare(b.name, 'zh-CN'));
+    configProfiles = profiles;
+    selectedConfigId = profiles.some(p => p.id === previousId) ? previousId : (profiles[0]?.id || null);
+    backendWorkflowsLoaded = true;
+    return profiles;
+  })();
+  try { return await backendWorkflowLoadPromise; }
+  finally { backendWorkflowLoadPromise = null; }
 }
 function loadConfigProfiles() {
   const raw = safeStorageGet(CONFIG_STORAGE_KEY);
@@ -4846,15 +5261,12 @@ function loadConfigProfiles() {
       const arr = Array.isArray(parsed) ? parsed : Array.isArray(parsed.profiles) ? parsed.profiles : [];
       const profiles = arr.map((p, idx) => normalizeProfile(p, `配置 ${idx+1}`)).filter(p => p.steps.length);
       if(profiles.length) return ensureDefaultProfile(profiles);
-    } catch(e) { console.warn('配置文件读取失败，使用默认模板', e); }
+    } catch(e) { console.warn('本地旧配置读取失败', e); }
   }
-  return DEFAULT_CONFIG_PROFILES.map(normalizeProfile);
+  return [];
 }
 function ensureDefaultProfile(profiles) {
-  const ids = new Set(profiles.map(p => p.id));
-  const merged = [...profiles];
-  DEFAULT_CONFIG_PROFILES.forEach(p => { if(!ids.has(p.id)) merged.push(normalizeProfile(p)); });
-  return merged;
+  return profiles;
 }
 function saveConfigProfiles() { saveConfigProfilesOnly(); persistAssignments(); }
 function saveConfigProfilesOnly() { safeStorageSet(CONFIG_STORAGE_KEY, JSON.stringify(configProfiles, null, 2)); }
@@ -4878,7 +5290,7 @@ function getChannelProfile(channelId) {
 }
 function stepToDef(step, idx=0) {
   const op = OP_DEF_BY_KEY[step?.opKey] || OP_DEFS[idx % OP_DEFS.length];
-  return { ...op, key:op.key, label:step?.label || op.label, durationSec:Number(step?.durationSec || 0), toleranceSec:Number(step?.toleranceSec || 0), immediateAfterPrev:!!step?.immediateAfterPrev, requiresTemp:!!step?.requiresTemp, targetTempC:step?.targetTempC ?? null, notes:step?.notes || '', opKey:op.key };
+  return { ...op, key:op.key, label:op.label || step?.label, durationSec:Number(step?.durationSec || 0), toleranceSec:Number(step?.toleranceSec || 0), immediateAfterPrev:!!step?.immediateAfterPrev, requiresTemp:!!step?.requiresTemp, targetTempC:step?.targetTempC ?? null, notes:step?.notes || '', opKey:op.key };
 }
 function getChannelStepDefs(channelId) {
   const profile = getChannelProfile(channelId);
@@ -4915,8 +5327,8 @@ function renderChannelBindingEditor(channelId, context='status') {
     : '';
   return `<div class="channel-binding-editor ${context === 'config' ? 'config-channel-binding-editor' : ''}" id="${prefix}BindingEditor" data-control-id="${prefix}BindingEditor" data-channel-binding-editor="${id}">
     ${summary}
-    <label class="channel-config-line" for="${prefix}ConfigSelect"><span>选择配置文件</span><select class="channel-config-select" id="${prefix}ConfigSelect" data-control-id="${prefix}ConfigSelect" data-channel-bind-select="${id}">${profileOptions(selectedProfileId, true)}</select></label>
-    <div class="channel-config-actions"><button type="button" class="channel-config-action primary-lite" id="${prefix}SetDefaultConfigBtn" data-control-id="${prefix}SetDefaultConfigBtn" data-channel-set-default-config="${id}">设置默认配置</button><button type="button" class="channel-config-action" id="${prefix}OpenConfigBtn" data-control-id="${prefix}OpenConfigBtn" data-channel-open-config="${id}">打开配置/流程</button><button type="button" class="channel-config-action" id="${prefix}ClearConfigBtn" data-control-id="${prefix}ClearConfigBtn" data-channel-clear-config="${id}">清空配置</button></div>
+    <label class="channel-config-line" for="${prefix}ConfigSelect"><span>选择已发布脚本</span><select class="channel-config-select" id="${prefix}ConfigSelect" data-control-id="${prefix}ConfigSelect" data-channel-bind-select="${id}">${profileOptions(selectedProfileId, true, true)}</select></label>
+    <div class="channel-config-actions"><button type="button" class="channel-config-action primary-lite" id="${prefix}SetDefaultConfigBtn" data-control-id="${prefix}SetDefaultConfigBtn" data-channel-set-default-config="${id}">应用到通道</button><button type="button" class="channel-config-action" id="${prefix}OpenConfigBtn" data-control-id="${prefix}OpenConfigBtn" data-channel-open-config="${id}">打开配置/流程</button><button type="button" class="channel-config-action" id="${prefix}ClearConfigBtn" data-control-id="${prefix}ClearConfigBtn" data-channel-clear-config="${id}">清除本地显示</button></div>
     <div data-channel-profile-preview="${id}" data-preview-id="${prefix}ProfilePreview">${renderProfileMini(profile, `${prefix}ProfilePreview`)}</div>
   </div>`;
 }
@@ -4944,16 +5356,25 @@ function bindChannelBindingHandlers(root=document) {
     });
   });
   root.querySelectorAll('[data-channel-set-default-config]').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = Number(btn.dataset.channelSetDefaultConfig);
       const wrap = btn.closest('[data-channel-binding-editor]') || root;
       const sel = wrap.querySelector(`[data-channel-bind-select="${id}"]`) || document.querySelector(`[data-channel-bind-select="${id}"]`);
       const profileId = sel?.value || null;
-      assignConfigToChannel(id, profileId, false);
       const profile = getProfileById(profileId);
-      log(profile ? `通道${id}默认配置已设置：${profile.name}` : `通道${id}默认配置已清空`, profile ? 'ok' : 'warn', id);
-      refreshChannelBindingEditors(id);
-      flashControl(btn);
+      if(!profile || profile.status !== 'Published') { log(`通道${id}只能选择已发布脚本`, 'warn', id); return; }
+      try {
+        const drawerCode = letterForChannel(id);
+        const active = await writeApi('/api/channel-batches/active', { method:'POST', body:JSON.stringify({ commandId:makeCommandId('channel-active'), drawerCode }) });
+        await writeApi('/api/channel-batches/workflow-selection', { method:'POST', body:JSON.stringify({ commandId:makeCommandId('channel-workflow'), channelBatchId:active.channelBatchId, drawerCode, experimentType:profile.stainType, workflowVersionId:profile.id }) });
+        channelConfigAssignments[id] = profile.id;
+        if(channels[id-1]) channels[id-1].configProfileId = profile.id;
+        persistAssignments();
+        log(`通道${id}已应用脚本：${profile.name} · ${profile.version}`, 'ok', id);
+        await loadDatabaseSnapshot();
+        refreshChannelBindingEditors(id);
+        flashControl(btn);
+      } catch(err) { /* routed by writeApi */ }
     });
   });
   root.querySelectorAll('[data-channel-open-config]').forEach(btn => {
@@ -4993,9 +5414,10 @@ function assignConfigToChannel(channelId, profileId, announce=false) {
 function applyProfileChangesToAssignments(profileId) {
   [1,2,3,4].forEach(id => { if(channelConfigAssignments[id] === profileId) assignConfigToChannel(id, profileId, false); });
 }
-function profileOptions(selectedId, includeEmpty=false) {
+function profileOptions(selectedId, includeEmpty=false, publishedOnly=false) {
   const empty = includeEmpty ? '<option value="">未选择配置文件</option>' : '';
-  return empty + configProfiles.map(p => `<option value="${escapeHtml(p.id)}" ${p.id===selectedId?'selected':''}>${escapeHtml(p.name)} · ${escapeHtml(p.stainType || '未分类')}</option>`).join('');
+  const profiles = publishedOnly ? configProfiles.filter(p => p.status === 'Published') : configProfiles;
+  return empty + profiles.map(p => `<option value="${escapeHtml(p.id)}" ${p.id===selectedId?'selected':''}>${escapeHtml(p.name)} · ${escapeHtml(p.stainType || '未分类')} · ${escapeHtml(p.version || '')}${p.defaultExperimentType ? ' · 默认' : ''}</option>`).join('');
 }
 function opShapeHtml(op) {
   const color = op.color || '#64748b';
@@ -5043,7 +5465,7 @@ function setConfigCardView(section=activeConfigSection) {
   if(card && pane?.classList.contains('active')) card.dataset.view = isFlowWorkspace ? 'config-edit' : 'config';
   return isFlowWorkspace;
 }
-function renderConfigLoadingShell(section=activeConfigSection) {
+function renderConfigLoadingShell(section=activeConfigSection, message='正在加载配置子页…') {
   const pane = document.getElementById('configPane');
   if(!pane || !pane.classList.contains('active')) return;
   const normalized = normalizeConfigSectionKey(section);
@@ -5051,9 +5473,38 @@ function renderConfigLoadingShell(section=activeConfigSection) {
   enterFlowWidePanel();
   pane.innerHTML = `<div class="config-module ${isFlowWorkspace?'edit-wide':''}" id="configModule" data-control-id="configModule" data-rendered-section="loading-${normalized}">
     <div class="config-tabs config-tabs-wide" id="configTabs" data-control-id="configTabs">${renderConfigNavHtml(normalized)}</div>
-    <div class="config-active-section" id="configActiveSection" data-control-id="configActiveSection"><div class="config-loading-card"><strong>正在加载配置子页</strong><span>仅渲染当前子页，旧子页 DOM 已释放。</span></div></div>
+    <div class="config-active-section" id="configActiveSection" data-control-id="configActiveSection"><div class="config-loading-card"><strong>${escapeHtml(message)}</strong><span>加载完成后将自动显示；切换页面不会让旧请求覆盖当前界面。</span></div></div>
   </div>`;
   bindConfigNavHandlers(pane);
+}
+function renderConfigErrorShell(section=activeConfigSection, error=null) {
+  const pane = document.getElementById('configPane');
+  if(!pane || !pane.classList.contains('active')) return;
+  cancelScheduledConfigRender();
+  const normalized = normalizeConfigSectionKey(section);
+  const isFlowWorkspace = setConfigCardView(normalized);
+  const message = String(error?.message || error || '配置内容未能正确加载');
+  enterFlowWidePanel();
+  pane.innerHTML = `<div class="config-module ${isFlowWorkspace?'edit-wide':''}" id="configModule" data-control-id="configModule" data-rendered-section="error-${normalized}">
+    <div class="config-tabs config-tabs-wide" id="configTabs" data-control-id="configTabs">${renderConfigNavHtml(normalized)}</div>
+    <div class="config-active-section" id="configActiveSection" data-control-id="configActiveSection"><div class="config-loading-card notice-box"><strong>配置界面加载失败</strong><span>${escapeHtml(message)}</span><button type="button" id="configRetryLoadBtn" data-control-id="configRetryLoadBtn">重新加载</button></div></div>
+  </div>`;
+  bindConfigNavHandlers(pane);
+  bindClick('configRetryLoadBtn', () => {
+    const activationToken = ++configTabActivationToken;
+    renderConfigLoadingShell(normalized, '正在重新加载数据库脚本…');
+    if(CURRENT_USER.id) void loadAndRenderActiveConfig(activationToken, true);
+    else renderConfigPane(normalized);
+  });
+}
+function configPaneIsComplete(section=activeConfigSection) {
+  const pane = document.getElementById('configPane');
+  const normalized = normalizeConfigSectionKey(section);
+  const module = pane?.querySelector(':scope > #configModule');
+  if(!pane?.classList.contains('active') || !module || !module.querySelector('#configTabs') || !module.querySelector('#configActiveSection')) return false;
+  if(module.dataset.renderedSection !== normalized) return false;
+  return normalized !== 'files'
+    || (!!module.querySelector('#configProfileSummary') && !!module.querySelector('#configFlowFold'));
 }
 function renderConfigPane(section=activeConfigSection) {
   const pane = document.getElementById('configPane'); if(!pane) return;
@@ -5068,50 +5519,44 @@ function renderConfigPane(section=activeConfigSection) {
     pane.dataset.pendingSection = activeConfigSection;
     return;
   }
-  if(!getSelectedProfile() && configProfiles.length) selectedConfigId = configProfiles[0].id;
-  const selected = getSelectedProfile();
-  setConfigCardView(activeConfigSection);
-  enterFlowWidePanel();
-  const sectionHtml = renderConfigSection(activeConfigSection, selected);
-  pane.innerHTML = `<div class="config-module ${isFlowWorkspace?'edit-wide':''}" id="configModule" data-control-id="configModule" data-rendered-section="${activeConfigSection}">
-    <div class="config-tabs config-tabs-wide" id="configTabs" data-control-id="configTabs">${renderConfigNavHtml(activeConfigSection)}</div>
-    <div class="config-active-section" id="configActiveSection" data-control-id="configActiveSection">${sectionHtml}</div>
-  </div>`;
-  bindConfigHandlers();
+  try {
+    if(!getSelectedProfile() && configProfiles.length) selectedConfigId = configProfiles[0].id;
+    const selected = getSelectedProfile();
+    setConfigCardView(activeConfigSection);
+    enterFlowWidePanel();
+    const sectionHtml = renderConfigSection(activeConfigSection, selected);
+    pane.innerHTML = `<div class="config-module ${isFlowWorkspace?'edit-wide':''}" id="configModule" data-control-id="configModule" data-rendered-section="${activeConfigSection}">
+      <div class="config-tabs config-tabs-wide" id="configTabs" data-control-id="configTabs">${renderConfigNavHtml(activeConfigSection)}</div>
+      <div class="config-active-section" id="configActiveSection" data-control-id="configActiveSection">${sectionHtml}</div>
+    </div>`;
+    if(!configPaneIsComplete(activeConfigSection)) throw new Error('配置页面结构不完整');
+    bindConfigHandlers();
+  } catch(err) {
+    console.error('配置页面渲染失败', err);
+    renderConfigErrorShell(activeConfigSection, err);
+  }
 }
-// 后端 workflow-versions 只读投影：twin 不再作为正式配置源，流程以后端 Workflow 为唯一事实源。
-// 本轮不重做编辑器、不建染色→设备映射；仅展示后端字段（stepName/duration/targetTemp），编辑用 /operator/configure。
 async function refreshBackendWorkflowProjection() {
   const box = document.getElementById('backendWorkflowProjection');
-  if(!box) return;
-  box.innerHTML = '<em>加载后端流程版本…</em>';
+  if(box) box.innerHTML = '<em>正在刷新数据库脚本…</em>';
   try {
-    const workflows = await backendApi('/api/workflows');
-    const summaries = (Array.isArray(workflows) ? workflows : []).flatMap(w => (w.versions || []).map(v => ({ w, v })));
-    if(!summaries.length) { box.innerHTML = '<div class="notice-box">后端暂无流程版本（编辑请用 /operator/configure）。</div>'; return; }
-    // /api/workflows 的 version summary 只有 stepCount，需逐版本请求详情拿 steps
-    const details = await Promise.all(summaries.map(async ({ w, v }) => {
-      const id = v.id || v.workflowVersionId;
-      let steps = [];
-      if(id) { try { const d = await backendApi(`/api/workflow-versions/${encodeURIComponent(id)}`); steps = d?.steps || []; } catch(e) {} }
-      return { w, v, steps };
-    }));
-    const cards = details.map(({ w, v, steps }) => {
-      const preview = steps.slice(0, 4).map(s => `${escapeHtml(s.stepName || s.actionType || '')}(${s.durationSeconds || 0}s${s.targetTemperatureDeciC != null ? ',' + (s.targetTemperatureDeciC / 10) + '℃' : ''})`).join(' → ') + (steps.length > 4 ? ` … (+${steps.length - 4})` : '');
-      return `<div class="config-file-card"><div class="config-file-head"><strong>${escapeHtml(w.code || '')} · ${escapeHtml(v.versionLabel || v.versionNo || '')}</strong><span class="badge-soft">${escapeHtml(v.status || '')}</span></div><div class="config-meta">${escapeHtml(w.name || '')} · ${steps.length} 步 · ${escapeHtml(v.defaultExperimentType || w.workflowType || '')}</div><div class="config-meta">${preview || '无步骤'}</div></div>`;
-    }).join('');
-    box.innerHTML = '<div class="notice-box">后端流程版本（只读投影，编辑请用 /operator/configure）：</div>' + cards;
-    log(`已投影 ${details.length} 个后端流程版本（只读，含步骤详情）`, 'ok');
-  } catch(err) { box.innerHTML = '<div class="notice-box">后端流程加载失败，请确认已登录。</div>'; }
+    await loadWorkflowProfilesFromBackend(true);
+    renderConfigPane(activeConfigSection);
+    log(`已从数据库刷新 ${configProfiles.length} 个可用脚本版本`, 'ok');
+  } catch(err) {
+    if(box) box.innerHTML = '<div class="notice-box">数据库脚本加载失败，请确认已登录。</div>';
+    routeWriteError(err);
+  }
 }
 
 function renderConfigFilesSection(profile) {
+  const editable = !!profile && profile.status === 'Draft' && CURRENT_USER.role === 'admin';
   const opTiles = OP_DEFS.map(op => `<div class="config-op-tile" draggable="true" id="configOpTile-${op.key}" data-op-key="${op.key}" data-control-id="configOpTile-${op.key}">${opShapeHtml(op)}<span>${escapeHtml(op.label)}</span></div>`).join('');
   const steps = profile ? profile.steps : [];
   if(profile && selectedConfigStepIndex >= steps.length) selectedConfigStepIndex = Math.max(0, steps.length - 1);
   const currentName = profile?.name || '未选择配置';
-  const currentMeta = profile ? `${profile.stainType || '未分类'} · ${steps.length} 步 · ${profile.targetTempC ? profile.targetTempC + '℃' : '未设置控温'}` : '请选择或新建配置';
-  const cards = configProfiles.map(p => `<div class="config-file-card ${p.id===selectedConfigId?'active':''}" id="configFileCard-${escapeHtml(p.id)}" data-control-id="configFileCard-${escapeHtml(p.id)}"><div class="config-file-head"><strong>${escapeHtml(p.name)}</strong><button type="button" class="mini-action" data-select-profile="${escapeHtml(p.id)}">选择</button></div><div class="config-meta">${escapeHtml(p.stainType || '未分类')} · ${p.steps.length} 步 · ${p.targetTempC ? p.targetTempC + '℃' : '未设置'}<br>${escapeHtml(p.description || p.notes || '')}</div></div>`).join('');
+  const currentMeta = profile ? `${profile.stainType || '未分类'} · ${profile.status || '未知状态'} · v${profile.version || '-'} · ${steps.length} 步 · ${profile.targetTempC ? profile.targetTempC + '℃' : '未设置控温'}${profile.defaultExperimentType ? ' · 系统默认' : ''}` : '请选择或新建配置';
+  const cards = configProfiles.map(p => `<div class="config-file-card ${p.id===selectedConfigId?'active':''}" id="configFileCard-${escapeHtml(p.id)}" data-control-id="configFileCard-${escapeHtml(p.id)}"><div class="config-file-head"><strong>${escapeHtml(p.name)}</strong><button type="button" class="mini-action" data-select-profile="${escapeHtml(p.id)}">选择</button></div><div class="config-meta">${escapeHtml(p.stainType || '未分类')} · ${escapeHtml(p.status || '')} · v${escapeHtml(p.version || '')}${p.defaultExperimentType ? ' · 系统默认' : ''} · ${p.steps.length} 步 · ${p.targetTempC ? p.targetTempC + '℃' : '未设置'}<br>${escapeHtml(p.description || p.notes || '')}</div></div>`).join('');
   const bricks = renderConfigTimelineStepsHtml(profile);
   const editor = renderStepEditor(profile, selectedConfigStepIndex);
   return `<section class="config-pane-section config-integrated-section ${activeConfigSection==='files'?'active':''}" id="configSectionFiles" data-control-id="configSectionFiles">
@@ -5125,20 +5570,23 @@ function renderConfigFilesSection(profile) {
           <div class="config-edit-column-title"><strong>配置文件</strong><span>选择、新建、导入导出；完成后自动回到流程编辑</span></div>
           <div class="config-profile-form-grid" id="configProfileFormGrid" data-control-id="configProfileFormGrid">
             <label>选择已有配置<select id="configEditProfileSelect" data-control-id="configEditProfileSelect">${profileOptions(profile?.id || '')}</select></label>
-            <label>配置名称<input id="configProfileNameInput" data-control-id="configProfileNameInput" value="${escapeHtml(profile?.name || '')}" placeholder="配置名称"></label>
-            <label>染色类型<input id="configProfileTypeInput" data-control-id="configProfileTypeInput" value="${escapeHtml(profile?.stainType || '')}" placeholder="IHC / HE / PAS"></label>
-            <label>配置说明<textarea id="configProfileDescInput" data-control-id="configProfileDescInput" rows="1" placeholder="配置说明">${escapeHtml(profile?.description || '')}</textarea></label>
+            <label>配置名称<input id="configProfileNameInput" data-control-id="configProfileNameInput" value="${escapeHtml(profile?.name || '')}" placeholder="配置名称" ${editable?'':'disabled'}></label>
+            <label>染色类型<select id="configProfileTypeInput" data-control-id="configProfileTypeInput" disabled><option value="IHC" ${profile?.stainType==='IHC'?'selected':''}>IHC</option><option value="HE" ${profile?.stainType==='HE'?'selected':''}>HE</option></select></label>
+            <label>配置说明<textarea id="configProfileDescInput" data-control-id="configProfileDescInput" rows="1" placeholder="配置说明" ${editable?'':'disabled'}>${escapeHtml(profile?.description || '')}</textarea></label>
           </div>
           <div class="config-profile-actions" id="configProfileActions" data-control-id="configProfileActions">
-            <button type="button" id="configNewProfileBtn" data-control-id="configNewProfileBtn">从 IHC 模板新建</button>
+            <button type="button" id="configNewProfileBtn" data-control-id="configNewProfileBtn">基于当前 IHC 默认版本新建</button>
+            <button type="button" id="configNewHeProfileBtn" data-control-id="configNewHeProfileBtn">基于当前 HE 默认版本新建</button>
             <button type="button" id="configDuplicateProfileBtn" data-control-id="configDuplicateProfileBtn">复制为新版本</button>
-            <button type="button" id="configRenameQuickBtn" data-control-id="configRenameQuickBtn" class="primary-save">保存基础信息</button>
+            <button type="button" id="configRenameQuickBtn" data-control-id="configRenameQuickBtn" class="primary-save" ${editable?'':'disabled'}>保存基础信息</button>
+            <button type="button" id="configPublishProfileBtn" data-control-id="configPublishProfileBtn" ${editable?'':'disabled'}>校验并发布</button>
+            <button type="button" id="configSetSystemDefaultBtn" data-control-id="configSetSystemDefaultBtn" ${profile?.status==='Published' && CURRENT_USER.role==='admin'?'':'disabled'}>设为 ${escapeHtml(profile?.stainType || 'HE/IHC')} 系统默认</button>
             <button type="button" id="configDeleteProfileBtn" data-control-id="configDeleteProfileBtn" class="danger">删除当前配置</button>
             <button type="button" id="configExportBtn" data-control-id="configExportBtn">导出当前 JSON</button>
             <button type="button" id="configExportAllBtn" data-control-id="configExportAllBtn">导出全部</button>
             <button type="button" id="configImportBtn" data-control-id="configImportBtn">导入 JSON</button>
             <input type="file" id="configImportInput" data-control-id="configImportInput" accept="application/json,.json" style="display:none">
-            <button type="button" id="configLoadBackendWorkflowBtn" data-control-id="configLoadBackendWorkflowBtn" onclick="refreshBackendWorkflowProjection()">从后端加载流程（只读）</button>
+            <button type="button" id="configLoadBackendWorkflowBtn" data-control-id="configLoadBackendWorkflowBtn" onclick="refreshBackendWorkflowProjection()">刷新数据库脚本</button>
           </div>
           <div class="backend-workflow-projection" id="backendWorkflowProjection" data-control-id="backendWorkflowProjection"></div>
         </div>
@@ -5147,7 +5595,7 @@ function renderConfigFilesSection(profile) {
     </details>
     <div class="config-flow-workbench-shell" id="configFlowFold" data-control-id="configFlowFold">
       <div class="config-edit-layout config-flow-workbench" id="configEditLayout" data-control-id="configEditLayout">
-        <div class="config-edit-column config-op-column" id="configOpColumn" data-control-id="configOpColumn"><div class="config-edit-column-title"><strong>操作库</strong><span>拖入中间时间线</span></div><div class="config-left-workbench-scroll"><div class="op-palette" id="configOpPalette" data-control-id="configOpPalette">${opTiles}</div></div></div>
+        <div class="config-edit-column config-op-column" id="configOpColumn" data-control-id="configOpColumn"><div class="config-edit-column-title"><strong>操作库</strong><span>${editable?'点击或拖入后立即保存到草稿':'已发布版本只读；请复制为新版本后编辑'}</span></div><div class="config-left-workbench-scroll"><div class="op-palette" id="configOpPalette" data-control-id="configOpPalette">${opTiles}</div></div></div>
         <div class="config-edit-column config-flow-column" id="configFlowColumn" data-control-id="configFlowColumn"><div class="config-edit-column-title"><strong>流程砖块时间线</strong><span>${steps.length} 步 · 点击砖块直接编辑</span></div><div class="config-timeline ${steps.length?'':'empty'}" id="configEditorTimeline" data-control-id="configEditorTimeline">${bricks}</div></div>
         <div class="config-edit-column config-step-column" id="configStepColumn" data-control-id="configStepColumn"><div class="config-edit-column-title"><strong>当前步骤编辑器</strong><span>保存对象：选中的这一步</span></div>${editor}</div>
       </div>
@@ -5160,7 +5608,9 @@ function renderStepEditor(profile, idx) {
   const safeIdx = Math.max(0, Math.min(idx, profile.steps.length - 1));
   const step = profile.steps[safeIdx];
   const op = stepToDef(step, safeIdx);
-  return `<div class="config-editor" id="configStepEditor" data-control-id="configStepEditor"><strong>编辑第 ${safeIdx+1} 层：${escapeHtml(op.label)}</strong><div class="config-note">这里保存的是当前选中的流程步骤；配置名称、类型、说明请使用上方“保存基础信息”。</div><div class="config-editor-grid"><label>显示名称<input id="configStepLabelInput" value="${escapeHtml(step.label)}"></label><label>操作类型<select id="configStepOpSelect">${OP_DEFS.map(d => `<option value="${d.key}" ${d.key===step.opKey?'selected':''}>${escapeHtml(d.label)}</option>`).join('')}</select></label><label>持续时间 / 秒<input id="configStepDurationInput" type="number" min="0" step="1" value="${Number(step.durationSec || 0)}"></label><label>容差 / 秒<input id="configStepToleranceInput" type="number" min="0" step="1" value="${Number(step.toleranceSec || 0)}"></label><label>目标温度 / ℃<input id="configStepTempInput" type="number" step="0.1" value="${step.targetTempC ?? ''}" placeholder="继承配置"></label><label>试剂角色<input id="configStepRoleInput" value="${escapeHtml(step.reagentRole || '')}" placeholder="primary / wash / dab"></label></div><label class="config-checkline"><input type="checkbox" id="configStepImmediateInput" ${step.immediateAfterPrev?'checked':''}>本层必须在上一层结束后立即执行，不给机械臂规划留间隔</label><label class="config-checkline"><input type="checkbox" id="configStepTempEnableInput" ${step.requiresTemp?'checked':''}>本层需要控温</label><label class="config-checkline"><input type="checkbox" id="configStepMultiPrimaryInput" ${step.allowMultiPrimary?'checked':''}>允许同轮实验对不同玻片/通道使用多种一抗</label><textarea id="configStepNotesInput" rows="2" placeholder="备注、病理约束或调度提示">${escapeHtml(step.notes || '')}</textarea><div class="config-toolbar-row"><button type="button" id="configSaveStepBtn">保存当前步骤</button><button type="button" id="configMoveStepUpBtn">上移</button><button type="button" id="configMoveStepDownBtn">下移</button><button type="button" id="configDeleteStepBtn" class="danger">删除</button></div></div>`;
+  const editable = profile.status === 'Draft' && CURRENT_USER.role === 'admin';
+  const disabled = editable ? '' : 'disabled';
+  return `<div class="config-editor" id="configStepEditor" data-control-id="configStepEditor"><strong>编辑第 ${safeIdx+1} 层：${escapeHtml(op.label)}</strong><div class="config-note">${editable?'保存后立即写入数据库草稿。':'当前版本只读；请复制为新版本后编辑。'}</div><div class="config-editor-grid"><label>显示名称<input id="configStepLabelInput" value="${escapeHtml(op.label)}" ${disabled}></label><label>操作类型<select id="configStepOpSelect" ${disabled}>${OP_DEFS.map(d => `<option value="${d.key}" ${d.key===step.opKey?'selected':''}>${escapeHtml(d.label)}</option>`).join('')}</select></label><label>持续时间 / 秒<input id="configStepDurationInput" type="number" min="0" step="1" value="${Number(step.durationSec || 0)}" ${disabled}></label><label>容差 / 秒<input id="configStepToleranceInput" type="number" min="0" step="1" value="${Number(step.toleranceSec || 0)}" ${disabled}></label><label>目标温度 / ℃<input id="configStepTempInput" type="number" step="0.1" value="${step.targetTempC ?? ''}" placeholder="继承配置" ${disabled}></label><label>试剂角色<input id="configStepRoleInput" value="${escapeHtml(step.reagentRole || '')}" placeholder="primary / wash / dab" ${disabled}></label><label>试剂编码<input id="configStepReagentCodeInput" value="${escapeHtml(step.reagentCode || '')}" placeholder="P01 / HEM / WAS" ${disabled}></label><label>加液体积 / μL<input id="configStepVolumeInput" type="number" min="0" step="1" value="${step.volumeUl ?? ''}" placeholder="不加液" ${disabled}></label><label>失败策略<select id="configStepFailureSelect" ${disabled}><option value="Stop" ${step.failureStrategy==='Stop'?'selected':''}>停止</option><option value="Retry" ${step.failureStrategy==='Retry'?'selected':''}>重试</option><option value="Continue" ${step.failureStrategy==='Continue'?'selected':''}>继续</option></select></label></div><label class="config-checkline"><input type="checkbox" id="configStepImmediateInput" ${step.immediateAfterPrev?'checked':''} ${disabled}>本层必须在上一层结束后立即执行，不给机械臂规划留间隔</label><label class="config-checkline"><input type="checkbox" id="configStepTempEnableInput" ${step.requiresTemp?'checked':''} ${disabled}>本层需要控温</label><label class="config-checkline"><input type="checkbox" id="configStepMultiPrimaryInput" ${step.allowMultiPrimary?'checked':''} ${disabled}>允许同轮实验对不同玻片/通道使用多种一抗</label><textarea id="configStepNotesInput" rows="2" placeholder="备注、病理约束或调度提示" ${disabled}>${escapeHtml(step.notes || '')}</textarea><div class="config-toolbar-row"><button type="button" id="configSaveStepBtn" ${disabled}>保存当前步骤</button><button type="button" id="configMoveStepUpBtn" ${disabled}>上移</button><button type="button" id="configMoveStepDownBtn" ${disabled}>下移</button><button type="button" id="configDeleteStepBtn" class="danger" ${disabled}>删除</button></div></div>`;
 }
 
 function renderConfigTimelineStepsHtml(profile) {
@@ -5236,8 +5686,10 @@ function refreshConfigFlowWorkbenchOnly() {
 
 function renderConfigRulesSection(profile) {
   const dab = profile?.dabRatio || { a:1, b:1, pureWater:18, preparePolicy:'per_run' };
+  const editable = profile?.status === 'Draft' && CURRENT_USER.role === 'admin';
+  const disabled = editable ? '' : 'disabled';
   return `<section class="config-pane-section ${activeConfigSection==='rules'?'active':''}" id="configSectionRules" data-control-id="configSectionRules">
-    <div class="config-editor config-rules-card" id="configRulesCard" data-control-id="configRulesCard"><strong>病理染色规则 / 规划约束</strong><div class="config-editor-grid"><label>默认目标温度 / ℃<input id="configTargetTempInput" type="number" step="0.1" value="${profile?.targetTempC ?? ''}" placeholder="不控温"></label><label>从第几步开始控温<input id="configTempFromInput" type="number" min="1" max="99" step="1" value="${profile?.tempControlFromStep ?? ''}" placeholder="例如 4"></label><label>DAB A液比例<input id="configDabAInput" type="number" min="0" step="1" value="${dab.a ?? 1}"></label><label>DAB B液比例<input id="configDabBInput" type="number" min="0" step="1" value="${dab.b ?? 1}"></label><label>纯水比例<input id="configDabWaterInput" type="number" min="0" step="1" value="${dab.pureWater ?? 18}"></label><label>DAB配置策略<select id="configDabPolicySelect"><option value="per_run" ${dab.preparePolicy==='per_run'?'selected':''}>每轮实验过程中配置</option><option value="on_demand" ${dab.preparePolicy==='on_demand'?'selected':''}>按需配置</option><option value="pre_mix" ${dab.preparePolicy==='pre_mix'?'selected':''}>预先配置</option></select></label></div><label class="config-checkline"><input type="checkbox" id="configAllowMultiPrimaryInput" ${profile?.allowMultiPrimary?'checked':''}>允许同一轮实验中多种一抗并行调度</label><textarea id="configProfileNotesInput" rows="3" placeholder="通用规则说明">${escapeHtml(profile?.notes || '')}</textarea><button type="button" id="configSaveRulesBtn">保存规则</button><div class="config-note">连续不可间隔的步骤请在“配置/流程”中勾选“紧邻执行”。例如一抗完成后清洗液通常应紧邻；清洗液完成后到二抗可根据容差和机械臂路径规划留出调度窗口。</div></div>
+    <div class="config-editor config-rules-card" id="configRulesCard" data-control-id="configRulesCard"><strong>病理染色规则 / 规划约束</strong><div class="config-editor-grid"><label>默认目标温度 / ℃<input id="configTargetTempInput" type="number" step="0.1" value="${profile?.targetTempC ?? ''}" placeholder="不控温" ${disabled}></label><label>从第几步开始控温<input id="configTempFromInput" type="number" min="1" max="99" step="1" value="${profile?.tempControlFromStep ?? ''}" placeholder="例如 4" ${disabled}></label><label>DAB A液比例<input id="configDabAInput" type="number" min="1" step="1" value="${dab.a ?? 1}" ${disabled}></label><label>DAB B液比例<input id="configDabBInput" type="number" min="1" step="1" value="${dab.b ?? 1}" ${disabled}></label><label>纯水比例<input id="configDabWaterInput" type="number" min="0" step="1" value="${dab.pureWater ?? 18}" ${disabled}></label><label>DAB配置策略<select id="configDabPolicySelect" ${disabled}><option value="per_run" ${dab.preparePolicy==='per_run'?'selected':''}>每轮实验过程中配置</option><option value="on_demand" ${dab.preparePolicy==='on_demand'?'selected':''}>按需配置</option><option value="pre_mix" ${dab.preparePolicy==='pre_mix'?'selected':''}>预先配置</option></select></label></div><label class="config-checkline"><input type="checkbox" id="configAllowMultiPrimaryInput" ${profile?.allowMultiPrimary?'checked':''} ${disabled}>允许同一轮实验中多种一抗并行调度</label><textarea id="configProfileNotesInput" rows="3" placeholder="通用规则说明" ${disabled}>${escapeHtml(profile?.notes || '')}</textarea><button type="button" id="configSaveRulesBtn" ${disabled}>保存规则到数据库</button><div class="config-note">连续不可间隔的步骤请在“配置/流程”中勾选“紧邻执行”。例如一抗完成后清洗液通常应紧邻；清洗液完成后到二抗可根据容差和机械臂路径规划留出调度窗口。</div></div>
   </section>`;
 }
 function engineeringButton(label, action, cls='') {
@@ -5852,6 +6304,7 @@ function bindConfigHandlers() {
   ['configProfileSelect','configEditProfileSelect'].forEach(id => { const node = document.getElementById(id); if(node) node.addEventListener('change', () => { selectedConfigId = node.value; selectedConfigStepIndex = 0; renderConfigPane(activeConfigSection); closeConfigProfileDrawer(); }); });
   root.querySelectorAll('[data-select-profile]').forEach(btn => btn.addEventListener('click', () => { selectedConfigId = btn.dataset.selectProfile; selectedConfigStepIndex = 0; renderConfigPane('files'); closeConfigProfileDrawer(); }));
   bindClick('configNewProfileBtn', createNewProfile);
+  bindClick('configNewHeProfileBtn', createNewHeProfile);
   bindClick('configDuplicateProfileBtn', duplicateProfile);
   bindClick('configDeleteProfileBtn', deleteSelectedProfile);
   bindClick('configExportBtn', () => exportProfile(getSelectedProfile()));
@@ -5859,6 +6312,8 @@ function bindConfigHandlers() {
   bindClick('configImportBtn', () => document.getElementById('configImportInput')?.click());
   const importInput = document.getElementById('configImportInput'); if(importInput) importInput.addEventListener('change', importProfilesFromInput);
   bindClick('configRenameQuickBtn', saveProfileBasics);
+  bindClick('configPublishProfileBtn', publishSelectedProfile);
+  bindClick('configSetSystemDefaultBtn', setSelectedProfileAsDefault);
   bindClick('configBasicsToggleBtn', () => { configBasicsCollapsed = !configBasicsCollapsed; renderConfigPane('files'); });
   bindClick('configSaveStepBtn', saveSelectedStep);
   bindClick('configMoveStepUpBtn', () => moveSelectedStep(-1));
@@ -5888,31 +6343,94 @@ function bindConfigHandlers() {
   bindSvgTargetLinks(root);
 }
 
-function createNewProfile() {
-  const base = normalizeProfile(DEFAULT_CONFIG_PROFILES[0]);
-  base.id = `profile-${Date.now()}`;
-  base.name = `新建 IHC 配置 ${configProfiles.length + 1}`;
-  base.description = '由默认 IHC 模板新建，可拖拽调整。';
-  configProfiles.unshift(base); selectedConfigId = base.id; selectedConfigStepIndex = 0; saveConfigProfilesOnly(); renderConfigPane('files'); log(`已新建配置：${base.name}`, 'ok');
+function requireEditableProfile() {
+  const profile = getSelectedProfile();
+  if(!profile) { log('请先选择配置脚本', 'warn'); return null; }
+  if(CURRENT_USER.role !== 'admin') { log('只有管理员可以编辑和发布配置脚本', 'warn'); return null; }
+  if(profile.status !== 'Draft') { log('已发布版本不可直接修改，请先复制为新版本', 'warn'); return null; }
+  return profile;
 }
-function duplicateProfile() {
+async function refreshWorkflowEditor(profileId, section='files', stepIndex=selectedConfigStepIndex) {
+  backendWorkflowsLoaded = false;
+  await loadWorkflowProfilesFromBackend(true);
+  if(profileId && getProfileById(profileId)) selectedConfigId = profileId;
+  selectedConfigStepIndex = Math.max(0, stepIndex || 0);
+  renderConfigPane(section);
+}
+async function createPersistedProfileFromTemplate(source, nameOverride=null) {
+  if(CURRENT_USER.role !== 'admin') { log('只有管理员可以新建配置脚本', 'warn'); return null; }
+  const template = normalizeProfile(source);
+  const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`.toUpperCase();
+  const name = nameOverride || `新建 ${template.stainType} 配置 ${configProfiles.length + 1}`;
+  try {
+    const created = await writeApi('/api/workflows', { method:'POST', body:JSON.stringify({
+      commandId:makeCommandId('workflow-create'), code:`UI-${template.stainType}-${stamp}`, name,
+      workflowType:template.stainType, description:template.description || `由 ${template.stainType} 前端模板创建。`,
+      versionLabel:'0.1', changeNote:'Created from control-console configuration editor.'
+    }) });
+    const draftId = created.workflowVersionId;
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(draftId)}`, { method:'PUT', body:JSON.stringify({
+      commandId:makeCommandId('workflow-rules'), name, description:template.description || '', planningRulesJson:planningRulesJson(template)
+    }) });
+    for(let idx=0; idx<template.steps.length; idx++) {
+      await writeApi(`/api/workflow-versions/${encodeURIComponent(draftId)}/steps`, { method:'POST', body:JSON.stringify(profileStepRequest(template, template.steps[idx], idx, 'workflow-step-create')) });
+    }
+    await refreshWorkflowEditor(draftId, 'files', 0);
+    log(`已在数据库新建 ${template.stainType} 草稿：${name}`, 'ok');
+    return getProfileById(draftId);
+  } catch(err) {
+    backendWorkflowsLoaded = false;
+    try { await refreshWorkflowEditor(null, 'files', 0); } catch(_) {}
+    return null;
+  }
+}
+async function createDraftFromSystemDefault(stainType) {
+  if(CURRENT_USER.role !== 'admin') { log('只有管理员可以复制配置版本', 'warn'); return; }
+  await loadWorkflowProfilesFromBackend();
+  const source = configProfiles.find(p => p.status === 'Published' && p.defaultExperimentType === stainType);
+  if(!source) { log(`未找到 ${stainType} 的已发布系统默认模板`, 'err'); return; }
+  try {
+    const result = await writeApi(`/api/workflow-versions/${encodeURIComponent(source.id)}/copy-draft`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-copy-default'), versionLabel:null, changeNote:`Copied from current ${stainType} system default ${source.version}.` }) });
+    await refreshWorkflowEditor(result.workflowVersionId, 'files', 0);
+    log(`已从 ${stainType} 系统默认模板创建数据库草稿：${result.versionLabel}`, 'ok');
+  } catch(err) { /* routed by writeApi */ }
+}
+function createNewProfile() { return createDraftFromSystemDefault('IHC'); }
+function createNewHeProfile() { return createDraftFromSystemDefault('HE'); }
+async function duplicateProfile() {
   const src = getSelectedProfile(); if(!src) return;
-  const copy = normalizeProfile(src); copy.id = `profile-${Date.now()}`; copy.name = `${src.name} 副本`;
-  configProfiles.unshift(copy); selectedConfigId = copy.id; selectedConfigStepIndex = 0; saveConfigProfilesOnly(); renderConfigPane('files'); log(`已复制配置：${copy.name}`, 'ok');
+  if(CURRENT_USER.role !== 'admin') { log('只有管理员可以复制配置版本', 'warn'); return; }
+  if(!src.persisted) { await createPersistedProfileFromTemplate(src, `${src.name} 副本`); return; }
+  try {
+    const result = await writeApi(`/api/workflow-versions/${encodeURIComponent(src.id)}/copy-draft`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-copy'), versionLabel:null, changeNote:`Copied from ${src.version}.` }) });
+    await refreshWorkflowEditor(result.workflowVersionId, 'files', 0);
+    log(`已复制为数据库草稿：${src.name} · ${result.versionLabel}`, 'ok');
+  } catch(err) { /* routed by writeApi */ }
 }
-function deleteSelectedProfile() {
-  if(configProfiles.length <= 1) { log('至少保留一个配置文件', 'warn'); return; }
+async function deleteSelectedProfile() {
   const profile = getSelectedProfile(); if(!profile) return;
-  configProfiles = configProfiles.filter(p => p.id !== profile.id);
-  [1,2,3,4].forEach(id => { if(channelConfigAssignments[id] === profile.id) assignConfigToChannel(id, null, false); });
-  selectedConfigId = configProfiles[0]?.id || null; selectedConfigStepIndex = 0; saveConfigProfiles(); renderConfigPane('files'); log(`已删除配置：${profile.name}`, 'warn');
+  if(CURRENT_USER.role !== 'admin') { log('只有管理员可以删除或停用配置版本', 'warn'); return; }
+  try {
+    if(profile.status === 'Draft') {
+      await writeApi(`/api/workflow-versions/${encodeURIComponent(profile.id)}?commandId=${encodeURIComponent(makeCommandId('workflow-delete'))}`, { method:'DELETE' });
+      log(`已删除数据库草稿：${profile.name}`, 'warn');
+    } else if(profile.status === 'Published') {
+      await writeApi(`/api/workflow-versions/${encodeURIComponent(profile.id)}/retire`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-retire'), reason:'Retired from control-console configuration editor.' }) });
+      log(`已停用已发布版本：${profile.name}`, 'warn');
+    } else { return; }
+    [1,2,3,4].forEach(id => { if(channelConfigAssignments[id] === profile.id) channelConfigAssignments[id] = null; });
+    await refreshWorkflowEditor(null, 'files', 0);
+  } catch(err) { /* routed by writeApi */ }
 }
-function saveProfileBasics() {
-  const p = getSelectedProfile(); if(!p) return;
-  p.name = document.getElementById('configProfileNameInput')?.value.trim() || p.name;
-  p.stainType = document.getElementById('configProfileTypeInput')?.value.trim() || p.stainType;
-  p.description = document.getElementById('configProfileDescInput')?.value.trim() || '';
-  saveConfigProfilesOnly(); renderConfigPane('files'); log(`已保存配置基础信息：${p.name}`, 'ok');
+async function saveProfileBasics() {
+  const p = requireEditableProfile(); if(!p) return;
+  const name = document.getElementById('configProfileNameInput')?.value.trim() || p.name;
+  const description = document.getElementById('configProfileDescInput')?.value.trim() || '';
+  try {
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}`, { method:'PUT', body:JSON.stringify({ commandId:makeCommandId('workflow-meta'), name, description }) });
+    await refreshWorkflowEditor(p.id, 'files', selectedConfigStepIndex);
+    log(`已保存数据库脚本基础信息：${name}`, 'ok');
+  } catch(err) { /* routed by writeApi */ }
 }
 function getTimelineDropIndex(evt) {
   const timeline = document.getElementById('configEditorTimeline');
@@ -5925,14 +6443,31 @@ function getTimelineDropIndex(evt) {
   }
   return bricks.length;
 }
-function addStepFromOp(opKey, insertIndex=null) {
+async function addStepFromOp(opKey, insertIndex=null) {
   const p = getSelectedProfile(); const op = OP_DEF_BY_KEY[opKey]; if(!p || !op) return;
+  if(!requireEditableProfile()) return;
   const idx = Number.isFinite(insertIndex) ? Math.max(0, Math.min(insertIndex, p.steps.length)) : p.steps.length;
-  p.steps.splice(idx, 0, normalizeConfigStep({ opKey, label:op.label, durationSec:10, toleranceSec:0, immediateAfterPrev:false }, idx));
-  selectedConfigStepIndex = idx; saveConfigProfilesOnly(); applyProfileChangesToAssignments(p.id); refreshConfigFlowWorkbenchOnly(); log(`已加入操作：${op.label}，位置：第 ${idx+1} 层`, 'ok');
+  const nextStep = normalizeConfigStep({ opKey, label:op.label, durationSec:10, toleranceSec:0, immediateAfterPrev:false }, idx);
+  const planned = deepClone(p); planned.steps.splice(idx, 0, nextStep);
+  const request = profileStepRequest(planned, nextStep, idx, 'workflow-step-add');
+  request.stepNo = p.steps.length + 1;
+  try {
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}/steps`, { method:'POST', body:JSON.stringify(request) });
+    await loadWorkflowProfilesFromBackend(true);
+    const refreshed = getProfileById(p.id);
+    const newStepId = refreshed.steps[refreshed.steps.length - 1]?.id;
+    let current = refreshed.steps.length - 1;
+    while(current > idx) {
+      await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}/steps/${encodeURIComponent(newStepId)}/move-up`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-step-move') }) });
+      current--;
+      await loadWorkflowProfilesFromBackend(true);
+    }
+    await refreshWorkflowEditor(p.id, 'files', idx);
+    log(`已加入并保存操作：${op.label}，位置：第 ${idx+1} 层`, 'ok');
+  } catch(err) { /* routed by writeApi */ }
 }
-function saveSelectedStep() {
-  const p = getSelectedProfile(); if(!p || !p.steps.length) return;
+async function saveSelectedStep() {
+  const p = requireEditableProfile(); if(!p || !p.steps.length) return;
   const idx = Math.max(0, Math.min(selectedConfigStepIndex, p.steps.length - 1));
   const step = p.steps[idx];
   const opKey = document.getElementById('configStepOpSelect')?.value || step.opKey;
@@ -5943,49 +6478,120 @@ function saveSelectedStep() {
   step.toleranceSec = Math.max(0, Number(document.getElementById('configStepToleranceInput')?.value || 0));
   step.targetTempC = document.getElementById('configStepTempInput')?.value === '' ? null : Number(document.getElementById('configStepTempInput')?.value);
   step.reagentRole = document.getElementById('configStepRoleInput')?.value.trim() || '';
+  step.reagentCode = document.getElementById('configStepReagentCodeInput')?.value.trim().toUpperCase() || '';
+  step.volumeUl = document.getElementById('configStepVolumeInput')?.value === '' ? null : Math.max(0, Number(document.getElementById('configStepVolumeInput')?.value) || 0);
+  step.failureStrategy = document.getElementById('configStepFailureSelect')?.value || 'Stop';
   step.immediateAfterPrev = !!document.getElementById('configStepImmediateInput')?.checked;
   step.requiresTemp = !!document.getElementById('configStepTempEnableInput')?.checked;
   step.allowMultiPrimary = !!document.getElementById('configStepMultiPrimaryInput')?.checked;
   step.notes = document.getElementById('configStepNotesInput')?.value.trim() || '';
-  saveConfigProfilesOnly(); applyProfileChangesToAssignments(p.id); refreshConfigFlowWorkbenchOnly(); log(`已保存第 ${idx+1} 层：${step.label}`, 'ok');
+  try {
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}/steps/${encodeURIComponent(step.id)}`, { method:'PUT', body:JSON.stringify(profileStepRequest(p, step, idx, 'workflow-step-save')) });
+    await refreshWorkflowEditor(p.id, 'files', idx);
+    log(`已保存数据库草稿第 ${idx+1} 层：${step.label}`, 'ok');
+  } catch(err) { /* routed by writeApi */ }
 }
-function moveSelectedStep(delta) {
-  const p = getSelectedProfile(); if(!p) return;
+async function moveSelectedStep(delta) {
+  const p = requireEditableProfile(); if(!p) return;
   const from = selectedConfigStepIndex, to = from + delta;
   if(to < 0 || to >= p.steps.length) return;
-  const [step] = p.steps.splice(from, 1); p.steps.splice(to, 0, step); selectedConfigStepIndex = to;
-  saveConfigProfilesOnly(); applyProfileChangesToAssignments(p.id); refreshConfigFlowWorkbenchOnly();
+  const step = p.steps[from];
+  try {
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}/steps/${encodeURIComponent(step.id)}/${delta < 0 ? 'move-up' : 'move-down'}`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-step-move') }) });
+    await refreshWorkflowEditor(p.id, 'files', to);
+  } catch(err) { /* routed by writeApi */ }
 }
-function reorderStep(from, to) {
-  const p = getSelectedProfile(); if(!p || from < 0 || from >= p.steps.length) return;
+async function reorderStep(from, to) {
+  const p = requireEditableProfile(); if(!p || from < 0 || from >= p.steps.length) return;
   let insertAt = Math.max(0, Math.min(Number(to), p.steps.length));
   if(from < insertAt) insertAt -= 1;
   if(from === insertAt) return;
-  const [step] = p.steps.splice(from, 1); p.steps.splice(insertAt, 0, step); selectedConfigStepIndex = insertAt;
-  saveConfigProfilesOnly(); applyProfileChangesToAssignments(p.id); refreshConfigFlowWorkbenchOnly();
+  let current = from;
+  try {
+    while(current !== insertAt) {
+      const latest = getProfileById(p.id);
+      const step = latest.steps[current];
+      const moveUp = insertAt < current;
+      await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}/steps/${encodeURIComponent(step.id)}/${moveUp ? 'move-up' : 'move-down'}`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-step-reorder') }) });
+      current += moveUp ? -1 : 1;
+      await loadWorkflowProfilesFromBackend(true);
+    }
+    await refreshWorkflowEditor(p.id, 'files', insertAt);
+  } catch(err) { /* routed by writeApi */ }
 }
-function deleteSelectedStep() {
-  const p = getSelectedProfile(); if(!p || !p.steps.length) return;
+async function deleteSelectedStep() {
+  const p = requireEditableProfile(); if(!p || !p.steps.length) return;
   const idx = Math.max(0, Math.min(selectedConfigStepIndex, p.steps.length - 1));
-  const [removed] = p.steps.splice(idx, 1); selectedConfigStepIndex = Math.max(0, idx - 1);
-  saveConfigProfilesOnly(); applyProfileChangesToAssignments(p.id); refreshConfigFlowWorkbenchOnly(); log(`已删除步骤：${removed.label}`, 'warn');
+  const removed = p.steps[idx];
+  try {
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}/steps/${encodeURIComponent(removed.id)}?commandId=${encodeURIComponent(makeCommandId('workflow-step-delete'))}`, { method:'DELETE' });
+    await refreshWorkflowEditor(p.id, 'files', Math.max(0, idx - 1));
+    log(`已从数据库草稿删除步骤：${removed.label}`, 'warn');
+  } catch(err) { /* routed by writeApi */ }
 }
-function saveProfileRules() {
-  const p = getSelectedProfile(); if(!p) return;
+async function saveProfileRules() {
+  const p = requireEditableProfile(); if(!p) return;
   const temp = document.getElementById('configTargetTempInput')?.value;
   p.targetTempC = temp === '' ? null : Number(temp);
   const tempFrom = document.getElementById('configTempFromInput')?.value;
   p.tempControlFromStep = tempFrom === '' ? null : Number(tempFrom);
   p.allowMultiPrimary = !!document.getElementById('configAllowMultiPrimaryInput')?.checked;
   p.dabRatio = {
-    a:Number(document.getElementById('configDabAInput')?.value || 1),
-    b:Number(document.getElementById('configDabBInput')?.value || 1),
-    pureWater:Number(document.getElementById('configDabWaterInput')?.value || 18),
+    a:Math.max(1, Number(document.getElementById('configDabAInput')?.value) || 1),
+    b:Math.max(1, Number(document.getElementById('configDabBInput')?.value) || 1),
+    pureWater:Math.max(0, Number(document.getElementById('configDabWaterInput')?.value) || 0),
     preparePolicy:document.getElementById('configDabPolicySelect')?.value || 'per_run'
   };
   p.notes = document.getElementById('configProfileNotesInput')?.value.trim() || '';
   p.steps.forEach((step, idx) => { if(p.tempControlFromStep && idx + 1 >= p.tempControlFromStep) { step.requiresTemp = true; if(!step.targetTempC && p.targetTempC) step.targetTempC = p.targetTempC; } });
-  saveConfigProfilesOnly(); applyProfileChangesToAssignments(p.id); renderConfigPane('rules'); log(`已保存规则：${p.name}`, 'ok');
+  try {
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}`, { method:'PUT', body:JSON.stringify({ commandId:makeCommandId('workflow-rules'), planningRulesJson:planningRulesJson(p) }) });
+    for(let idx=0; idx<p.steps.length; idx++) {
+      await writeApi(`/api/workflow-versions/${encodeURIComponent(p.id)}/steps/${encodeURIComponent(p.steps[idx].id)}`, { method:'PUT', body:JSON.stringify(profileStepRequest(p, p.steps[idx], idx, 'workflow-step-rule-sync')) });
+    }
+    await refreshWorkflowEditor(p.id, 'rules', selectedConfigStepIndex);
+    log(`已保存数据库规划规则：${p.name}`, 'ok');
+  } catch(err) { /* routed by writeApi */ }
+}
+async function ensurePrimaryMappingsForProfile(profile) {
+  if(profile.stainType !== 'IHC') return;
+  const codes = [...new Set(profile.steps.filter(s => s.opKey === 'primary').map(defaultReagentCode).filter(Boolean))];
+  if(!codes.length) return;
+  const existing = await backendApi('/api/primary-antibody-mappings');
+  for(const code of codes) {
+    if((existing || []).some(m => m.workflowVersionId === profile.id && String(m.primaryAntibodyCode).toUpperCase() === code)) continue;
+    await writeApi('/api/primary-antibody-mappings', { method:'POST', body:JSON.stringify({ commandId:makeCommandId('primary-map'), primaryAntibodyCode:code, workflowVersionId:profile.id }) });
+  }
+}
+async function publishSelectedProfile() {
+  const profile = requireEditableProfile(); if(!profile) return;
+  try {
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(profile.id)}/reagent-requirements/recalculate`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-reagents') }) });
+    const validation = await backendApi(`/api/workflow-versions/${encodeURIComponent(profile.id)}/publish-validation`);
+    if(Number(validation?.failCount || 0) > 0) {
+      const lines = (validation.issues || []).filter(x => x.severity === 'Fail').map(x => `${x.code}：${x.message}`);
+      setInfoPanel('脚本发布校验未通过', lines.length ? lines : ['请检查步骤与试剂配置。']);
+      showSideTab('config');
+      log(`发布校验未通过：${validation.failCount} 项`, 'err');
+      return;
+    }
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(profile.id)}/publish`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-publish') }) });
+    const publishedProfile = { ...profile, status:'Published' };
+    try { await ensurePrimaryMappingsForProfile(publishedProfile); }
+    catch(err) { log(`脚本已发布，但一抗映射创建失败：${err.message}`, 'warn'); }
+    await refreshWorkflowEditor(profile.id, 'files', selectedConfigStepIndex);
+    log(`脚本已发布，可供通道选择：${profile.name}`, 'ok');
+  } catch(err) { /* routed by writeApi */ }
+}
+async function setSelectedProfileAsDefault() {
+  const profile = getSelectedProfile();
+  if(!profile || profile.status !== 'Published') { log('只有已发布脚本可以设为系统默认', 'warn'); return; }
+  if(CURRENT_USER.role !== 'admin') { log('只有管理员可以设置系统默认脚本', 'warn'); return; }
+  try {
+    await writeApi(`/api/workflow-versions/${encodeURIComponent(profile.id)}/set-default`, { method:'POST', body:JSON.stringify({ commandId:makeCommandId('workflow-default'), experimentType:profile.stainType }) });
+    await refreshWorkflowEditor(profile.id, 'files', selectedConfigStepIndex);
+    log(`已设为 ${profile.stainType} 系统默认：${profile.name}`, 'ok');
+  } catch(err) { /* routed by writeApi */ }
 }
 function exportProfile(profile) {
   if(!profile) return;
@@ -6005,16 +6611,17 @@ function downloadText(filename, text, type='text/plain') {
 function importProfilesFromInput(evt) {
   const file = evt.target.files?.[0]; if(!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const parsed = JSON.parse(reader.result);
       const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed.profiles) ? parsed.profiles : [parsed];
-      incoming.map((p, idx) => normalizeProfile(p, `导入配置 ${idx+1}`)).forEach(profile => {
-        const existing = configProfiles.findIndex(p => p.id === profile.id);
-        if(existing >= 0) configProfiles[existing] = profile; else configProfiles.unshift(profile);
-        selectedConfigId = profile.id;
-      });
-      saveConfigProfilesOnly(); renderConfigPane('files'); log(`已导入配置 JSON：${file.name}`, 'ok');
+      for(let idx=0; idx<incoming.length; idx++) {
+        const profile = normalizeProfile(incoming[idx], `导入配置 ${idx+1}`);
+        profile.persisted = false;
+        profile.status = 'Template';
+        await createPersistedProfileFromTemplate(profile, `${profile.name}（导入）`);
+      }
+      log(`已将配置 JSON 导入数据库草稿：${file.name}`, 'ok');
     } catch(err) { log(`配置 JSON 导入失败：${err.message}`, 'err'); }
   };
   reader.readAsText(file, 'utf-8');
@@ -6176,7 +6783,17 @@ async function backendApi(path, options={}) {
   const headers = Object.assign({}, options.headers || {});
   const hasBody = Object.prototype.hasOwnProperty.call(options, 'body') && options.body !== undefined;
   if(hasBody && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-  const res = await fetch(path, Object.assign({ credentials:'same-origin', cache:'no-store' }, options, { headers }));
+  const controller = options.signal ? null : new AbortController();
+  const timer = controller ? setTimeout(() => controller.abort(), 20000) : null;
+  let res;
+  try {
+    res = await fetch(path, Object.assign({ credentials:'same-origin', cache:'no-store' }, options, { headers, signal: options.signal || controller?.signal }));
+  } catch(err) {
+    if(err?.name === 'AbortError') throw new Error(`请求超时：${path}`);
+    throw err;
+  } finally {
+    if(timer) clearTimeout(timer);
+  }
   if(!res.ok) {
     let detail = '';
     let payload = null;
@@ -6658,6 +7275,7 @@ bindClick('pauseBtn', () => { pauseOrResumeRun(); });
 bindClick('resetBtn', () => { setInfoPanel('系统复位', ['机械臂返回洗内针原点，流程状态和缓存数据已清空。']); resetDemo(); });
 bindClick('scanSamplesBtn', scanSamples);
 bindClick('scanReagentsBtn', scanReagents);
+bindClick('mockRuntimeResetBtn', resetMockRuntime);
 bindClick('lowReagentBtn', simulateLowReagent);
 bindClick('pullChannelBtn', togglePullChannel);
 bindClick('alarmBtn', simulateAlarm);
@@ -6671,6 +7289,11 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     if(mockReagentScanBtn) {
       mockReagentScanBtn.hidden = uiMode !== 'twin';
       mockReagentScanBtn.disabled = uiMode !== 'twin';
+    }
+    const mockRuntimeResetBtn = document.getElementById('mockRuntimeResetBtn');
+    if(mockRuntimeResetBtn) {
+      mockRuntimeResetBtn.hidden = uiMode !== 'twin';
+      mockRuntimeResetBtn.disabled = uiMode !== 'twin';
     }
     precheckPassed = false;
     for(const step of PRECHECK_STEPS) precheckState[step.id] = 'idle';
@@ -6763,6 +7386,19 @@ function applyNullableMapEntries(map, entries, keyField, valueField) {
     map.set(row[keyField], row[valueField] === undefined ? null : row[valueField]);
   });
 }
+const SNAPSHOT_SCALAR_CONTROL_IDS = new Set([
+  'reagentTempText',
+  'settingsReagentTargetInput',
+  'reagentCoolingCurrentInput',
+  'reagentCoolingTargetInput',
+  'settingsPureThresholdInput',
+  'settingsPbsThresholdInput',
+  'settingsWasteThresholdInput',
+  'settingsToxicThresholdInput',
+  'settingsWorkTargetInput',
+  'settingsReagentCapacityInput',
+  'settingsNeedleGapInput'
+]);
 function applyDatabaseSnapshot(snapshot) {
   if(!snapshot) return;
   const payload = snapshot.digitalTwinPayload || {};
@@ -6770,6 +7406,7 @@ function applyDatabaseSnapshot(snapshot) {
     payload.items.forEach(it => {
       if(!it?.name) return;
       itemLevels.set(it.name, it.level === undefined ? null : it.level);
+      if(it.reagentCode) itemReagentCodes.set(it.name, it.reagentCode); else itemReagentCodes.delete(it.name);
       if(it.state === null || it.state === undefined) itemState.delete(it.name); else itemState.set(it.name, it.state);
     });
   }
@@ -6779,12 +7416,16 @@ function applyDatabaseSnapshot(snapshot) {
     const target = channels[(Number(ch.id) || 1) - 1];
     if(!target) return;
     ['state','progress','pulled','configProfileId'].forEach(k => { if(Object.prototype.hasOwnProperty.call(ch, k)) target[k] = ch[k]; });
+    if(Object.prototype.hasOwnProperty.call(ch, 'configProfileId')) channelConfigAssignments[target.id] = ch.configProfileId || null;
   });
-  if(payload.configProfiles) {
+  if(payload.configProfiles && !backendWorkflowsLoaded) {
+    const previousConfigId = selectedConfigId;
     const dbProfiles = payload.configProfiles.map(normalizeProfile).filter(p => p.steps.length);
     configProfiles = dbProfiles.length ? dbProfiles : ensureDefaultProfile(dbProfiles);
-    selectedConfigId = configProfiles[0]?.id || selectedConfigId;
-    saveConfigProfilesOnly();
+    selectedConfigId = configProfiles.some(profile => profile.id === previousConfigId)
+      ? previousConfigId
+      : (configProfiles[0]?.id || previousConfigId);
+    persistAssignments();
   }
   if(payload.liquids) Object.assign(liquids, payload.liquids);
   if(payload.metrics) updateHeaderMetrics(payload.metrics);
@@ -6793,13 +7434,20 @@ function applyDatabaseSnapshot(snapshot) {
   const values = snapshot.control_values || {};
   try {
     Object.entries(values).forEach(([id, value]) => {
+      if(!SNAPSHOT_SCALAR_CONTROL_IDS.has(id)) return;
       const node = document.getElementById(id) || document.querySelector(`[data-control-id="${String(id).replace(/"/g, '\\"')}"]`);
       if(!node) return;
       if(node.closest && node.closest('#loginScreen')) return;
+      // Workflow/configuration DOM is owned by the workflow APIs and editor renderer. Realtime machine
+      // snapshots must never replace its summaries, drawers, buttons, or form content.
+      if(node.closest && node.closest('#configPane')) return;
       const normalized = value === null || value === undefined ? '' : value;
       if('value' in node) {
         node.value = normalized;
       } else if(node.namespaceURI === 'http://www.w3.org/2000/svg' && node.tagName.toLowerCase() === 'g') {
+        return;
+      } else if(node.childElementCount > 0) {
+        // Container ids are present in the UI registry for engineering lookup, not scalar replacement.
         return;
       } else {
         node.textContent = normalized === '' ? '—' : String(normalized);
@@ -6834,7 +7482,10 @@ function applyDatabaseSnapshot(snapshot) {
   } catch(e) {
     console.warn('appSettings 从 DB 快照刷新失败', e);
   }
-  drawData(); drawSlideOps(); updateVisualStates(); renderChannelCards(); renderLiquids(); updateKpis(); renderDetail(selectedName ? byName.get(selectedName) : null);
+  drawData(); drawSlideOps(); updateVisualStates(); renderChannelCards(); renderLiquids(); updateKpis();
+  const detailBox = document.getElementById('detailBox');
+  const hasInteractiveDetail = !!detailBox?.querySelector('input, select, textarea, button');
+  if(!hasInteractiveDetail) renderDetail(selectedName ? byName.get(selectedName) : null);
 }
 window.digitalTwinLoadDatabaseSnapshot = loadDatabaseSnapshot;
 

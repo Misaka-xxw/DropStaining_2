@@ -14,38 +14,49 @@ public sealed class PreflightValidationService(
     ThermalControlService thermalControlService,
     FluidicsControlService fluidicsControlService,
     MotionControlService motionControlService,
-    DevicePrecheckService devicePrecheckService)
+    DevicePrecheckService devicePrecheckService,
+    DeviceModeService deviceModeService)
 {
     public async Task<PreflightValidationReportResponse> ValidateAsync(CancellationToken cancellationToken = default)
     {
         var generatedAtUtc = DateTimeOffset.UtcNow;
         var issues = new List<PreflightValidationIssueResponse>();
-        var initialization = await deviceInitializationService.GetLatestAsync(cancellationToken);
-        if (!initialization.Ok)
+        // Twin/Mock uses its deterministic full precheck report as the device gate.
+        // Hardware initialization and live readiness are mandatory only in Real mode.
+        if (deviceModeService.IsReal)
         {
-            issues.Add(new PreflightValidationIssueResponse(
-                "Device",
-                "device_initialization_required",
-                $"Device initialization is not ready for the current mode. Status={initialization.Status}."));
-        }
-        var thermalReadiness = await thermalControlService.GetReadinessAsync(cancellationToken);
-        if (!thermalReadiness.Ok)
-        {
-            issues.Add(new PreflightValidationIssueResponse("Thermal", thermalReadiness.ErrorCode!, thermalReadiness.Message));
-        }
-        var fluidicsReadiness = await fluidicsControlService.GetReadinessAsync(cancellationToken);
-        if (!fluidicsReadiness.Ok)
-        {
-            issues.Add(new PreflightValidationIssueResponse("Fluidics", fluidicsReadiness.ErrorCode!, fluidicsReadiness.Message));
-        }
-        var motionReadiness = await motionControlService.GetReadinessAsync(cancellationToken);
-        if (!motionReadiness.Ok)
-        {
-            issues.Add(new PreflightValidationIssueResponse("Motion", motionReadiness.ErrorCode!, motionReadiness.Message));
+            var initialization = await deviceInitializationService.GetLatestAsync(cancellationToken);
+            if (!initialization.Ok)
+            {
+                issues.Add(new PreflightValidationIssueResponse(
+                    "Device",
+                    "device_initialization_required",
+                    $"Device initialization is not ready for the current mode. Status={initialization.Status}."));
+            }
+            var thermalReadiness = await thermalControlService.GetReadinessAsync(cancellationToken);
+            if (!thermalReadiness.Ok)
+            {
+                issues.Add(new PreflightValidationIssueResponse("Thermal", thermalReadiness.ErrorCode!, thermalReadiness.Message));
+            }
+            var fluidicsReadiness = await fluidicsControlService.GetReadinessAsync(cancellationToken);
+            if (!fluidicsReadiness.Ok)
+            {
+                issues.Add(new PreflightValidationIssueResponse("Fluidics", fluidicsReadiness.ErrorCode!, fluidicsReadiness.Message));
+            }
+            var motionReadiness = await motionControlService.GetReadinessAsync(cancellationToken);
+            if (!motionReadiness.Ok)
+            {
+                issues.Add(new PreflightValidationIssueResponse("Motion", motionReadiness.ErrorCode!, motionReadiness.Message));
+            }
         }
         var tasks = await dbContext.StainingTasks
             .AsNoTracking()
-            .Where(x => x.Status == StainingTaskStatus.Confirmed)
+            .Where(x => x.Status == StainingTaskStatus.Confirmed
+                && dbContext.SlideTasks.Any(slide => slide.StainingTaskId == x.Id
+                    && slide.ChannelBatch != null
+                    && (slide.ChannelBatch.MachineRunId == null
+                        || (slide.ChannelBatch.MachineRun != null && slide.ChannelBatch.MachineRun.Status == RuntimeLedgerStatus.Created))
+                    && slide.ChannelBatch.WorkflowSelectionStatus == WorkflowSelectionStatus.Selected))
             .ToListAsync(cancellationToken);
 
         if (tasks.Count == 0)
@@ -215,6 +226,12 @@ public sealed class PreflightValidationService(
                 RequiredVolumeUl = x.Sum(r => r.RequiredVolumeUl ?? 0)
             })
             .ToListAsync(cancellationToken);
+        var dabWorkflowVersionIds = await dbContext.WorkflowReagentRequirements
+            .AsNoTracking()
+            .Where(x => workflowVersionIds.Contains(x.WorkflowVersionId) && x.IsRequired && x.ReagentCode == "DAB")
+            .Select(x => x.WorkflowVersionId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
 
         if (requirements.Count > 0)
         {
@@ -226,9 +243,62 @@ public sealed class PreflightValidationService(
                 .Select(x => x.ReagentBottle!)
                 .Where(x => x.Status == "Available")
                 .ToListAsync(cancellationToken);
+            var fixedDabSources = await dbContext.ReagentBottles
+                .AsNoTracking()
+                .Where(x => (x.ReagentCode == "DBA" || x.ReagentCode == "DBB") && x.Status == "Available")
+                .ToListAsync(cancellationToken);
 
             foreach (var requirement in requirements)
             {
+                if (requirement.ReagentCode == "DAB")
+                {
+                    var requiredDabA = 0;
+                    var requiredDabB = 0;
+                    foreach (var group in slideTasks
+                        .Where(x => x.ChannelBatch?.SelectedWorkflowVersionId is not null
+                            && dabWorkflowVersionIds.Contains(x.ChannelBatch.SelectedWorkflowVersionId))
+                        .GroupBy(x => x.ChannelBatch!.SelectedWorkflowVersionId!))
+                    {
+                        if (!workflowVersions.TryGetValue(group.Key, out var workflowVersion))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            var ratio = DabLifecycleService.ReadDabRatio(workflowVersion.PlanningRulesJson);
+                            var formula = DabFormula.CalculateRequired(
+                                group.Select(x => x.StainingTaskId).Distinct().Count(),
+                                ratio.A,
+                                ratio.B,
+                                ratio.Water);
+                            requiredDabA = checked(requiredDabA + formula.DabAVolumeUl);
+                            requiredDabB = checked(requiredDabB + formula.DabBVolumeUl);
+                        }
+                        catch (BusinessRuleException exception)
+                        {
+                            issues.Add(new PreflightValidationIssueResponse("Reagents", exception.Code, exception.Message));
+                        }
+                        catch (OverflowException)
+                        {
+                            issues.Add(new PreflightValidationIssueResponse("Reagents", "dab_volume_invalid", "Calculated DAB volume exceeds the supported integer range."));
+                        }
+                    }
+
+                    foreach (var sourceRequirement in new[] { (Code: "DBA", VolumeUl: requiredDabA), (Code: "DBB", VolumeUl: requiredDabB) })
+                    {
+                        var matchingSources = fixedDabSources.Where(x => x.ReagentCode == sourceRequirement.Code && x.ExpirationDate >= today).ToList();
+                        if (matchingSources.Sum(x => x.RemainingVolumeUl) < sourceRequirement.VolumeUl)
+                        {
+                            issues.Add(new PreflightValidationIssueResponse(
+                                "Reagents",
+                                "dab_source_missing_or_insufficient",
+                                $"DAB source {sourceRequirement.Code} is missing, expired, or insufficient; required {sourceRequirement.VolumeUl} ul."));
+                        }
+                    }
+                    continue;
+                }
+
                 var matching = bottles.Where(x => x.ReagentCode == requirement.ReagentCode).ToList();
                 if (matching.Count == 0)
                 {

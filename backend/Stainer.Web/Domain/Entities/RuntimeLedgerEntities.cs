@@ -405,6 +405,26 @@ public static class DabFormula
         return Calculate((checked(slideCount * VolumePerSlideUl)) + LineReserveVolumeUl);
     }
 
+    public static DabFormulaVolumes CalculateRequired(int slideCount, int dabARatioParts, int dabBRatioParts, int waterRatioParts)
+    {
+        if (slideCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slideCount), "At least one slide is required.");
+        }
+
+        if (dabARatioParts <= 0 || dabBRatioParts <= 0 || waterRatioParts < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(dabARatioParts), "DAB A/B ratio parts must be positive and water ratio parts cannot be negative.");
+        }
+
+        var totalVolumeUl = checked((slideCount * VolumePerSlideUl) + LineReserveVolumeUl);
+        var totalParts = checked(dabARatioParts + dabBRatioParts + waterRatioParts);
+        var dabAVolumeUl = checked(totalVolumeUl * dabARatioParts / totalParts);
+        var dabBVolumeUl = checked(totalVolumeUl * dabBRatioParts / totalParts);
+        var waterVolumeUl = totalVolumeUl - dabAVolumeUl - dabBVolumeUl;
+        return new DabFormulaVolumes(totalVolumeUl, dabAVolumeUl, dabBVolumeUl, waterVolumeUl);
+    }
+
     public static DabFormulaVolumes Calculate(int totalVolumeUl)
     {
         if (totalVolumeUl <= 0 || totalVolumeUl % TotalRatioParts != 0)
@@ -412,8 +432,20 @@ public static class DabFormula
             throw new ArgumentOutOfRangeException(nameof(totalVolumeUl), "DAB volume must be a positive multiple of 20 uL.");
         }
 
-        var onePart = totalVolumeUl / TotalRatioParts;
-        return new DabFormulaVolumes(totalVolumeUl, onePart, onePart, onePart * WaterRatioParts);
+        return Calculate(totalVolumeUl, DabARatioParts, DabBRatioParts, WaterRatioParts);
+    }
+
+    public static DabFormulaVolumes Calculate(int totalVolumeUl, int dabARatioParts, int dabBRatioParts, int waterRatioParts)
+    {
+        if (totalVolumeUl <= 0 || dabARatioParts <= 0 || dabBRatioParts <= 0 || waterRatioParts < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(totalVolumeUl), "DAB volume and A/B ratio parts must be positive; water ratio cannot be negative.");
+        }
+
+        var totalParts = checked(dabARatioParts + dabBRatioParts + waterRatioParts);
+        var dabAVolumeUl = checked(totalVolumeUl * dabARatioParts / totalParts);
+        var dabBVolumeUl = checked(totalVolumeUl * dabBRatioParts / totalParts);
+        return new DabFormulaVolumes(totalVolumeUl, dabAVolumeUl, dabBVolumeUl, totalVolumeUl - dabAVolumeUl - dabBVolumeUl);
     }
 }
 

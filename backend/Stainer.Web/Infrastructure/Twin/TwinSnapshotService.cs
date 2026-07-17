@@ -66,6 +66,7 @@ public sealed class TwinSnapshotService
             ["liquids"] = BuildLiquids(connection),
             ["metrics"] = BuildMetrics(connection),
             ["cameras"] = BuildCameras(connection),
+            ["runtime"] = BuildRuntimePayload(connection),
         };
 
         var arm = BuildArmPayload(connection);
@@ -235,6 +236,33 @@ public sealed class TwinSnapshotService
                     ["name"] = name,
                     ["state"] = null,
                     ["level"] = null,
+                });
+            }
+        }
+
+        if (TwinSqlite.HasColumns(connection, "reagent_bottles", "reagent_code", "remaining_volume_ul", "initial_volume_ul", "status", "full_barcode", "last_scanned_at_utc"))
+        {
+            foreach (var source in new[] { (Name: "\u0041\u6db2", Code: "DBA"), (Name: "\u0042\u6db2", Code: "DBB") })
+            {
+                var bottle = TwinSqlite.Many(connection, $"""
+                    SELECT reagent_code, full_barcode, remaining_volume_ul, initial_volume_ul, status
+                    FROM reagent_bottles
+                    WHERE reagent_code = '{source.Code}'
+                    ORDER BY last_scanned_at_utc DESC, created_at_utc DESC
+                    LIMIT 1
+                    """).FirstOrDefault();
+                if (bottle is null)
+                {
+                    continue;
+                }
+
+                items.Add(new Dictionary<string, object?>
+                {
+                    ["name"] = source.Name,
+                    ["state"] = StatusToFrontend(Get(bottle, "status")),
+                    ["level"] = Pct(Get(bottle, "remaining_volume_ul"), Get(bottle, "initial_volume_ul")),
+                    ["reagentCode"] = Get(bottle, "reagent_code"),
+                    ["barcode"] = Get(bottle, "full_barcode")
                 });
             }
         }
@@ -626,8 +654,110 @@ public sealed class TwinSnapshotService
             payload["z2"] = zMilli;
         }
 
+        payload["targetPointCode"] = Get(arm, "current_target_point_code");
+        payload["machineRunId"] = Get(arm, "machine_run_id");
+        payload["workflowStepExecutionId"] = Get(arm, "workflow_step_execution_id");
+        payload["deviceCommandExecutionId"] = Get(arm, "device_command_execution_id");
+        payload["updatedAtUtc"] = Get(arm, "updated_at_utc");
+
         return payload.Count > 0 ? payload : null;
     }
+
+    private Dictionary<string, object?>? BuildRuntimePayload(SqliteConnection connection)
+    {
+        if (!(TwinSqlite.TableExists(connection, "machine_runs")
+              && TwinSqlite.TableExists(connection, "workflow_executions")
+              && TwinSqlite.TableExists(connection, "workflow_step_executions")))
+        {
+            return null;
+        }
+
+        var run = TwinSqlite.One(connection, "SELECT * FROM machine_runs ORDER BY created_at_utc DESC LIMIT 1");
+        if (run is null || Get(run, "id") is not string runId)
+        {
+            return null;
+        }
+
+        var steps = TwinSqlite.Many(connection, """
+            SELECT ws.*, we.slide_task_id, st.slot_code, cb.drawer_code
+            FROM workflow_step_executions ws
+            JOIN workflow_executions we ON we.id = ws.workflow_execution_id
+            LEFT JOIN slide_tasks st ON st.id = we.slide_task_id
+            LEFT JOIN channel_batches cb ON cb.id = st.channel_batch_id
+            WHERE we.machine_run_id = @p0
+            ORDER BY ws.step_no, cb.drawer_code, st.slot_code, ws.created_at_utc
+            """, runId);
+        var runStatus = NormalizeStatus(Get(run, "status"));
+        var active = steps.FirstOrDefault(row => StatusRunning.Contains(NormalizeStatus(Get(row, "status"))));
+        if (active is null && runStatus is "pending" or "running" or "paused")
+        {
+            active = steps.FirstOrDefault(row => NormalizeStatus(Get(row, "status")) == "pending");
+        }
+        active ??= steps.LastOrDefault(row => StatusComplete.Contains(NormalizeStatus(Get(row, "status"))));
+        var completed = steps.Count(row => StatusComplete.Contains(NormalizeStatus(Get(row, "status"))));
+        var payload = new Dictionary<string, object?>
+        {
+            ["runId"] = runId,
+            ["runCode"] = Get(run, "run_code"),
+            ["status"] = Get(run, "status"),
+            ["currentMajorStepCode"] = Get(run, "current_major_step_code"),
+            ["completedStepCount"] = completed,
+            ["totalStepCount"] = steps.Count,
+            ["progress"] = steps.Count == 0 ? 0 : Math.Round(completed * 100.0 / steps.Count, 1)
+        };
+        payload["steps"] = steps.Select((row, index) => BuildRuntimeStepPayload(row, index + 1, includeTiming: false)).ToList();
+        if (active is not null)
+        {
+            payload["currentStep"] = BuildRuntimeStepPayload(active, steps.IndexOf(active) + 1, includeTiming: true);
+        }
+
+        return payload;
+    }
+
+    private static Dictionary<string, object?> BuildRuntimeStepPayload(
+        Dictionary<string, object?> row,
+        int executionOrder,
+        bool includeTiming)
+    {
+        var actionType = Convert.ToString(Get(row, "action_type"), CultureInfo.InvariantCulture) ?? string.Empty;
+        var slotCode = Convert.ToString(Get(row, "slot_code"), CultureInfo.InvariantCulture);
+        var reagentCode = Convert.ToString(Get(row, "reagent_code"), CultureInfo.InvariantCulture);
+        var volumeUl = Get(row, "volume_ul");
+        var isLiquidStep = !string.IsNullOrWhiteSpace(reagentCode)
+            && Convert.ToInt32(volumeUl ?? 0, CultureInfo.InvariantCulture) > 0;
+        var targetPointCode = actionType.Contains("outer", StringComparison.OrdinalIgnoreCase)
+            ? "WashOuterLeft"
+            : actionType.Contains("inner", StringComparison.OrdinalIgnoreCase)
+                ? "WashInnerLeft"
+                : actionType.Contains("wash", StringComparison.OrdinalIgnoreCase)
+                    ? "NeedleWash"
+                    : isLiquidStep ? slotCode : null;
+        var payload = new Dictionary<string, object?>
+        {
+            ["id"] = Get(row, "id"),
+            ["executionOrder"] = executionOrder,
+            ["stepNo"] = Get(row, "step_no"),
+            ["name"] = Get(row, "step_name"),
+            ["actionType"] = Get(row, "action_type"),
+            ["majorStepCode"] = Get(row, "major_step_code"),
+            ["status"] = Get(row, "status"),
+            ["reagentCode"] = reagentCode,
+            ["volumeUl"] = volumeUl,
+            ["drawerCode"] = Get(row, "drawer_code"),
+            ["slotCode"] = slotCode,
+            ["targetPointCode"] = targetPointCode
+        };
+        if (includeTiming)
+        {
+            payload["startedAtUtc"] = Get(row, "started_at_utc");
+            payload["completedAtUtc"] = Get(row, "completed_at_utc");
+        }
+
+        return payload;
+    }
+
+    private static string NormalizeStatus(object? value) =>
+        Convert.ToString(value, CultureInfo.InvariantCulture)?.Replace("_", string.Empty).ToLowerInvariant() ?? string.Empty;
 
     private Dictionary<string, object?> BuildCameras(SqliteConnection connection)
     {
@@ -665,6 +795,7 @@ public sealed class TwinSnapshotService
         var versions = TwinSqlite.Many(connection, """
             SELECT v.*, d.name AS definition_name, d.workflow_type, d.description, d.code AS definition_code
             FROM workflow_versions v JOIN workflow_definitions d ON d.id = v.workflow_definition_id
+            WHERE v.status <> 'Retired'
             ORDER BY v.status='Published' DESC, v.version_no DESC
             """);
 
@@ -674,11 +805,13 @@ public sealed class TwinSnapshotService
             var stepList = new List<object>();
             foreach (var step in steps)
             {
-                var opKeyRaw = (Get(step, "action_type")?.ToString() ?? string.Empty).ToLowerInvariant();
+                var majorStepCode = Get(step, "major_step_code")?.ToString() ?? string.Empty;
+                var stepName = Get(step, "step_name")?.ToString() ?? string.Empty;
+                var opKeyRaw = WorkflowUiOpKey(majorStepCode, Get(step, "action_type")?.ToString());
                 stepList.Add(new Dictionary<string, object?>
                 {
                     ["id"] = Get(step, "id"),
-                    ["label"] = OrFallback(Get(step, "step_name"), Get(step, "major_step_code"), Get(step, "action_type")),
+                    ["label"] = WorkflowUiStepName(majorStepCode, stepName),
                     ["opKey"] = string.IsNullOrEmpty(opKeyRaw) ? "custom" : opKeyRaw,
                     ["durationSec"] = Get(step, "duration_seconds"),
                     ["toleranceSec"] = 0,
@@ -687,16 +820,30 @@ public sealed class TwinSnapshotService
                     ["targetTempC"] = DeciC(Get(step, "target_temperature_deci_c")),
                     ["reagentRole"] = Get(step, "reagent_code")?.ToString() ?? string.Empty,
                     ["notes"] = Get(step, "failure_strategy")?.ToString() ?? string.Empty,
+                    ["majorStepCode"] = majorStepCode,
+                    ["actionType"] = Get(step, "action_type"),
+                    ["reagentCode"] = Get(step, "reagent_code"),
+                    ["volumeUl"] = Get(step, "volume_ul"),
+                    ["failureStrategy"] = Get(step, "failure_strategy"),
+                    ["mixParametersJson"] = Get(step, "mix_parameters_json"),
+                    ["washParametersJson"] = Get(step, "wash_parameters_json"),
+                    ["legacyParametersJson"] = Get(step, "legacy_parameters_json"),
                 });
             }
 
             profiles.Add(new Dictionary<string, object?>
             {
                 ["id"] = Get(version, "id"),
-                ["name"] = Get(version, "definition_name"),
+                ["name"] = WorkflowUiName(Get(version, "definition_name")?.ToString()),
                 ["stainType"] = Get(version, "workflow_type"),
                 ["version"] = OrFallback(Get(version, "version_label"), Get(version, "version_no"), string.Empty)?.ToString() ?? string.Empty,
                 ["description"] = OrFallback(Get(version, "description"), Get(version, "change_note"), string.Empty)?.ToString() ?? string.Empty,
+                ["workflowDefinitionId"] = Get(version, "workflow_definition_id"),
+                ["workflowCode"] = Get(version, "definition_code"),
+                ["status"] = Get(version, "status"),
+                ["defaultExperimentType"] = Get(version, "default_experiment_type"),
+                ["planningRulesJson"] = Get(version, "planning_rules_json"),
+                ["persisted"] = true,
                 ["steps"] = stepList,
             });
         }
@@ -704,17 +851,53 @@ public sealed class TwinSnapshotService
         return profiles;
     }
 
+    private static string WorkflowUiName(string? name)
+        => name switch
+        {
+            "Mock Demo IHC P01" => "Mock 演示 IHC（P01）",
+            "Mock Demo HE" => "Mock 演示 HE",
+            _ => name ?? string.Empty
+        };
+
+    private static string WorkflowUiStepName(string majorStepCode, string stepName)
+        => stepName switch
+        {
+            "Blocking" => "内源性酶阻断",
+            "Primary antibody P01" => "一抗孵育（P01）",
+            "PBS wash" => "一抗后 PBS 清洗",
+            "Secondary antibody" => "二抗孵育",
+            "DAB development" => "DAB 显色",
+            "Counterstain" => "苏木素复染",
+            _ => string.IsNullOrWhiteSpace(stepName) ? majorStepCode : stepName
+        };
+
+    private static string WorkflowUiOpKey(string majorStepCode, string? actionType)
+        => majorStepCode.ToUpperInvariant() switch
+        {
+            "BLOCKING" => "block",
+            "PRIMARY_ANTIBODY" => "primary",
+            "WASH_AFTER_PRIMARY" => "water",
+            "SECONDARY_ANTIBODY" => "secondary",
+            "DAB" => "dabColor",
+            "HEMATOXYLIN" => "hematoxylin",
+            _ => (actionType ?? string.Empty).ToLowerInvariant() switch
+            {
+                "wash" => "water",
+                "dab" => "dabColor",
+                "heat" => "temp",
+                "mix" => "reagentMix",
+                _ => "water"
+            }
+        };
+
     private Dictionary<string, object?> BuildControlValues(Dictionary<string, object?> scalars)
     {
         var values = new Dictionary<string, object?>(StringComparer.Ordinal);
-        foreach (var entry in Registry.Value)
-        {
-            if (!string.IsNullOrEmpty(entry.ControlId))
-            {
-                values[entry.ControlId!] = null;
-            }
-        }
-
+        // The registry contains structural controls (drawers, summaries, workspaces, etc.) as well as
+        // scalar fields. Returning every registered id with a null value caused the browser to replace
+        // structural DOM content with an em dash on each realtime snapshot. Only controls with an
+        // intentional scalar binding belong in control_values; the full registry remains available via
+        // the mapping endpoints.
         values["reagentTempText"] = Get(scalars, "reagent_current_temperature_c");
         values["settingsReagentTargetInput"] = Get(scalars, "reagent_target_temperature_c");
         values["reagentCoolingCurrentInput"] = Get(scalars, "reagent_current_temperature_c");

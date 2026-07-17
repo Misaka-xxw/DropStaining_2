@@ -154,33 +154,23 @@ public sealed class MockDemoDataSeeder(
         MutationCounts counts,
         CancellationToken cancellationToken)
     {
-        var he = await EnsureWorkflowAsync(
-            "MOCK-HE-DEMO",
-            "Mock Demo HE",
-            StainingTaskType.He,
-            [new(1, "HEMATOXYLIN", "Hematoxylin", "Dispense", "HEM", 200, 4), new(2, "WASH", "Wash", "Wash", "WAS", 100, 3)],
-            [("HEM", 200), ("WAS", 100)],
-            now,
-            counts,
-            cancellationToken);
-        var ihc = await EnsureWorkflowAsync(
-            "MOCK-IHC-P01-DEMO",
-            "Mock Demo IHC P01",
-            StainingTaskType.Ihc,
-            [
-                new(1, "BLOCKING", "Blocking", "Dispense", "BLK", 100, 3),
-                new(2, "PRIMARY_ANTIBODY", "Primary antibody P01", "Dispense", "P01", 100, 4),
-                new(3, "WASH_AFTER_PRIMARY", "PBS wash", "Wash", "PBS", 100, 3),
-                new(4, "SECONDARY_ANTIBODY", "Secondary antibody", "Dispense", "SEC", 100, 4),
-                new(5, "DAB", "DAB development", "Dab", "DAB", 100, 4),
-                new(6, "HEMATOXYLIN", "Counterstain", "Dispense", "HEM", 100, 4)
-            ],
-            [("BLK", 100), ("P01", 100), ("PBS", 100), ("SEC", 100), ("DAB", 100), ("HEM", 100)],
-            now,
-            counts,
-            cancellationToken);
+        var he = await LoadRequiredPublishedWorkflowAsync(ReferenceDataSeeder.DefaultHeWorkflowCode, cancellationToken);
+        var ihc = await LoadRequiredPublishedWorkflowAsync(ReferenceDataSeeder.DefaultIhcWorkflowCode, cancellationToken);
 
         return (he, ihc);
+    }
+
+    private async Task<WorkflowVersion> LoadRequiredPublishedWorkflowAsync(string workflowCode, CancellationToken cancellationToken)
+    {
+        return await dbContext.WorkflowVersions
+            .Include(x => x.WorkflowDefinition)
+            .Where(x => x.WorkflowDefinition != null
+                && x.WorkflowDefinition.Code == workflowCode
+                && x.Status == WorkflowVersionStatus.Published)
+            .OrderByDescending(x => x.DefaultExperimentType != null)
+            .ThenByDescending(x => x.VersionNo)
+            .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new BusinessRuleException("default_workflow_required", $"Published workflow {workflowCode} is required.", StatusCodes.Status409Conflict);
     }
 
     private async Task<WorkflowVersion> EnsureWorkflowAsync(

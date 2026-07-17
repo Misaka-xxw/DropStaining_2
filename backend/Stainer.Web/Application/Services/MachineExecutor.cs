@@ -207,11 +207,23 @@ public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDevi
                 return;
             }
 
+            // Only expose the first pending step of each slide as executable.  This
+            // preserves the configured Timeline within a slide and then advances the
+            // same Timeline step across all slides in deterministic physical order.
+            // Selecting from every pending step allowed a blocked mixer step to be
+            // skipped in favour of a later step from the same slide.
             var pendingSteps = run.WorkflowExecutions
-                .SelectMany(x => x.StepExecutions)
-                .Where(x => x.Status == RuntimeLedgerStatus.Pending)
-                .OrderBy(x => x.WorkflowExecution!.SlideTask!.SlotCode)
-                .ThenBy(x => x.StepNo)
+                .Select(x => x.StepExecutions
+                    .Where(step => step.Status == RuntimeLedgerStatus.Pending)
+                    .OrderBy(step => step.StepNo)
+                    .ThenBy(step => step.CreatedAtUtc)
+                    .FirstOrDefault())
+                .Where(x => x is not null)
+                .Select(x => x!)
+                .OrderBy(x => x.StepNo)
+                .ThenBy(x => x.WorkflowExecution!.SlideTask!.ChannelBatch!.DrawerCode)
+                .ThenBy(x => ParseSlotNo(x.WorkflowExecution!.SlideTask!.SlotCode))
+                .ThenBy(x => x.WorkflowExecution!.SlideTask!.SlotCode)
                 .ToList();
 
             if (pendingSteps.Count == 0)

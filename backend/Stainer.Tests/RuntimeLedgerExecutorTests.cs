@@ -81,6 +81,29 @@ public sealed class RuntimeLedgerExecutorTests
         Assert.Contains(dabBatches, x => x.PreparedAtUtc.HasValue && x.ExpiresAtUtc == x.PreparedAtUtc.Value.AddHours(3));
         Assert.True(await verifyContext.Alarms.AnyAsync(x => x.MachineRunId == run.RunId && x.Code == "reagent_depleted"));
         Assert.True(await verifyContext.AuditLogs.AnyAsync(x => x.Action == "run.reagent_consumption"));
+        var commandTimeline = (await verifyContext.DeviceCommandExecutions
+            .AsNoTracking()
+            .Include(x => x.WorkflowStepExecution)
+                .ThenInclude(x => x!.WorkflowExecution)
+                    .ThenInclude(x => x!.SlideTask)
+                        .ThenInclude(x => x!.ChannelBatch)
+            .Where(x => x.MachineRunId == run.RunId && x.WorkflowStepExecution != null)
+            .ToListAsync())
+            .OrderBy(x => x.CreatedAtUtc)
+            .ToList();
+        var actualTimeline = commandTimeline.Select(x => new
+        {
+            x.WorkflowStepExecution!.StepNo,
+            DrawerCode = x.WorkflowStepExecution.WorkflowExecution!.SlideTask!.ChannelBatch!.DrawerCode,
+            x.WorkflowStepExecution.WorkflowExecution.SlideTask.SlotCode
+        }).ToList();
+        var expectedTimeline = actualTimeline
+            .OrderBy(x => x.StepNo)
+            .ThenBy(x => x.DrawerCode)
+            .ThenBy(x => x.SlotCode)
+            .ToList();
+        Assert.Equal(expectedTimeline, actualTimeline);
+
         var pipetteCommands = await verifyContext.DeviceCommandExecutions
             .Where(x => x.MachineRunId == run.RunId && x.LiquidClassSelectionStatus == LiquidClassSelectionStatus.Frozen)
             .ToListAsync();
@@ -92,6 +115,15 @@ public sealed class RuntimeLedgerExecutorTests
             Assert.Contains("aspirateSpeedUlPerSecond", command.LiquidClassParametersJson);
             Assert.Contains("liquidOperations", command.PayloadJson);
         });
+
+        using var twinSnapshot = await client.GetFromJsonAsync<JsonDocument>("/api/twin/snapshot");
+        var twinPayload = twinSnapshot!.RootElement.GetProperty("digitalTwinPayload");
+        Assert.True(twinPayload.TryGetProperty("runtime", out var runtime), twinPayload.GetRawText());
+        var runtimeSteps = runtime.GetProperty("steps").EnumerateArray().ToArray();
+        Assert.Equal(commandTimeline.Count, runtimeSteps.Length);
+        Assert.Equal(Enumerable.Range(1, runtimeSteps.Length), runtimeSteps.Select(x => x.GetProperty("executionOrder").GetInt32()));
+        Assert.Equal("A-01", runtimeSteps.First(x => x.GetProperty("reagentCode").GetString() == "ABC").GetProperty("targetPointCode").GetString());
+        Assert.Equal("NeedleWash", runtimeSteps.First(x => x.GetProperty("actionType").GetString() == "Wash").GetProperty("targetPointCode").GetString());
     }
 
     [Fact]

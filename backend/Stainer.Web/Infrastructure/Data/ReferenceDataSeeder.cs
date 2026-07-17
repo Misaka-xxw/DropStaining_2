@@ -8,9 +8,9 @@ namespace Stainer.Web.Infrastructure.Data;
 public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
 {
     public const string DefaultCoordinateProfileCode = "FactoryDefault-v1";
-    public const string ManualHeWorkflowCode = "TEST-HE-V1";
-    public const string ManualIhcWorkflowCode = "TEST-IHC-001-A-V1";
     public const string ManualPrimaryAntibodyCode = "001";
+    public const string DefaultHeWorkflowCode = "SYSTEM-HE-FAST-V1";
+    public const string DefaultIhcWorkflowCode = "SYSTEM-IHC-STANDARD-40C-V1";
     private const string DefaultDeviceProfileCode = "FactoryDevice-v1";
     private const string DefaultLiquidClassCode = "FactoryGeneral-v1";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -27,15 +27,15 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         await SeedPhysicalLayoutAsync(now, cancellationToken);
         var coordinateProfile = await SeedCoordinateProfileAsync(now, cancellationToken);
         await SeedCoordinatePointsAsync(coordinateProfile, now, cancellationToken);
-        await SeedManualAcceptanceWorkflowsAsync(now, cancellationToken);
+        await SeedDefaultWorkflowTemplatesAsync(now, cancellationToken);
 
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<ManualAcceptanceSeedSummary> GetManualAcceptanceSeedSummaryAsync(CancellationToken cancellationToken = default)
     {
-        var he = await LoadSeedWorkflowAsync(ManualHeWorkflowCode, cancellationToken);
-        var ihc = await LoadSeedWorkflowAsync(ManualIhcWorkflowCode, cancellationToken);
+        var he = await LoadSeedWorkflowAsync(DefaultHeWorkflowCode, cancellationToken);
+        var ihc = await LoadSeedWorkflowAsync(DefaultIhcWorkflowCode, cancellationToken);
         var mapping = await dbContext.PrimaryAntibodyWorkflowMappings
             .AsNoTracking()
             .SingleOrDefaultAsync(
@@ -434,33 +434,198 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         });
     }
 
-    private async Task SeedManualAcceptanceWorkflowsAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task SeedDefaultWorkflowTemplatesAsync(DateTimeOffset now, CancellationToken cancellationToken)
     {
         await SeedManualAcceptanceReagentsAsync(now, cancellationToken);
 
-        var heVersion = await EnsureSeedWorkflowAsync(
-            ManualHeWorkflowCode,
-            "测试 HE 流程",
+        // These two definitions are the only built-in templates.  The UI reads them
+        // from the workflow API and creates editable drafts by copying their versions.
+        // Remember whether they existed before this run so an upgrade switches the old
+        // sample defaults once, without overwriting an administrator's later choice.
+        var systemTemplatesAlreadyExisted = await dbContext.WorkflowDefinitions
+            .CountAsync(x => x.Code == DefaultHeWorkflowCode || x.Code == DefaultIhcWorkflowCode, cancellationToken) == 2;
+
+        var defaultHeVersion = await EnsureSeedWorkflowAsync(
+            DefaultHeWorkflowCode,
+            "HE 快速染色模板",
             StainingTaskType.He,
-            "测试 HE 流程 for manual Mock acceptance.",
-            HeSteps(),
-            [("HEM", 200), ("WAS", 100)],
+            "系统 HE 默认流程模板；由配置/流程页面统一读取和版本化管理。",
+            DefaultHeSteps(),
+            [("HEM", 100), ("WAS", 100), ("ACD", 100), ("EOS", 100), ("ETH", 100)],
             now,
-            cancellationToken);
+            cancellationToken,
+            planningRulesJson: DefaultHePlanningRulesJson());
 
-        var ihcVersion = await EnsureSeedWorkflowAsync(
-            ManualIhcWorkflowCode,
-            "测试 IHC 001-A",
+        var defaultIhcVersion = await EnsureSeedWorkflowAsync(
+            DefaultIhcWorkflowCode,
+            "IHC 标准流程 40℃",
             StainingTaskType.Ihc,
-            "测试 IHC 001-A for manual Mock acceptance.",
-            IhcSteps(),
-            [("BLK", 100), ("P01", 100), ("SEC", 100), ("DAB", 100), ("HEM", 100), ("WAS", 400)],
+            "系统 IHC 默认流程模板；由配置/流程页面统一读取和版本化管理。",
+            DefaultIhcSteps(),
+            [("BLK", 100), ("WAS", 500), ("P01", 100), ("SEC", 100), ("DAB", 100), ("HEM", 100)],
             now,
-            cancellationToken);
+            cancellationToken,
+            planningRulesJson: DefaultIhcPlanningRulesJson());
 
-        await EnsureDefaultWorkflowAsync(StainingTaskType.He, heVersion, cancellationToken);
-        await EnsureDefaultWorkflowAsync(StainingTaskType.Ihc, ihcVersion, cancellationToken);
-        await EnsurePrimaryAntibodyMappingAsync(ManualPrimaryAntibodyCode, ihcVersion.Id, now, cancellationToken);
+        if (!systemTemplatesAlreadyExisted)
+        {
+            await ReplaceDefaultsWithSystemTemplatesAsync(defaultHeVersion, defaultIhcVersion, cancellationToken);
+        }
+
+        await EnsureDefaultWorkflowAsync(StainingTaskType.He, defaultHeVersion, cancellationToken);
+        await EnsureDefaultWorkflowAsync(StainingTaskType.Ihc, defaultIhcVersion, cancellationToken);
+        await EnsurePrimaryAntibodyMappingAsync(ManualPrimaryAntibodyCode, defaultIhcVersion.Id, now, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await PruneNonDefaultWorkflowDefinitionsAsync(cancellationToken);
+    }
+
+    private async Task ReplaceDefaultsWithSystemTemplatesAsync(
+        WorkflowVersion defaultHeVersion,
+        WorkflowVersion defaultIhcVersion,
+        CancellationToken cancellationToken)
+    {
+        var existingDefaults = await dbContext.WorkflowVersions
+            .Where(x => x.DefaultExperimentType == StainingTaskType.He || x.DefaultExperimentType == StainingTaskType.Ihc)
+            .ToListAsync(cancellationToken);
+        foreach (var version in existingDefaults)
+        {
+            version.DefaultExperimentType = null;
+            version.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        }
+
+        defaultHeVersion.DefaultExperimentType = StainingTaskType.He;
+        defaultIhcVersion.DefaultExperimentType = StainingTaskType.Ihc;
+        defaultHeVersion.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        defaultIhcVersion.UpdatedAtUtc = DateTimeOffset.UtcNow;
+    }
+
+    private async Task PruneNonDefaultWorkflowDefinitionsAsync(CancellationToken cancellationToken)
+    {
+        const string targetVersions = """
+            SELECT v.id
+            FROM workflow_versions v
+            JOIN workflow_definitions d ON d.id = v.workflow_definition_id
+            WHERE d.code <> 'SYSTEM-HE-FAST-V1'
+              AND d.code <> 'SYSTEM-IHC-STANDARD-40C-V1'
+            """;
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            UPDATE staining_tasks
+            SET workflow_definition_id = (
+                    SELECT nd.id
+                    FROM workflow_definitions nd
+                    WHERE nd.code = CASE WHEN staining_tasks.task_type = 'HE' THEN 'SYSTEM-HE-FAST-V1' ELSE 'SYSTEM-IHC-STANDARD-40C-V1' END),
+                workflow_version_id = (
+                    SELECT nv.id
+                    FROM workflow_versions nv
+                    JOIN workflow_definitions nd ON nd.id = nv.workflow_definition_id
+                    WHERE nd.code = CASE WHEN staining_tasks.task_type = 'HE' THEN 'SYSTEM-HE-FAST-V1' ELSE 'SYSTEM-IHC-STANDARD-40C-V1' END
+                      AND nv.status = 'Published'
+                    ORDER BY nv.default_experiment_type IS NOT NULL DESC, nv.version_no DESC
+                    LIMIT 1)
+            WHERE workflow_definition_id IN (
+                    SELECT id FROM workflow_definitions WHERE code <> 'SYSTEM-HE-FAST-V1' AND code <> 'SYSTEM-IHC-STANDARD-40C-V1')
+               OR workflow_version_id IN (
+            """ + targetVersions + """
+            )
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            UPDATE channel_batches
+            SET selected_workflow_version_id = (
+                    SELECT nv.id
+                    FROM workflow_versions ov
+                    JOIN workflow_definitions od ON od.id = ov.workflow_definition_id
+                    JOIN workflow_definitions nd ON nd.code = CASE WHEN od.workflow_type = 'HE' THEN 'SYSTEM-HE-FAST-V1' ELSE 'SYSTEM-IHC-STANDARD-40C-V1' END
+                    JOIN workflow_versions nv ON nv.workflow_definition_id = nd.id
+                    WHERE ov.id = channel_batches.selected_workflow_version_id
+                      AND nv.status = 'Published'
+                    ORDER BY nv.default_experiment_type IS NOT NULL DESC, nv.version_no DESC
+                    LIMIT 1)
+            WHERE selected_workflow_version_id IN (
+            """ + targetVersions + """
+            )
+            """, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            UPDATE workflow_executions
+            SET workflow_version_id = (
+                    SELECT nv.id
+                    FROM workflow_versions ov
+                    JOIN workflow_definitions od ON od.id = ov.workflow_definition_id
+                    JOIN workflow_definitions nd ON nd.code = CASE WHEN od.workflow_type = 'HE' THEN 'SYSTEM-HE-FAST-V1' ELSE 'SYSTEM-IHC-STANDARD-40C-V1' END
+                    JOIN workflow_versions nv ON nv.workflow_definition_id = nd.id
+                    WHERE ov.id = workflow_executions.workflow_version_id
+                      AND nv.status = 'Published'
+                    ORDER BY nv.default_experiment_type IS NOT NULL DESC, nv.version_no DESC
+                    LIMIT 1)
+            WHERE workflow_version_id IN (
+            """ + targetVersions + """
+            )
+            """, cancellationToken);
+
+        var deleteTagsSql = """
+            DELETE FROM mock_demo_data_tags
+            WHERE (entity_type = 'WorkflowVersion' AND entity_id IN (
+            """ + targetVersions + """
+            ))
+               OR (entity_type = 'WorkflowDefinition' AND entity_id IN (
+                    SELECT d.id
+                    FROM workflow_definitions d
+                    WHERE d.code <> 'SYSTEM-HE-FAST-V1'
+                      AND d.code <> 'SYSTEM-IHC-STANDARD-40C-V1'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM staining_tasks t
+                          WHERE t.workflow_definition_id = d.id)))
+            """;
+        await dbContext.Database.ExecuteSqlRawAsync(deleteTagsSql, cancellationToken);
+
+        var deleteMappingsSql = """
+            DELETE FROM primary_antibody_workflow_mappings
+            WHERE workflow_version_id IN (
+            """ + targetVersions + """
+            )
+            """;
+        await dbContext.Database.ExecuteSqlRawAsync(deleteMappingsSql, cancellationToken);
+
+        var deleteStepsSql = """
+            DELETE FROM workflow_steps
+            WHERE workflow_version_id IN (
+            """ + targetVersions + """
+            )
+            """;
+        await dbContext.Database.ExecuteSqlRawAsync(deleteStepsSql, cancellationToken);
+
+        var deleteRequirementsSql = """
+            DELETE FROM workflow_reagent_requirements
+            WHERE workflow_version_id IN (
+            """ + targetVersions + """
+            )
+            """;
+        await dbContext.Database.ExecuteSqlRawAsync(deleteRequirementsSql, cancellationToken);
+
+        var deleteVersionsSql = """
+            DELETE FROM workflow_versions
+            WHERE id IN (
+            """ + targetVersions + """
+            )
+            """;
+        await dbContext.Database.ExecuteSqlRawAsync(deleteVersionsSql, cancellationToken);
+
+        await dbContext.Database.ExecuteSqlRawAsync("""
+            DELETE FROM workflow_definitions
+            WHERE code <> 'SYSTEM-HE-FAST-V1'
+              AND code <> 'SYSTEM-IHC-STANDARD-40C-V1'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM workflow_versions v
+                  WHERE v.workflow_definition_id = workflow_definitions.id)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM staining_tasks t
+                  WHERE t.workflow_definition_id = workflow_definitions.id)
+            """, cancellationToken);
     }
 
     private async Task EnsureDefaultWorkflowAsync(
@@ -620,7 +785,8 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         IReadOnlyList<SeedWorkflowStep> steps,
         IReadOnlyList<(string ReagentCode, int RequiredVolumeUl)> requirements,
         DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? planningRulesJson = null)
     {
         var definition = await dbContext.WorkflowDefinitions
             .AsSplitQuery()
@@ -686,6 +852,7 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
                 VersionLabel = "1",
                 Status = WorkflowVersionStatus.Published,
                 ChangeNote = "Seeded for manual Mock acceptance.",
+                PlanningRulesJson = planningRulesJson ?? "{}",
                 PublishedAtUtc = now,
                 CreatedAtUtc = now
             };
@@ -728,9 +895,10 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
                 ReagentCode = step.ReagentCode,
                 VolumeUl = step.VolumeUl,
                 DurationSeconds = step.DurationSeconds,
+                TargetTemperatureDeciC = step.TargetTemperatureDeciC,
                 MixParametersJson = "{}",
                 WashParametersJson = "{}",
-                LegacyParametersJson = "{}",
+                LegacyParametersJson = step.LegacyParametersJson,
                 FailureStrategy = "Stop",
                 CreatedAtUtc = now
             });
@@ -791,12 +959,17 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
     {
         return
         [
+            new("DBA", "DAB A", "dab", 1000, "DAB-A"),
+            new("DBB", "DAB B", "dab", 1000, "DAB-B"),
             new("BLK", "测试封闭液", "blocking", 1000, "BLOCKER"),
             new("P01", "测试一抗 001", "primary", 1000, "PRIMARY-001"),
             new("SEC", "测试二抗", "secondary", 1000, "SECONDARY"),
             new("DAB", "测试 DAB 显色液", "dab", 1000, "DAB-A/B"),
             new("HEM", "测试苏木素", "common", 1000, "HEMATOXYLIN"),
-            new("WAS", "测试清洗液", "wash", 1000, "WASH")
+            new("WAS", "测试清洗液", "wash", 1000, "WASH"),
+            new("EOS", "测试伊红染色液", "common", 1000, "EOSIN"),
+            new("ACD", "测试酸洗液", "wash", 1000, "ACID-WASH"),
+            new("ETH", "测试无水乙醇", "wash", 1000, "ETHANOL")
         ];
     }
 
@@ -825,6 +998,86 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         ];
     }
 
+    private static IReadOnlyList<SeedWorkflowStep> DefaultHeSteps()
+    {
+        return
+        [
+            UiStep(1, "HEMATOXYLIN", "苏木素染色", "Dispense", "HEM", "hematoxylin", "hematoxylin", 10, false),
+            UiStep(2, "WASH", "水洗", "Wash", "WAS", "water", "water", 10, true),
+            UiStep(3, "ACID_WASH", "酸洗", "Dispense", "ACD", "acid", "acid", 5, true),
+            UiStep(4, "EOSIN", "伊红染色", "Dispense", "EOS", "eosin", "eosin", 8, false),
+            UiStep(5, "ETHANOL_WASH", "无水乙醇清洗", "Dispense", "ETH", "ethanol", "ethanol", 12, true)
+        ];
+    }
+
+    private static IReadOnlyList<SeedWorkflowStep> DefaultIhcSteps()
+    {
+        return
+        [
+            UiStep(1, "BLOCKING", "内源性酶阻断剂", "Dispense", "BLK", "block", "blocker", 20, false, notes: "阻断内源性酶活性"),
+            UiStep(2, "WASH", "清洗液", "Wash", "WAS", "water", "wash", 15, true, notes: "阻断后立即清洗，避免残留影响一抗"),
+            UiStep(3, "PRIMARY_ANTIBODY", "一抗", "Dispense", "P01", "primary", "primary", 270, false, allowMultiPrimary: true, notes: "一抗种类可多路映射；默认 4.5 min"),
+            UiStep(4, "WASH_AFTER_PRIMARY", "清洗液", "Wash", "WAS", "water", "wash", 15, true, 400, "一抗后立即清洗；从本步开始进入 40℃ 控温段"),
+            UiStep(5, "SECONDARY_ANTIBODY", "二抗", "Dispense", "SEC", "secondary", "secondary", 90, false, 400, "默认 1.5 min"),
+            UiStep(6, "WASH_AFTER_SECONDARY", "清洗液", "Wash", "WAS", "water", "wash", 15, true, 400, "二抗后立即清洗"),
+            UiStep(7, "DAB", "DAB", "Dab", "DAB", "dabColor", "dab", 90, false, 400, "DAB A:B:纯水 = 1:1:18，建议每轮现配"),
+            UiStep(8, "WASH_AFTER_DAB", "水洗", "Wash", "WAS", "water", "water", 5, true, 400, "DAB 终止水洗"),
+            UiStep(9, "HEMATOXYLIN", "苏木素", "Dispense", "HEM", "hematoxylin", "hematoxylin", 10, false, 400, "核复染"),
+            UiStep(10, "FINAL_WASH", "水洗", "Wash", "WAS", "water", "water", 10, true, 400, "复染后水洗")
+        ];
+    }
+
+    private static string DefaultHePlanningRulesJson() => JsonSerializer.Serialize(new
+    {
+        schemaVersion = 1,
+        targetTempC = (int?)null,
+        tempControlFromStep = (int?)null,
+        allowMultiPrimary = false,
+        dabRatio = (object?)null,
+        notes = "HE 模板用于快速染色；可复制为草稿后按实验要求调整。"
+    }, JsonOptions);
+
+    private static string DefaultIhcPlanningRulesJson() => JsonSerializer.Serialize(new
+    {
+        schemaVersion = 1,
+        targetTempC = 40,
+        tempControlFromStep = 4,
+        allowMultiPrimary = true,
+        dabRatio = new { a = 1, b = 1, pureWater = 18, preparePolicy = "per_run" },
+        notes = "一抗可按玻片/通道映射不同抗体；共用试剂统一调度；DAB 推荐每轮现配。"
+    }, JsonOptions);
+
+    private static SeedWorkflowStep UiStep(
+        int stepNo,
+        string majorStepCode,
+        string stepName,
+        string actionType,
+        string reagentCode,
+        string opKey,
+        string reagentRole,
+        int durationSeconds,
+        bool immediateAfterPrevious,
+        int? targetTemperatureDeciC = null,
+        string notes = "",
+        bool allowMultiPrimary = false)
+    {
+        var legacy = JsonSerializer.Serialize(new
+        {
+            ui = new
+            {
+                opKey,
+                label = stepName,
+                toleranceSec = 0,
+                immediateAfterPrev = immediateAfterPrevious,
+                requiresTemp = targetTemperatureDeciC is not null,
+                reagentRole,
+                allowMultiPrimary,
+                notes
+            }
+        }, JsonOptions);
+        return new SeedWorkflowStep(stepNo, majorStepCode, stepName, actionType, reagentCode, 100, durationSeconds, targetTemperatureDeciC, legacy);
+    }
+
     private sealed record SeedReagentDefinition(string Code, string Name, string Type, int MinimumAlarmVolumeUl, string Alias);
 
     private sealed record SeedWorkflowStep(
@@ -834,7 +1087,9 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         string ActionType,
         string? ReagentCode,
         int? VolumeUl,
-        int DurationSeconds);
+        int DurationSeconds,
+        int? TargetTemperatureDeciC = null,
+        string LegacyParametersJson = "{}");
 
     private sealed record SeedWorkflowSummary(string Code, string Name, string WorkflowVersionId, string? DefaultExperimentType);
 }

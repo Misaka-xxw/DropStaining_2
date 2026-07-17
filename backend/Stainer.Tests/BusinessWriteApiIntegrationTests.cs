@@ -16,6 +16,24 @@ namespace Stainer.Tests;
 public sealed class BusinessWriteApiIntegrationTests
 {
     [Fact]
+    public async Task Twin_snapshot_control_values_exclude_structural_configuration_controls()
+    {
+        await using var factory = CreateFactory();
+        using var adminClient = factory.CreateClient();
+        await LoginAsync(adminClient, "admin", "admin");
+
+        var response = await adminClient.GetAsync("/api/twin/snapshot");
+        response.EnsureSuccessStatusCode();
+        using var snapshot = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var controlValues = snapshot.RootElement.GetProperty("control_values");
+
+        Assert.True(controlValues.TryGetProperty("reagentTempText", out _));
+        Assert.False(controlValues.TryGetProperty("configProfileFold", out _));
+        Assert.False(controlValues.TryGetProperty("configProfileSummary", out _));
+        Assert.False(controlValues.TryGetProperty("configFlowFold", out _));
+    }
+
+    [Fact]
     public async Task Admin_user_management_is_authorized_idempotent_audited_and_rolls_back_on_failure()
     {
         await using var factory = CreateFactory();
@@ -414,6 +432,110 @@ public sealed class BusinessWriteApiIntegrationTests
         var events = publisher.Snapshot();
         Assert.Contains(events, x => x.Type == MachineEventTypes.WorkflowVersionChanged && x.EntityId == created.WorkflowVersionId);
         Assert.Contains(events, x => x.Type == MachineEventTypes.PrimaryAntibodyMappingChanged && x.EntityId == persistedMapping.Id);
+    }
+
+    [Fact]
+    public async Task Workflow_editor_round_trips_planning_rules_step_ui_metadata_and_draft_deletion()
+    {
+        await using var factory = CreateFactory();
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin", "admin");
+
+        var created = await PostJsonAsync<WorkflowDraftMutationResponse>(client, "/api/workflows", new
+        {
+            commandId = "cmd-workflow-editor-create",
+            code = "CFG-UI-ROUNDTRIP",
+            name = "UI round-trip workflow",
+            workflowType = StainingTaskType.Ihc,
+            description = "Persisted from the configuration editor.",
+            versionLabel = "0.1",
+            changeNote = "Initial editor draft."
+        });
+        var planningRulesJson = JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            targetTempC = 41.5,
+            tempControlFromStep = 1,
+            allowMultiPrimary = true,
+            dabRatio = new { a = 2, b = 1, pureWater = 17, preparePolicy = "per_run" },
+            notes = "UI scheduling rules"
+        });
+        _ = await PutJsonAsync<CommandResponse>(client, $"/api/workflow-versions/{created.WorkflowVersionId}", new
+        {
+            commandId = "cmd-workflow-editor-rules",
+            name = (string?)null,
+            description = (string?)null,
+            isEnabled = (bool?)null,
+            versionLabel = (string?)null,
+            changeNote = (string?)null,
+            planningRulesJson
+        });
+
+        var legacyParametersJson = JsonSerializer.Serialize(new
+        {
+            ui = new
+            {
+                opKey = "primary",
+                label = "Primary antibody",
+                toleranceSec = 12,
+                immediateAfterPrev = true,
+                requiresTemp = true,
+                reagentRole = "primary",
+                allowMultiPrimary = true,
+                notes = "Per-slide antibody mapping"
+            }
+        });
+        _ = await PostJsonAsync<CommandResponse>(client, $"/api/workflow-versions/{created.WorkflowVersionId}/steps", new
+        {
+            commandId = "cmd-workflow-editor-step",
+            stepNo = 1,
+            majorStepCode = "PRIMARY_ANTIBODY",
+            stepName = "Primary antibody",
+            actionType = "Dispense",
+            reagentCode = "P01",
+            volumeUl = 100,
+            durationSeconds = 120,
+            targetTemperatureDeciC = 415,
+            mixParametersJson = "{\"cycles\":2}",
+            washParametersJson = "{}",
+            legacyParametersJson,
+            failureStrategy = "Stop"
+        });
+
+        var detail = await client.GetFromJsonAsync<WorkflowVersionMaintenanceResponse>($"/api/workflow-versions/{created.WorkflowVersionId}");
+        Assert.NotNull(detail);
+        using (var planning = JsonDocument.Parse(detail!.PlanningRulesJson))
+        {
+            Assert.Equal(41.5, planning.RootElement.GetProperty("targetTempC").GetDouble());
+            Assert.Equal(2, planning.RootElement.GetProperty("dabRatio").GetProperty("a").GetInt32());
+            Assert.True(planning.RootElement.GetProperty("allowMultiPrimary").GetBoolean());
+        }
+        var persistedStep = Assert.Single(detail.Steps);
+        Assert.Equal("{\"cycles\":2}", persistedStep.MixParametersJson);
+        using (var legacy = JsonDocument.Parse(persistedStep.LegacyParametersJson))
+        {
+            Assert.Equal(12, legacy.RootElement.GetProperty("ui").GetProperty("toleranceSec").GetInt32());
+            Assert.True(legacy.RootElement.GetProperty("ui").GetProperty("immediateAfterPrev").GetBoolean());
+        }
+
+        var copied = await PostJsonAsync<WorkflowDraftMutationResponse>(client, $"/api/workflow-versions/{created.WorkflowVersionId}/copy-draft", new
+        {
+            commandId = "cmd-workflow-editor-copy",
+            versionLabel = "0.2",
+            changeNote = "Editor copy."
+        });
+        var copiedDetail = await client.GetFromJsonAsync<WorkflowVersionMaintenanceResponse>($"/api/workflow-versions/{copied.WorkflowVersionId}");
+        Assert.NotNull(copiedDetail);
+        Assert.Equal(detail.PlanningRulesJson, copiedDetail!.PlanningRulesJson);
+        Assert.Equal(persistedStep.LegacyParametersJson, Assert.Single(copiedDetail.Steps).LegacyParametersJson);
+
+        using var deleteRequest = new HttpRequestMessage(
+            HttpMethod.Delete,
+            $"/api/workflow-versions/{copied.WorkflowVersionId}?commandId=cmd-workflow-editor-delete");
+        var deleted = await client.SendAsync(deleteRequest);
+        Assert.Equal(HttpStatusCode.OK, deleted.StatusCode);
+        var missing = await client.GetAsync($"/api/workflow-versions/{copied.WorkflowVersionId}");
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
     }
 
     [Fact]

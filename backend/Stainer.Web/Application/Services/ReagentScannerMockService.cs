@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
+using System.Security.Cryptography;
+using System.Text;
 using Stainer.Web.Application.Devices;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Requests;
@@ -25,6 +27,11 @@ public sealed class ReagentScannerMockService(
         }
 
         var positions = await ResolvePositionsAsync(request, cancellationToken);
+        if (ShouldComplete(request))
+        {
+            await ScanFixedDabSourcesAsync(request.CommandId, actor, cancellationToken);
+        }
+        var mockReagentCodes = await ResolveMockReagentCodesAsync(cancellationToken);
         var sessionId = request.ScanSessionId;
         ReagentScanSessionMutationResponse? sessionMutation = null;
         if (string.IsNullOrWhiteSpace(sessionId))
@@ -47,7 +54,8 @@ public sealed class ReagentScannerMockService(
             var scenario = NormalizeScenario(request.Scenario, position.PositionNo);
             string? requestedBarcode = null;
             request.BarcodesByPosition?.TryGetValue(position.Code, out requestedBarcode);
-            var rawBarcode = requestedBarcode ?? PlannedBarcode(position, scenario);
+            var reagentCode = mockReagentCodes[(position.PositionNo - 1) % mockReagentCodes.Count];
+            var rawBarcode = requestedBarcode ?? PlannedBarcode(position, scenario, reagentCode, request.CommandId);
             if (scenario is "Timeout" or "Disconnect")
             {
                 await deviceAdapter.ConfigureFaultAsync(
@@ -171,6 +179,95 @@ public sealed class ReagentScannerMockService(
                 || string.Equals(request.Scope, "rack", StringComparison.OrdinalIgnoreCase));
     }
 
+    private async Task<IReadOnlyList<string>> ResolveMockReagentCodesAsync(CancellationToken cancellationToken)
+    {
+        var requiredCodes = await dbContext.WorkflowReagentRequirements
+            .AsNoTracking()
+            .Where(x => x.IsRequired)
+            .Select(x => x.ReagentCode)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var enabledCodes = await dbContext.ReagentDefinitions
+            .AsNoTracking()
+            .Where(x => x.IsEnabled)
+            .OrderBy(x => x.ReagentCode)
+            .Select(x => x.ReagentCode)
+            .ToListAsync(cancellationToken);
+
+        var codes = requiredCodes
+            .Concat(enabledCodes)
+            .Select(x => (x ?? string.Empty).Trim().ToUpperInvariant())
+            .Where(x => x.Length == 3)
+            .Where(x => x is not "DBA" and not "DBB" and not "DAB")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (codes.Count == 0)
+        {
+            throw new BusinessRuleException(
+                "mock_reagent_catalog_empty",
+                "No enabled three-character reagent codes are available for Mock scanning.");
+        }
+
+        return codes;
+    }
+
+    private async Task ScanFixedDabSourcesAsync(
+        string commandId,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken)
+    {
+        var definitions = await dbContext.ReagentDefinitions
+            .Where(x => x.IsEnabled && (x.ReagentCode == "DBA" || x.ReagentCode == "DBB"))
+            .ToDictionaryAsync(x => x.ReagentCode, cancellationToken);
+        if (!definitions.ContainsKey("DBA") || !definitions.ContainsKey("DBB"))
+        {
+            throw new BusinessRuleException("mock_dab_source_catalog_missing", "Enabled DBA and DBB definitions are required for Mock scanning.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var legacyPlacements = await dbContext.ReagentRackPlacements
+            .Include(x => x.ReagentBottle)
+            .Where(x => x.RemovedAtUtc == null && (x.ReagentBottle!.ReagentCode == "DBA" || x.ReagentBottle.ReagentCode == "DBB"))
+            .ToListAsync(cancellationToken);
+        foreach (var placement in legacyPlacements)
+        {
+            placement.RemovedAtUtc = now;
+        }
+
+        foreach (var code in new[] { "DBA", "DBB" })
+        {
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{commandId}:fixed:{code}"));
+            var serial = BitConverter.ToUInt32(hash, 0) % 1_000_000;
+            var bottle = new ReagentBottle
+            {
+                ReagentDefinitionId = definitions[code].Id,
+                ReagentCode = code,
+                FullBarcode = $"{code}080{now:yyyyMMdd}{serial:000000}",
+                ProductionBatchNo = now.ToString("yyyyMMdd"),
+                SerialNo = serial.ToString("000000"),
+                InitialVolumeUl = 8000,
+                RemainingVolumeUl = 8000,
+                ExpirationDate = DateOnly.FromDateTime(now.UtcDateTime.AddYears(1)),
+                Status = "Available",
+                FirstScannedAtUtc = now,
+                LastScannedAtUtc = now,
+                CreatedAtUtc = now
+            };
+            dbContext.ReagentBottles.Add(bottle);
+            dbContext.AuditLogs.Add(new AuditLog
+            {
+                ActorUserId = actor.UserId,
+                Action = "mock.dab_source.scan",
+                EntityType = nameof(ReagentBottle),
+                EntityId = bottle.Id,
+                Message = $"{code} scanned into fixed wash/mixing-area source position.",
+                CreatedAtUtc = now
+            });
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     private static string NormalizeScenario(string? scenario, int positionNo)
     {
         var value = (scenario ?? string.Empty).Trim();
@@ -198,16 +295,22 @@ public sealed class ReagentScannerMockService(
         };
     }
 
-    private static string? PlannedBarcode(ReagentRackPosition position, string scenario)
+    private static string? PlannedBarcode(
+        ReagentRackPosition position,
+        string scenario,
+        string reagentCode,
+        string commandId)
     {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{commandId}:{position.Code}"));
+        var serialNo = BitConverter.ToUInt16(hash, 0) % 1000;
         return scenario switch
         {
             "Empty" => null,
             "Invalid" => "BAD",
-            "Illegal17" => $"ZZZ050{DateTime.UtcNow:yyyyMMdd}{position.PositionNo % 1000:000}",
-            "Timeout" => $"HEM050{DateTime.UtcNow:yyyyMMdd}{position.PositionNo % 1000:000}",
-            "Disconnect" => $"HEM050{DateTime.UtcNow:yyyyMMdd}{position.PositionNo % 1000:000}",
-            _ => $"HEM050{DateTime.UtcNow:yyyyMMdd}{position.PositionNo % 1000:000}"
+            "Illegal17" => $"ZZZ050{DateTime.UtcNow:yyyyMMdd}{serialNo:000}",
+            "Timeout" => $"HEM050{DateTime.UtcNow:yyyyMMdd}{serialNo:000}",
+            "Disconnect" => $"HEM050{DateTime.UtcNow:yyyyMMdd}{serialNo:000}",
+            _ => $"{reagentCode}080{DateTime.UtcNow:yyyyMMdd}{serialNo:000}"
         };
     }
 

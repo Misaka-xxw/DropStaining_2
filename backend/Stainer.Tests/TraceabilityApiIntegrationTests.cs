@@ -218,8 +218,7 @@ public sealed class TraceabilityApiIntegrationTests
         using var client = factory.CreateClient();
         await LoginAsync(client, "operator", "operator");
 
-        var page = await client.GetStringAsync("/history");
-        Assert.Contains("historySlides", page);
+        // 旧 /history 页面已删除；本用例聚焦后端历史数据在重复读取间保持一致（来自正式数据库，非前端缓存）。
 
         var first = await client.GetFromJsonAsync<TraceabilityListResponse<HistoryRunSummaryResponse>>(
             $"/api/history/runs?machineRunId={seeded.MachineRunId}");

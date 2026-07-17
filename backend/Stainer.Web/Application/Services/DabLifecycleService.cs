@@ -16,6 +16,28 @@ public sealed class DabLifecycleService(
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    public async Task<IReadOnlyList<DabSourceBottleResponse>> ListSourceBottlesAsync(CancellationToken cancellationToken = default)
+    {
+        var bottles = await dbContext.ReagentBottles
+            .AsNoTracking()
+            .Include(x => x.ReagentDefinition)
+            .Where(x => x.ReagentCode == "DBA" || x.ReagentCode == "DBB")
+            .ToListAsync(cancellationToken);
+        return bottles
+            .OrderByDescending(x => x.LastScannedAtUtc)
+            .Select(x => new DabSourceBottleResponse(
+                x.Id,
+                x.ReagentCode,
+                x.ReagentDefinition!.Name,
+                x.FullBarcode,
+                x.InitialVolumeUl,
+                x.RemainingVolumeUl,
+                x.ExpirationDate,
+                x.Status,
+                x.LastScannedAtUtc))
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<DabMixPositionResponse>> ListPositionsAsync(CancellationToken cancellationToken = default)
     {
         return await dbContext.DabMixPositions
@@ -118,10 +140,20 @@ public sealed class DabLifecycleService(
                     throw new BusinessRuleException("dab_source_bottle_unavailable", "DAB source bottles must be available and unexpired.", StatusCodes.Status409Conflict);
                 }
 
+                var configuredRatios = tasks
+                    .Select(x => ReadDabRatio(x.WorkflowVersion?.PlanningRulesJson))
+                    .Distinct()
+                    .ToList();
+                if (configuredRatios.Count > 1)
+                {
+                    throw new BusinessRuleException("dab_ratio_mismatch", "Selected tasks use different DAB ratios and cannot share one DAB batch.", StatusCodes.Status409Conflict);
+                }
+
+                var dabRatio = configuredRatios.SingleOrDefault();
                 DabFormulaVolumes required;
                 try
                 {
-                    required = DabFormula.CalculateRequired(taskIds.Count);
+                    required = DabFormula.CalculateRequired(taskIds.Count, dabRatio.A, dabRatio.B, dabRatio.Water);
                 }
                 catch (OverflowException)
                 {
@@ -146,6 +178,9 @@ public sealed class DabLifecycleService(
                     Status = DabBatchStatus.PendingPreparation,
                     CleaningStatus = DabCleaningStatus.NotRequired,
                     SlideCount = taskIds.Count,
+                    DabARatioParts = dabRatio.A,
+                    DabBRatioParts = dabRatio.B,
+                    WaterRatioParts = dabRatio.Water,
                     TotalRequiredVolumeUl = required.TotalVolumeUl,
                     CreatedAtUtc = now,
                     UpdatedAtUtc = now
@@ -211,12 +246,52 @@ public sealed class DabLifecycleService(
                         x.ReagentBottleId,
                         x.ReservedVolumeUl
                     }),
-                    ratio = "1:1:18"
+                    ratio = $"{dabRatio.A}:{dabRatio.B}:{dabRatio.Water}"
                 }, now);
 
                 return Result(batch, request.CommandId, "DAB batch created and mix position occupied.");
             },
             cancellationToken);
+    }
+
+    internal static (int A, int B, int Water) ReadDabRatio(string? planningRulesJson)
+    {
+        if (string.IsNullOrWhiteSpace(planningRulesJson) || planningRulesJson == "{}")
+        {
+            return (DabFormula.DabARatioParts, DabFormula.DabBRatioParts, DabFormula.WaterRatioParts);
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(planningRulesJson);
+            if (!document.RootElement.TryGetProperty("dabRatio", out var ratio) || ratio.ValueKind != JsonValueKind.Object)
+            {
+                return (DabFormula.DabARatioParts, DabFormula.DabBRatioParts, DabFormula.WaterRatioParts);
+            }
+
+            var a = ratio.TryGetProperty("a", out var aValue) && aValue.TryGetInt32(out var parsedA) ? parsedA : DabFormula.DabARatioParts;
+            var b = ratio.TryGetProperty("b", out var bValue) && bValue.TryGetInt32(out var parsedB) ? parsedB : DabFormula.DabBRatioParts;
+            var water = ratio.TryGetProperty("pureWater", out var waterValue) && waterValue.TryGetInt32(out var parsedWater) ? parsedWater : DabFormula.WaterRatioParts;
+            if (a <= 0 || b <= 0 || water < 0)
+            {
+                throw new BusinessRuleException("dab_ratio_invalid", "DAB A/B ratio parts must be positive and pure-water ratio cannot be negative.");
+            }
+
+            try
+            {
+                _ = checked(a + b + water);
+            }
+            catch (OverflowException)
+            {
+                throw new BusinessRuleException("dab_ratio_invalid", "Configured DAB ratio parts exceed the supported integer range.");
+            }
+
+            return (a, b, water);
+        }
+        catch (JsonException)
+        {
+            throw new BusinessRuleException("dab_ratio_invalid", "Workflow DAB ratio configuration is not valid JSON.");
+        }
     }
 
     public Task<DabBatchResponse> StartPreparationAsync(
@@ -254,11 +329,11 @@ public sealed class DabLifecycleService(
                 DabFormulaVolumes actual;
                 try
                 {
-                    actual = DabFormula.Calculate(request.ActualPreparedVolumeUl);
+                    actual = DabFormula.Calculate(request.ActualPreparedVolumeUl, batch.DabARatioParts, batch.DabBRatioParts, batch.WaterRatioParts);
                 }
                 catch (ArgumentOutOfRangeException)
                 {
-                    throw new BusinessRuleException("dab_volume_invalid", "Actual prepared volume must be a positive multiple of 20 uL.");
+                    throw new BusinessRuleException("dab_volume_invalid", "Actual prepared volume or configured DAB ratio is invalid.");
                 }
 
                 RequireReservedSources(batch, actual);
@@ -484,7 +559,7 @@ public sealed class DabLifecycleService(
         DabFormulaVolumes actual;
         try
         {
-            actual = DabFormula.Calculate(batch.TotalRequiredVolumeUl);
+            actual = DabFormula.Calculate(batch.TotalRequiredVolumeUl, batch.DabARatioParts, batch.DabBRatioParts, batch.WaterRatioParts);
         }
         catch (ArgumentOutOfRangeException)
         {
@@ -804,7 +879,7 @@ public sealed class DabLifecycleService(
         }
 
         var position = await SelectPositionAsync(null, cancellationToken);
-        var required = DabFormula.CalculateRequired(taskIds.Count);
+        var required = DabFormula.CalculateRequired(taskIds.Count, expiredBatch.DabARatioParts, expiredBatch.DabBRatioParts, expiredBatch.WaterRatioParts);
         var commandId = $"dab-reprepare-{plan.Id}";
         var systemActor = new AuthenticatedUser(string.Empty, "system", "System", "system", ["admin"]);
         var batch = new DabBatch
@@ -817,6 +892,9 @@ public sealed class DabLifecycleService(
             Status = DabBatchStatus.PendingPreparation,
             CleaningStatus = DabCleaningStatus.NotRequired,
             SlideCount = taskIds.Count,
+            DabARatioParts = expiredBatch.DabARatioParts,
+            DabBRatioParts = expiredBatch.DabBRatioParts,
+            WaterRatioParts = expiredBatch.WaterRatioParts,
             TotalRequiredVolumeUl = required.TotalVolumeUl,
             CreatedAtUtc = now,
             UpdatedAtUtc = now

@@ -2,7 +2,37 @@
 
 # 全自动冰冻切片染色机上位机待办清单
 
-> 本文件以未完成工作为主，同时保留少量关键完成项用于追溯。Mock 业务闭环、正式数据库与 Web HMI 接入、Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、扫码器配置持久化基础、扫码区域配置表达、试剂坐标锚点生成、DCR55 控制服务抽象、样本/试剂扫码职责与坐标语义确认、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证、坐标 Z 语义补齐、LiquidClass 参数补齐、工程手动移液测试 API、Workflow 配置模型评估（经代码评估无需新增模型）均已完成。
+> 本文件以未完成工作为主，同时保留少量关键完成项用于追溯。Mock 业务闭环、正式数据库与 Web HMI 接入、Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、扫码器配置持久化基础、扫码区域配置表达、试剂坐标锚点生成、DCR55 控制服务抽象、样本/试剂扫码职责与坐标语义确认、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证、坐标 Z 语义补齐、LiquidClass 参数补齐、工程手动移液测试 API、Workflow 通道关联模型评估均已完成。当前新增的 Workflow 规划规则持久化属于既有版本模型扩展，仍在收口。
+
+## 当前修订收口项（2026-07-17，尚未提交）
+
+### 已实现/正在收口
+
+- 工作流配置页支持从 HE/IHC 模板创建数据库草稿、步骤时间线编辑、步骤增删排序、规则与试剂配置，并新增工作流配置和时间线视觉浏览器验收脚本。
+- `WorkflowVersion` 新增 `PlanningRulesJson`，用于持久化目标温度、控温起始步骤、DAB 配比/配置策略、多一抗并行和规则说明；迁移 `20260715173748_PersistWorkflowPlanningRules` 尚未提交。
+- 预检继续按 Twin / Debug / Production 模式收紧，补充试剂扫码完整性、DAB 原料与计算用量、运行前设备状态等校验；DAB 创建/完成/消耗进一步限制到正式执行器上下文。
+- 新增 Mock 运行态重置服务和 `/api/mock-runtime/reset`；旧 `/api/system/reset` 明确禁用，避免继续清理旧 `MockRuntimeStore` 而造成正式状态与页面状态分裂。
+- 数字孪生快照、通道/玻片位、运行账本、试剂扫描、DAB 状态和中文运行状态显示正在同步收口。
+
+### 当前阻塞与必做验证
+
+- [ ] 修复测试对已移除 `ReferenceDataSeeder.ManualHeWorkflowCode`、`ManualIhcWorkflowCode` 的引用。2026-07-17 完整测试编译报告 10 个 CS0117，当前后端测试集未执行到测试阶段。
+- [ ] 修复后重新执行 `dotnet test backend/Stainer.Tests/Stainer.Tests.csproj --no-restore`，记录实际通过/失败/跳过数量。
+- [ ] 应用并验证 `PersistWorkflowPlanningRules` 迁移，确认无 pending migration、旧工作流默认 `{}` 兼容、规则保存/读取/冻结快照一致。
+- [ ] 执行 `npm run test:workflow-browser` 和 `npm run test:timeline-browser`，并回归既有 `npm run test:browser`；覆盖模板创建、保存、复制、发布、步骤排序、规则持久化及刷新后回显。
+- [ ] 验证 Mock 运行态重置不会误删配置、用户、审计或历史追溯，且 Production/Real 模式不可调用。
+- [ ] 核对两份 `data/stainer.db.bak.clear-slides.*`、`tmp-dbprobe` 及新增的多个 `tmp-build/*` 目录；仅保留明确需要的数据库备份和验收证据，完善忽略/留存规则后再提交。
+
+### 已提交基线更新
+
+- [x] 模式化设备预检已提交至 `ef4fb83`。
+- [x] 控制台实时状态同步已提交至 `dbc02d8`，运行启动与机械臂状态修正已提交至 `0e0b8df`。
+- [x] Web UI 已统一到数字孪生控制台，旧正式页面、旧 FastAPI 原型及重复静态资源已在 `6b67b55` 删除。
+
+### 边界
+
+- 当前工作区尚未提交且完整测试未通过编译，不能把工作流规划、DAB/扫码/运行重置等本轮能力标为正式完成。
+- 所有 Mock/Twin 预检、重置、扫码和运行闭环均不代表真实设备已接入；Real 模式继续 fail-closed。
 
 ## 最新完成项（2026-07-14，已提交）
 
@@ -84,11 +114,11 @@
 - **完成内容**：`EngineeringPipettingService` 支持 LiquidDetect / Aspirate / Dispense / Wash / Flush；`Purge`、`ClearChannel` 列为 `UnsupportedOperations`；具备 engineer/admin 权限、EngineeringSession、CommandIdempotency、AuditLog，Real 模式 fail-closed。
 - **边界说明**：未连接真实设备、未执行真实移液动作；不影响 Motion 正式执行、Workflow 执行、DCR55、SOCON、MainController。
 
-### ✅ Workflow 配置模型（已完成评估，无需新增模型）
+### ✅ Workflow 通道关联模型（已完成评估）
 
 - **历史记录保留**：Workflow 版本化、默认工作流、抗体映射、通道绑定、运行快照冻结等既有历史工作均保留追溯，不删除。
 - **评估结论**：经代码评估，现有 `WorkflowDefinition` / `WorkflowVersion` / `WorkflowStep` / `WorkflowReagentRequirement` 与 `ChannelBatch.SelectedWorkflowVersionId` 已满足“实验流程加载”需求；同一 Channel 内 4 个玻片共享同一 Workflow、不同 Channel 可选不同 Workflow 已被数据模型与运行实例化强制；`StainingTask.WorkflowVersionId` 为任务意图/兼容校验，`ChannelBatch.SelectedWorkflowVersionId` 为运行执行权威。
-- **结论**：Workflow 配置模型无需继续开发，无需新增数据库字段或 Migration。
+- **结论**：无需新增一套 Workflow 定义/版本/通道关联模型；但当前修订为规划约束新增 `WorkflowVersion.PlanningRulesJson` 和数据库迁移，因此“无需任何数据库字段或 Migration”的旧结论已失效。该扩展需按本文件顶部的当前修订清单完成测试与迁移验证。
 
 ### 仍需完成（与上述配置能力配套）
 

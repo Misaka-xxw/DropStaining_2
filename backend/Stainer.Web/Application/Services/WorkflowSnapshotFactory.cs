@@ -16,6 +16,7 @@ internal static class WorkflowSnapshotFactory
             version.VersionNo,
             version.VersionLabel,
             version.Status,
+            version.PlanningRulesJson,
             steps = version.Steps.OrderBy(x => x.StepNo).Select(x => new
             {
                 x.StepNo,
@@ -26,7 +27,10 @@ internal static class WorkflowSnapshotFactory
                 x.VolumeUl,
                 x.DurationSeconds,
                 x.TargetTemperatureDeciC,
-                x.FailureStrategy
+                x.FailureStrategy,
+                x.MixParametersJson,
+                x.WashParametersJson,
+                x.LegacyParametersJson
             }),
             reagentRequirements = version.ReagentRequirements.OrderBy(x => x.ReagentCode).Select(x => new
             {

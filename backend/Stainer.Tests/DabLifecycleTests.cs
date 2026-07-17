@@ -30,6 +30,69 @@ public sealed class DabLifecycleTests
     }
 
     [Fact]
+    public async Task Batch_uses_dab_ratio_from_the_selected_workflow_configuration()
+    {
+        await using var factory = CreateFactory();
+        using (var adminClient = factory.CreateClient())
+        {
+            await LoginAsync(adminClient, "admin");
+            var workflows = await adminClient.GetFromJsonAsync<List<WorkflowSummaryResponse>>("/api/workflows");
+            var source = workflows!.Single(x => x.WorkflowType == StainingTaskType.Ihc)
+                .Versions.Single(x => x.DefaultExperimentType == StainingTaskType.Ihc);
+            var draft = await PostAsync<WorkflowDraftMutationResponse>(adminClient, $"/api/workflow-versions/{source.Id}/copy-draft", new
+            {
+                commandId = "cmd-dab-ratio-copy-draft",
+                versionLabel = "configured-ratio",
+                changeNote = "Validate workflow-driven DAB ratio."
+            });
+            var invalidUpdate = await adminClient.PutAsJsonAsync($"/api/workflow-versions/{draft.WorkflowVersionId}", new
+            {
+                commandId = "cmd-dab-ratio-invalid-rules",
+                planningRulesJson = "{\"dabRatio\":{\"a\":0,\"b\":1,\"pureWater\":18}}"
+            });
+            Assert.Equal(HttpStatusCode.OK, invalidUpdate.StatusCode);
+            var invalidValidation = await adminClient.GetFromJsonAsync<PublishValidationResponse>(
+                $"/api/workflow-versions/{draft.WorkflowVersionId}/publish-validation");
+            Assert.NotNull(invalidValidation);
+            Assert.Contains(invalidValidation!.Issues, x => x.Code == "dab_ratio_invalid");
+
+            var updated = await adminClient.PutAsJsonAsync($"/api/workflow-versions/{draft.WorkflowVersionId}", new
+            {
+                commandId = "cmd-dab-ratio-rules",
+                planningRulesJson = "{\"dabRatio\":{\"a\":2,\"b\":1,\"pureWater\":17}}"
+            });
+            Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+            _ = await PostAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{draft.WorkflowVersionId}/publish", new
+            {
+                commandId = "cmd-dab-ratio-publish"
+            });
+            _ = await PostAsync<CommandResponse>(adminClient, $"/api/workflow-versions/{draft.WorkflowVersionId}/set-default", new
+            {
+                commandId = "cmd-dab-ratio-default",
+                experimentType = StainingTaskType.Ihc
+            });
+        }
+
+        var seed = await SeedDabInputsAsync(factory, 1);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+        var service = scope.ServiceProvider.GetRequiredService<DabLifecycleService>();
+        var actor = new AuthenticatedUser(seed.OperatorUserId, "operator", "Operator", "operator", ["operator"]);
+        var created = await service.CreateBatchAsync(new CreateDabBatchRequest(
+            "cmd-dab-configured-ratio",
+            seed.TaskIds,
+            seed.DabABottleId,
+            seed.DabBBottleId,
+            "M1"), actor);
+
+        Assert.Equal((2, 1, 17), (created.DabARatioParts, created.DabBRatioParts, created.WaterRatioParts));
+        Assert.Equal(600, created.TotalRequiredVolumeUl);
+        Assert.Equal(60, created.Reservations.Where(x => x.SourceRole == "DabA").Sum(x => x.ReservedVolumeUl));
+        Assert.Equal(30, created.Reservations.Where(x => x.SourceRole == "DabB").Sum(x => x.ReservedVolumeUl));
+        Assert.Equal(510, created.Reservations.Where(x => x.SourceRole == "Water").Sum(x => x.ReservedVolumeUl));
+    }
+
+    [Fact]
     public async Task Device_completion_requires_matching_run_step_and_command_context()
     {
         await using var factory = CreateFactory();

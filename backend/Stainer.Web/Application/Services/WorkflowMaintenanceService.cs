@@ -158,6 +158,7 @@ public sealed class WorkflowMaintenanceService(
                     VersionLabel = versionLabel,
                     Status = WorkflowVersionStatus.Draft,
                     ChangeNote = OptionalValue(request.ChangeNote, $"Copied from v{source.VersionLabel}."),
+                    PlanningRulesJson = source.PlanningRulesJson,
                     CreatedAtUtc = now
                 };
                 foreach (var step in source.Steps.OrderBy(x => x.StepNo))
@@ -244,6 +245,11 @@ public sealed class WorkflowMaintenanceService(
                     version.ChangeNote = request.ChangeNote.Trim();
                 }
 
+                if (request.PlanningRulesJson is not null)
+                {
+                    version.PlanningRulesJson = NormalizeJsonObject(request.PlanningRulesJson);
+                }
+
                 workflow.UpdatedAtUtc = now;
                 version.UpdatedAtUtc = now;
                 AddAudit(actor, "workflow.version.update", "WorkflowVersion", version.Id, new { commandId = request.CommandId });
@@ -328,6 +334,38 @@ public sealed class WorkflowMaintenanceService(
                 AddAudit(actor, "workflow.step.delete", "WorkflowStep", step.Id, new { workflowVersionId, commandId });
                 PublishWorkflowEvent(MachineEventTypes.WorkflowStepChanged, version, "deleted");
                 return "Workflow step deleted.";
+            },
+            cancellationToken);
+    }
+
+    public Task<CommandResponse> DeleteDraftAsync(
+        string workflowVersionId,
+        string commandId,
+        AuthenticatedUser actor,
+        CancellationToken cancellationToken = default)
+    {
+        return idempotencyService.RunAsync(
+            commandId,
+            "workflow.version.delete_draft",
+            new { workflowVersionId, commandId },
+            actor,
+            async () =>
+            {
+                var version = await RequireDraftVersionAsync(workflowVersionId, cancellationToken);
+                var workflow = version.WorkflowDefinition!;
+                dbContext.WorkflowVersions.Remove(version);
+                workflow.UpdatedAtUtc = DateTimeOffset.UtcNow;
+                AddAudit(actor, "workflow.version.delete_draft", "WorkflowVersion", version.Id, new
+                {
+                    workflow.Id,
+                    workflow.Code,
+                    version.VersionNo,
+                    version.VersionLabel,
+                    commandId
+                });
+                PublishWorkflowEvent(MachineEventTypes.WorkflowVersionChanged, version, "deleted");
+                var response = new CommandResponse(true, commandId, false, "Workflow draft deleted.");
+                return new CommandExecutionResult<CommandResponse>(response, "WorkflowVersion", version.Id);
             },
             cancellationToken);
     }
@@ -850,6 +888,14 @@ public sealed class WorkflowMaintenanceService(
         if (string.IsNullOrWhiteSpace(workflow.Name)) issues.Add(Fail("definition", "workflow_name_required", "Workflow name is required."));
         if (workflow.WorkflowType is not (StainingTaskType.He or StainingTaskType.Ihc)) issues.Add(Fail("definition", "workflow_type_invalid", "Workflow type must be HE or IHC."));
         if (string.IsNullOrWhiteSpace(version.VersionLabel)) issues.Add(Fail("version", "workflow_version_label_required", "Workflow version label is required."));
+        try
+        {
+            _ = DabLifecycleService.ReadDabRatio(version.PlanningRulesJson);
+        }
+        catch (BusinessRuleException exception)
+        {
+            issues.Add(Fail("rules", exception.Code, exception.Message));
+        }
 
         var orderedSteps = version.Steps.OrderBy(x => x.StepNo).ToList();
         if (orderedSteps.Count == 0)
@@ -1092,7 +1138,8 @@ public sealed class WorkflowMaintenanceService(
             version.RetiredAtUtc,
             version.Steps.OrderBy(x => x.StepNo).Select(ToStepResponse).ToList(),
             version.ReagentRequirements.OrderBy(x => x.ReagentCode).Select(x => new WorkflowReagentRequirementResponse(x.Id, x.ReagentCode, null, x.RequiredVolumeUl, x.IsRequired)).ToList(),
-            version.DefaultExperimentType);
+            version.DefaultExperimentType,
+            version.PlanningRulesJson);
     }
 
     private static DefaultWorkflowVersionResponse ToDefaultResponse(string commandId, WorkflowVersion version, string message)
@@ -1123,7 +1170,10 @@ public sealed class WorkflowMaintenanceService(
             step.VolumeUl,
             step.DurationSeconds,
             step.TargetTemperatureDeciC,
-            step.FailureStrategy);
+            step.FailureStrategy,
+            step.MixParametersJson,
+            step.WashParametersJson,
+            step.LegacyParametersJson);
     }
 
     private static PrimaryAntibodyMappingResponse ToMappingResponse(PrimaryAntibodyWorkflowMapping mapping)

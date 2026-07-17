@@ -126,6 +126,10 @@ public sealed class MockScannerLisDemoTests
         var rack = await client.GetFromJsonAsync<List<ReagentRackPositionResponse>>("/api/reagents/rack");
         Assert.Equal(40, rack!.Count);
         Assert.All(rack, x => Assert.Equal(ReagentScanResult.Valid, x.ScanState));
+        Assert.DoesNotContain(rack, x => x.Bottle?.ReagentCode is "DBA" or "DBB" or "DAB");
+        var dabSources = await client.GetFromJsonAsync<List<DabSourceBottleResponse>>("/api/dab/sources");
+        Assert.Contains(dabSources!, x => x.ReagentCode == "DBA" && x.Status == "Available");
+        Assert.Contains(dabSources!, x => x.ReagentCode == "DBB" && x.Status == "Available");
 
         await using var verifyScope = factory.Services.CreateAsyncScope();
         var dbContext = verifyScope.ServiceProvider.GetRequiredService<StainerDbContext>();
