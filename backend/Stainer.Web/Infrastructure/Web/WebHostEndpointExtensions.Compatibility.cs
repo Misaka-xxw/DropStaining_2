@@ -53,6 +53,12 @@ public static partial class WebHostEndpointExtensions
                 var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
                 return Results.Ok(await seeder.ResetAsync(request, actor, cancellationToken));
             }));
+        app.MapPost("/api/mock-runtime/reset", async (HttpContext context, RunCommandRequest request, UserSessionService sessionService, MockRuntimeResetService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.ResetAsync(request, actor, cancellationToken));
+            }));
         if (legacyRuntimeCompatibilityEnabled)
         {
             app.MapPost("/api/run/start", async (HttpContext context, RuntimePageBridgeService bridge, UserSessionService sessionService, CancellationToken cancellationToken) =>

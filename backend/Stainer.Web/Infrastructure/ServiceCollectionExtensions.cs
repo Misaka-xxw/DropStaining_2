@@ -77,6 +77,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMockLisAdapter, MockLisAdapter>();
         services.AddScoped<MockLisQueryService>();
         services.AddScoped<MockDemoDataSeeder>();
+        services.AddScoped<MockRuntimeResetService>();
         services.AddScoped<DabLifecycleService>();
         services.AddScoped<CoordinateProfileLifecycleService>();
         services.AddScoped<DigitalTwinCoordinateImportService>();
