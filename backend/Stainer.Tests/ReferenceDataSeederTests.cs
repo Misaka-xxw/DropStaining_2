@@ -136,15 +136,23 @@ public sealed class ReferenceDataSeederTests
             .ThenInclude(x => x.ReagentRequirements)
             .SingleAsync(x => x.Code == ReferenceDataSeeder.DefaultHeWorkflowCode);
         var heVersion = he.Versions.Single(x => x.VersionNo == 1);
-        Assert.Equal("测试 HE 流程", he.Name);
+        // Authoritative name/format come from ReferenceDataSeeder.DefaultHeSteps() /
+        // DefaultIhcSteps(); the seeder switched from placeholder "测试 HE 流程" /
+        // "测试 IHC 001-A" names and the 2/9-step skeletons to the production
+        // templates ("HE 快速染色模板" 5 steps; "IHC 标准流程 40℃" 10 steps) so the
+        // acceptance assertions now mirror the seeder's authoritative design.
+        Assert.Equal("HE 快速染色模板", he.Name);
         Assert.Equal(StainingTaskType.He, he.WorkflowType);
         Assert.Equal(WorkflowVersionStatus.Published, heVersion.Status);
         Assert.Equal(StainingTaskType.He, heVersion.DefaultExperimentType);
         Assert.Equal("1", heVersion.VersionLabel);
         Assert.NotNull(heVersion.PublishedAtUtc);
-        Assert.True(heVersion.Steps.Count >= 2);
+        Assert.Equal(5, heVersion.Steps.Count);
         Assert.Contains(heVersion.Steps, x => x.MajorStepCode == "HEMATOXYLIN" && x.ReagentCode == "HEM");
-        Assert.Contains(heVersion.Steps, x => x.MajorStepCode == "TERMINAL_WASH");
+        Assert.Contains(heVersion.Steps, x => x.MajorStepCode == "WASH");
+        Assert.Contains(heVersion.Steps, x => x.MajorStepCode == "ACID_WASH" && x.ReagentCode == "ACD");
+        Assert.Contains(heVersion.Steps, x => x.MajorStepCode == "EOSIN" && x.ReagentCode == "EOS");
+        Assert.Contains(heVersion.Steps, x => x.MajorStepCode == "ETHANOL_WASH" && x.ReagentCode == "ETH");
 
         var ihc = await dbContext.WorkflowDefinitions
             .Include(x => x.Versions)
@@ -153,18 +161,21 @@ public sealed class ReferenceDataSeederTests
             .ThenInclude(x => x.ReagentRequirements)
             .SingleAsync(x => x.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode);
         var ihcVersion = ihc.Versions.Single(x => x.VersionNo == 1);
-        Assert.Equal("测试 IHC 001-A", ihc.Name);
+        Assert.Equal("IHC 标准流程 40℃", ihc.Name);
         Assert.Equal(StainingTaskType.Ihc, ihc.WorkflowType);
         Assert.Equal(WorkflowVersionStatus.Published, ihcVersion.Status);
         Assert.Equal(StainingTaskType.Ihc, ihcVersion.DefaultExperimentType);
         Assert.Equal("1", ihcVersion.VersionLabel);
-        Assert.Equal(9, ihcVersion.Steps.Count);
+        Assert.Equal(10, ihcVersion.Steps.Count);
         Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "BLOCKING");
         Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "PRIMARY_ANTIBODY" && x.ReagentCode == "P01");
         Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "SECONDARY_ANTIBODY" && x.ReagentCode == "SEC");
         Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "DAB" && x.ActionType == "Dab");
         Assert.Contains(ihcVersion.Steps, x => x.MajorStepCode == "FINAL_WASH");
-        Assert.All(heVersion.Steps.Concat(ihcVersion.Steps), x => Assert.InRange(x.DurationSeconds ?? 0, 3, 5));
+        // Durations mirror realistic per-step staining times (5s wash → 270s primary
+        // antibody) rather than the original 3–5s skeleton; keep the invariant that
+        // every step has a positive duration instead of pinning to the old range.
+        Assert.All(heVersion.Steps.Concat(ihcVersion.Steps), x => Assert.True((x.DurationSeconds ?? 0) > 0));
 
         var requiredCodes = heVersion.ReagentRequirements
             .Concat(ihcVersion.ReagentRequirements)
@@ -172,7 +183,7 @@ public sealed class ReferenceDataSeederTests
             .Distinct()
             .OrderBy(x => x)
             .ToArray();
-        Assert.Equal(["BLK", "DAB", "HEM", "P01", "SEC", "WAS"], requiredCodes);
+        Assert.Equal(["ACD", "BLK", "DAB", "EOS", "ETH", "HEM", "P01", "SEC", "WAS"], requiredCodes);
         foreach (var reagentCode in requiredCodes)
         {
             Assert.True(await dbContext.ReagentDefinitions.AnyAsync(x => x.ReagentCode == reagentCode && x.IsEnabled));
@@ -210,8 +221,12 @@ public sealed class ReferenceDataSeederTests
         Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode && x.VersionNo == 1));
         Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.DefaultExperimentType == StainingTaskType.He));
         Assert.Equal(1, await dbContext.WorkflowVersions.CountAsync(x => x.DefaultExperimentType == StainingTaskType.Ihc));
-        Assert.Equal(2, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.HeWorkflowVersionId));
-        Assert.Equal(9, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.IhcWorkflowVersionId));
+        // HE skeleton grew from 2 steps (HEMATOXYLIN + TERMINAL_WASH) to the 5-step
+        // production HE template (苏木素/水洗/酸洗/伊红/无水乙醇) and IHC from 9 to 10
+        // (added explicit FINAL_WASH after hematoxylin counterstain); counts mirror
+        // ReferenceDataSeeder.DefaultHeSteps()/DefaultIhcSteps().
+        Assert.Equal(5, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.HeWorkflowVersionId));
+        Assert.Equal(10, await dbContext.WorkflowSteps.CountAsync(x => x.WorkflowVersionId == firstSummary.IhcWorkflowVersionId));
         Assert.Equal(1, await dbContext.PrimaryAntibodyWorkflowMappings.CountAsync(x =>
             x.PrimaryAntibodyCode == ReferenceDataSeeder.ManualPrimaryAntibodyCode
             && x.WorkflowVersionId == firstSummary.IhcWorkflowVersionId));

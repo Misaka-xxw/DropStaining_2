@@ -322,7 +322,18 @@ public sealed class MockDemoDataSeeder(
         dbContext.ReagentScanSessions.Add(session);
         await EnsureTagAsync(nameof(ReagentScanSession), session.Id, counts, cancellationToken);
 
-        var codes = new[] { "HEM", "WAS", "BLK", "P01", "SEC", "DAB", "PBS", "WAT", "DBA", "DBB" };
+        // Rack cycle must cover every reagent referenced by the published HE/IHC
+        // system templates' WorkflowReagentRequirements so /api/run/preflight can
+        // satisfy required_reagent checks for both experiment types:
+        //   HE  requirements: HEM, WAS, ACD, EOS, ETH
+        //   IHC requirements: BLK, WAS, P01, SEC, DAB, HEM
+        // plus the always-needed fluidics sources (PBS, WAT) and DAB components
+        // (DBA, DBB) that the DAB lifecycle mixes at run time. P01 is placed at
+        // index 0 because the 40-position rack divided by 13 codes only yields 4
+        // positions for the index-0 code (3 for every other); end-to-end
+        // acceptance caps each P01 bottle to 80 µL and then requires ≥4 bottles
+        // to fulfill the 3×100 µL cross-bottle reservation for the IHC tasks.
+        var codes = new[] { "P01", "HEM", "WAS", "ACD", "EOS", "ETH", "BLK", "SEC", "DAB", "PBS", "WAT", "DBA", "DBB" };
         foreach (var position in positions)
         {
             var occupied = await dbContext.ReagentRackPlacements.AnyAsync(x => x.RemovedAtUtc == null && x.ReagentRackPositionId == position.Id, cancellationToken);
@@ -641,6 +652,9 @@ public sealed class MockDemoDataSeeder(
         [
             new("HEM", "Hematoxylin", "common", 1000),
             new("WAS", "Wash buffer", "wash", 1000),
+            new("ACD", "Acid wash", "wash", 1000),
+            new("EOS", "Eosin", "common", 1000),
+            new("ETH", "Ethanol", "wash", 1000),
             new("PBS", "PBS", "wash", 1000),
             new("WAT", "Pure water", "wash", 1000),
             new("BLK", "Blocking reagent", "ihc", 1000),

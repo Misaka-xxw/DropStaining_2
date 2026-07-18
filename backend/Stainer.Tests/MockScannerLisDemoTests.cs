@@ -284,12 +284,16 @@ public sealed class MockScannerLisDemoTests
             var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
             bottleCountAfterSeed = await dbContext.ReagentBottles.CountAsync();
             Assert.True(bottleCountAfterSeed >= 40);
+            // MockDemoDataSeeder.EnsureWorkflowsAsync no longer creates bespoke
+            // MOCK-HE-DEMO / MOCK-IHC-P01-DEMO definitions; it loads the published
+            // system templates (SYSTEM-HE-FAST-V1 / SYSTEM-IHC-STANDARD-40C-V1)
+            // that ReferenceDataSeeder seeds. Query those authoritative codes.
             heVersionId = await dbContext.WorkflowVersions
-                .Where(x => x.WorkflowDefinition!.Code == "MOCK-HE-DEMO" && x.Status == WorkflowVersionStatus.Published)
+                .Where(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.DefaultHeWorkflowCode && x.Status == WorkflowVersionStatus.Published)
                 .Select(x => x.Id)
                 .SingleAsync();
             ihcVersionId = await dbContext.WorkflowVersions
-                .Where(x => x.WorkflowDefinition!.Code == "MOCK-IHC-P01-DEMO" && x.Status == WorkflowVersionStatus.Published)
+                .Where(x => x.WorkflowDefinition!.Code == ReferenceDataSeeder.DefaultIhcWorkflowCode && x.Status == WorkflowVersionStatus.Published)
                 .Select(x => x.Id)
                 .SingleAsync();
             Assert.True(await dbContext.MockLisEntries.AnyAsync(x => x.NormalizedCode == "HOSP-MOCK-MULTI"));
@@ -410,17 +414,24 @@ public sealed class MockScannerLisDemoTests
             Assert.True(await dbContext.AuditLogs.AnyAsync(x => x.Action == "mock_demo.reset"));
         }
 
+        // Per the design rule (baseline-fix-design.md §0/§2 W2): Real mode never
+        // falls back to Mock, even in the Development environment, when no real
+        // hardware is connected. CurrentMode therefore mirrors ConfiguredMode
+        // (Real) and Mock demo data commands stay rejected via EnsureAllowed(),
+        // matching the same 409 Conflict behaviour the Production segment below
+        // asserts. The previous assertions expected a Development+Real → Mock
+        // fallback that the current DeviceModeService no longer performs.
         await using var developmentRealFactory = CreateFactory(environment: "Development", deviceMode: DeviceModes.Real);
         using var developmentRealClient = developmentRealFactory.CreateClient();
         await LoginAsync(developmentRealClient, "admin", "admin");
         var developmentRealMode = await developmentRealClient.GetFromJsonAsync<DeviceModeStatusResponse>("/api/device-mode");
         Assert.Equal(DeviceModes.Real, developmentRealMode!.ConfiguredMode);
-        Assert.Equal(DeviceModes.Mock, developmentRealMode.CurrentMode);
-        var developmentRealFallback = await PostJsonAsync<MockDemoDataResponse>(developmentRealClient, "/api/mock-demo-data/seed", new
+        Assert.Equal(DeviceModes.Real, developmentRealMode.CurrentMode);
+        var developmentRealRejected = await developmentRealClient.PostAsJsonAsync("/api/mock-demo-data/seed", new
         {
-            commandId = "cmd-demo-development-real-fallback"
+            commandId = "cmd-demo-development-real-rejected"
         });
-        Assert.True(developmentRealFallback.Ok);
+        Assert.Equal(HttpStatusCode.Conflict, developmentRealRejected.StatusCode);
 
         await using var productionFactory = CreateFactory(environment: "Production");
         using var productionClient = productionFactory.CreateClient();

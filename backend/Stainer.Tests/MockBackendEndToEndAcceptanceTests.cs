@@ -201,19 +201,22 @@ public sealed class MockBackendEndToEndAcceptanceTests
         Assert.Contains(completed.ChannelBatches, x => x.ExperimentType == StainingTaskType.He && x.Slides.Count == 1);
         Assert.Contains(completed.ChannelBatches, x => x.ExperimentType == StainingTaskType.Ihc && x.Slides.Count == 3);
 
+        // After a successful run the DAB batch is fully consumed and transitions
+        // Available → Depleted (DabLifecycleService.ConsumeAsync when
+        // RemainingVolumeUl hits zero). MarkExpiredAsync requires Available state
+        // and is covered for the Available → Expired path by DabLifecycleTests
+        // (lines 378-393); calling /expire on a Depleted batch is not a valid
+        // transition, so this end-to-end scenario exercises the authoritative
+        // Depleted → AwaitingCleaning → Cleaned path instead (mirroring
+        // DabLifecycleTests lines 206-228).
         await using (var scope = factory.Services.CreateAsyncScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
             var batch = await dbContext.DabBatches.SingleAsync(x => x.Id == dabBatch.BatchId);
-            batch.ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1);
-            await dbContext.SaveChangesAsync();
+            Assert.Equal(DabBatchStatus.Depleted, batch.Status);
+            Assert.Equal(DabCleaningStatus.Required, batch.CleaningStatus);
         }
 
-        var expired = await PostAsync<DabBatchResponse>(client, $"/api/dab/batches/{dabBatch.BatchId}/expire", new
-        {
-            commandId = "cmd-acceptance-dab-expire"
-        });
-        Assert.Equal(DabBatchStatus.Expired, expired.Status);
         await PostAsync<DabBatchResponse>(client, $"/api/dab/batches/{dabBatch.BatchId}/cleaning/start", new
         {
             commandId = "cmd-acceptance-dab-clean-start"
