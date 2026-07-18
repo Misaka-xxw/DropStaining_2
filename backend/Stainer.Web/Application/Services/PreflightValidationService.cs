@@ -22,8 +22,21 @@ public sealed class PreflightValidationService(
     {
         var generatedAtUtc = DateTimeOffset.UtcNow;
         var issues = new List<PreflightValidationIssueResponse>();
-        // Twin/Mock uses its deterministic full precheck report as the device gate.
-        // Hardware initialization and live readiness are mandatory only in Real mode.
+        // 故障门禁（不可破）：温控/液路的当前故障必须进入本次启动预检并阻止启动，
+        // 恢复后必须重新检测，不得复用历史结果。这两个 readiness 仅读数据库状态，
+        // 与模式无关——Twin/Mock 下注入的故障同样必须阻断启动。
+        var thermalReadiness = await thermalControlService.GetReadinessAsync(cancellationToken);
+        if (!thermalReadiness.Ok)
+        {
+            issues.Add(new PreflightValidationIssueResponse("Thermal", thermalReadiness.ErrorCode!, thermalReadiness.Message));
+        }
+        var fluidicsReadiness = await fluidicsControlService.GetReadinessAsync(cancellationToken);
+        if (!fluidicsReadiness.Ok)
+        {
+            issues.Add(new PreflightValidationIssueResponse("Fluidics", fluidicsReadiness.ErrorCode!, fluidicsReadiness.Message));
+        }
+        // Hardware initialization and motion readiness are mandatory only in Real mode;
+        // Twin/Mock relies on the deterministic DevicePrecheckService report for these.
         if (deviceModeService.IsReal)
         {
             var initialization = await deviceInitializationService.GetLatestAsync(cancellationToken);
@@ -33,16 +46,6 @@ public sealed class PreflightValidationService(
                     "Device",
                     "device_initialization_required",
                     $"Device initialization is not ready for the current mode. Status={initialization.Status}."));
-            }
-            var thermalReadiness = await thermalControlService.GetReadinessAsync(cancellationToken);
-            if (!thermalReadiness.Ok)
-            {
-                issues.Add(new PreflightValidationIssueResponse("Thermal", thermalReadiness.ErrorCode!, thermalReadiness.Message));
-            }
-            var fluidicsReadiness = await fluidicsControlService.GetReadinessAsync(cancellationToken);
-            if (!fluidicsReadiness.Ok)
-            {
-                issues.Add(new PreflightValidationIssueResponse("Fluidics", fluidicsReadiness.ErrorCode!, fluidicsReadiness.Message));
             }
             var motionReadiness = await motionControlService.GetReadinessAsync(cancellationToken);
             if (!motionReadiness.Ok)

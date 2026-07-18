@@ -275,6 +275,12 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
     }
 
     // 读取至少一个完整协议帧；使用 IceImmunoFrameStreamDecoder 拆包并校验 CRC。
+    //
+    // 实现约束（不可回退）：超时与取消是不同语义——超时由 readTimeout 截止时间判定，
+    // 返回 main_controller_no_response / main_controller_partial_timeout；只有调用方
+    // 显式取消 cancellationToken 才返回 main_controller_canceled。绝不能用内部 linked
+    // CTS 把超时误判成取消（会在负载下抖动）。每次单个 ReadByte 由 port.ReadTimeout
+    // （readTimeout，最少 50ms）自然截断，循环内只检查 deadline 与调用方 token。
     private async Task<FrameReadResult> ReadFramesAsync(
         ISerialPort port,
         byte[] requestBytes,
@@ -286,19 +292,17 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
         var collected = new List<byte>();
         var deadline = DateTimeOffset.UtcNow + readTimeout;
 
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(readTimeout);
-
         string? crcResult = null;
 
         while (true)
         {
-            cts.Token.ThrowIfCancellationRequested();
+            // 仅响应调用方取消；超时由下方 deadline 判定并返回对应状态码。
+            cancellationToken.ThrowIfCancellationRequested();
 
             int value;
             try
             {
-                value = await Task.Run(() => port.ReadByte(), cts.Token);
+                value = await Task.Run(() => port.ReadByte(), cancellationToken);
             }
             catch (TimeoutException) when (decoder.BufferedByteCount == 0 && chunks.Count == 0)
             {

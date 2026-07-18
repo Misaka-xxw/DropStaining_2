@@ -98,6 +98,7 @@ public sealed class DeviceAdapterInitializationTests
     [Fact]
     public async Task Dependency_injection_selects_mock_or_safe_unavailable_real_adapter()
     {
+        // Mock 模式（孪生模拟）：必须解析为 MockDeviceOperations。
         var mockContext = CreateFactory();
         await using (var mockFactory = mockContext.Factory)
         await using (var scope = mockFactory.Services.CreateAsyncScope())
@@ -107,15 +108,23 @@ public sealed class DeviceAdapterInitializationTests
             Assert.Equal(DeviceModes.Mock, adapter.Mode);
         }
 
+        // Real 模式（调试/生产）：绝不回退到 Mock，即使 HardwareAvailable=false。
+        // 解析为 fail-closed 的 UnavailableRealDeviceAdapter——既不发出真实硬件命令，
+        // 也不假装 Mock 成功；调用任何控制动作都会返回 real_adapter_not_implemented。
+        // 旧测试在此场景期望 MockDeviceOperations，与“Real 绝不回退 Mock”红线冲突，已更正。
         var fallbackContext = CreateFactory(deviceMode: DeviceModes.Real);
         await using (var fallbackFactory = fallbackContext.Factory)
         await using (var scope = fallbackFactory.Services.CreateAsyncScope())
         {
             var adapter = scope.ServiceProvider.GetRequiredService<IDeviceAdapter>();
-            Assert.IsType<MockDeviceOperations>(adapter);
-            Assert.Equal(DeviceModes.Mock, adapter.Mode);
+            Assert.IsType<UnavailableRealDeviceAdapter>(adapter);
+            Assert.Equal(DeviceModes.Real, adapter.Mode);
+            var fallbackResult = await adapter.MoveRobotAsync(Request(DeviceModules.RobotArm, "home"));
+            Assert.False(fallbackResult.Ok);
+            Assert.Equal("real_adapter_not_implemented", fallbackResult.ErrorCode);
         }
 
+        // Real 模式且 HardwareAvailable=true：同样是 fail-closed 适配器（真实串口未实装）。
         var realContext = CreateFactory(deviceMode: DeviceModes.Real, hardwareAvailable: true);
         await using (var realFactory = realContext.Factory)
         await using (var scope = realFactory.Services.CreateAsyncScope())

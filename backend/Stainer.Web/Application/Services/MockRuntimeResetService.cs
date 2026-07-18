@@ -49,19 +49,10 @@ public sealed class MockRuntimeResetService(
                 deleted += await ExecuteDeleteAsync("sample_scan_sessions", cancellationToken);
                 deleted += await ExecuteDeleteAsync("staining_tasks", cancellationToken);
 
-                updated += await dbContext.Database.ExecuteSqlRawAsync(
-                    """
-                    UPDATE channel_batches
-                    SET workflow_selection_status = 'Ready',
-                        workflow_selection_message = '',
-                        selected_workflow_version_id = NULL,
-                        workflow_snapshot_json = '',
-                        started_at_utc = NULL,
-                        completed_at_utc = NULL,
-                        updated_at_utc = NULL
-                    WHERE status = 'Active'
-                    """,
-                    cancellationToken);
+                // 这些 Active 通道批次紧接着会被 DELETE 删除，无需先 UPDATE。
+                // 此前此处有一条冗余 UPDATE，引用了不存在的列 workflow_selection_message、并把
+                // workflow_selection_status 置为非法值 'Ready'（CHECK 约束仅允许
+                // Unselected/Selected/Locked/NeedsManualResolution），导致 /api/mock-runtime/reset 返回 HTTP 500。
                 deleted += await dbContext.Database.ExecuteSqlRawAsync("DELETE FROM channel_batches WHERE status = 'Active'", cancellationToken);
 
                 updated += await dbContext.Database.ExecuteSqlRawAsync(

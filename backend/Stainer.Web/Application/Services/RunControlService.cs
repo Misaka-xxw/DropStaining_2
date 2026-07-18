@@ -33,11 +33,14 @@ public sealed class RunControlService(
             {
                 await coordinateProfileLifecycleService.EnsureRunCoordinateUsableAsync(runId, deviceModeService.CurrentMode, cancellationToken);
                 deviceModeService.EnsureRunStartAllowed();
+                // 故障门禁（不可破）：温控/液路当前故障必须在任何模式下阻止启动——Twin/Mock
+                // 下注入的故障同样代表不可运行的设备状态。硬件初始化与机械臂 readiness
+                // 仅在 Real 模式下强制（Mock 由 DevicePrecheckService 只读报告承担）。
+                await thermalControlService.EnsureReadyForRunAsync(cancellationToken);
+                await fluidicsControlService.EnsureReadyForRunAsync(cancellationToken);
                 if (deviceModeService.IsReal)
                 {
                     await deviceInitializationService.EnsureReadyAsync(cancellationToken);
-                    await thermalControlService.EnsureReadyForRunAsync(cancellationToken);
-                    await fluidicsControlService.EnsureReadyForRunAsync(cancellationToken);
                     await motionControlService.EnsureReadyForRunAsync(cancellationToken);
                 }
                 leaseService.EnsureOwner();

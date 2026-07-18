@@ -201,24 +201,28 @@ public sealed class Dcr55SerialTransport : IDeviceByteTransport
     }
 
     // 读取一帧条码：持续读取字节直到出现 CRLF，并在 CRLF 后进入“帧间静默”确认无后续数据；
-    // 整体受 receiveTimeout 与 cancellationToken 双重约束，绝不无限等待。
+    // 整体受 receiveTimeout 与调用方 cancellationToken 双重约束，绝不无限等待。
+    //
+    // 实现约束（不可回退）：超时与取消是不同语义——超时由 receiveTimeout 截止时间判定，
+    // 返回 dcr55_serial_read_timeout；只有调用方显式取消 cancellationToken 才返回
+    // dcr55_serial_canceled。绝不能用内部 linked CTS 把超时误判成取消（会在负载下抖动）。
+    // 每次单个 ReadByte 由 port.ReadTimeout（frameSilence，最少 50ms）自然截断，循环
+    // 内只检查 deadline 与调用方 token，无需任何额外 CancelAfter。
     private async Task<string> ReadFrameAsync(ISerialPort port, CancellationToken cancellationToken)
     {
         var builder = new StringBuilder();
         var deadline = DateTimeOffset.UtcNow + receiveTimeout;
         var sawCrlf = false;
 
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(receiveTimeout);
-
         while (true)
         {
-            cts.Token.ThrowIfCancellationRequested();
+            // 仅响应调用方取消；超时由下方 deadline 判定并抛 TimeoutException。
+            cancellationToken.ThrowIfCancellationRequested();
 
             int value;
             try
             {
-                value = await Task.Run(() => port.ReadByte(), cts.Token);
+                value = await Task.Run(() => port.ReadByte(), cancellationToken);
             }
             catch (TimeoutException) when (sawCrlf)
             {
