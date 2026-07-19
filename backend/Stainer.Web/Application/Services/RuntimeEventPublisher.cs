@@ -90,6 +90,7 @@ public static class MachineEventTypes
     public const string DeviceInitializationChanged = "device.initializationChanged";
     public const string QrScanCompleted = "qr.scanCompleted";
     public const string ScanSessionChanged = "scanSession.changed";
+    public const string MockRuntimeReset = "mockRuntime.resetCompleted";
 }
 
 public sealed record MachineEventMessage(

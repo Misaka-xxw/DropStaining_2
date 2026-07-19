@@ -4527,7 +4527,26 @@ async function resetMockRuntime() {
     log('Mock 恢复初始状态被拒绝：当前不是 Mock / 孪生模式', 'err');
     return;
   }
-  const ok = window.confirm('确认恢复 Mock 初始状态？\n\n将清空当前数据库中的玻片任务、样本扫码、通道批次、试剂瓶、试剂摆放和试剂扫码记录。流程模板和基础配置不会删除。');
+  const ok = window.confirm(
+    '确认恢复 Mock 初始状态？\n\n' +
+    '【将清空】\n' +
+    '  · 玻片/样本任务\n' +
+    '  · 通道批次\n' +
+    '  · 运行与执行步骤\n' +
+    '  · 试剂扫码记录/试剂瓶/试剂摆放\n' +
+    '  · 试剂消耗与移液\n' +
+    '  · DAB 批次\n' +
+    '  · 报警\n' +
+    '  · 预检与设备初始化/通信记录\n' +
+    '  · 温度与液路遥测\n' +
+    '  · Mock 运行历史\n\n' +
+    '【不会删除】\n' +
+    '  · 流程模板/版本/步骤\n' +
+    '  · 试剂定义\n' +
+    '  · 坐标标定/液体类别/串口/精度校准等设备配置\n' +
+    '  · 账号与权限\n' +
+    '  · Mock LIS 模拟数据'
+  );
   if(!ok) return;
   setInfoPanel('Mock 恢复初始状态', ['正在清空当前玻片信息和试剂信息，请稍候……']);
   try {
@@ -4546,12 +4565,17 @@ async function resetMockRuntime() {
     updateVisualStates();
     renderAll();
     setButtonState('startBtn', { disabled:true });
-    setInfoPanel('Mock 已恢复初始状态', [
-      '当前数据库中的玻片任务、样本扫码、通道批次、试剂瓶、试剂摆放和试剂扫码记录已清空。',
-      '流程模板、试剂定义、坐标和设备基础配置已保留。',
+    const deletedRows = result?.deletedRows ?? 0;
+    const resetStateRows = result?.resetStateRows ?? 0;
+    const retainedSummary = result?.retainedSummary || '流程模板/试剂定义/设备基础配置已保留';
+    const summaryLines = [
+      `共删除运行期记录 ${deletedRows} 条`,
+      `恢复设备状态记录 ${resetStateRows} 条`,
+      retainedSummary,
       result?.message || 'Mock runtime reset completed.'
-    ]);
-    log('Mock 已恢复初始状态：数据库玻片信息和试剂信息已清空', 'ok');
+    ];
+    setInfoPanel('Mock 已恢复初始状态', summaryLines);
+    log(`Mock 已恢复初始状态：删除 ${deletedRows} 条，恢复 ${resetStateRows} 条设备状态`, 'ok');
   } catch(err) {
     setInfoPanel('Mock 恢复初始状态失败', [String(err?.message || err)]);
     log(`Mock 恢复初始状态失败：${err?.message || err}`, 'err');

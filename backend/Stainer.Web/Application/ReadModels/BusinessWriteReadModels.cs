@@ -6,6 +6,19 @@ public sealed record CommandResponse(
     bool Replayed,
     string Message);
 
+/// <summary>
+/// Mock 运行时重置响应。携带被删除的运行期记录数、恢复到基线的设备状态记录数，
+/// 以及基础配置/Mock LIS 等保留项的说明（详见 reset 契约）。
+/// </summary>
+public sealed record MockRuntimeResetResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string Message,
+    int DeletedRows,
+    int ResetStateRows,
+    string RetainedSummary);
+
 public sealed record UserMutationResponse(
     bool Ok,
     string CommandId,

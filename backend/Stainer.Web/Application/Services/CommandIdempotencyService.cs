@@ -202,6 +202,7 @@ public sealed class CommandIdempotencyService(StainerDbContext dbContext)
             MachineRunResponse x => x with { Replayed = true } as T ?? response,
             RunCommandResponse x => x with { Replayed = true } as T ?? response,
             CommandResponse x => x with { Replayed = true } as T ?? response,
+            MockRuntimeResetResponse x => x with { Replayed = true } as T ?? response,
             _ => response
         };
     }
