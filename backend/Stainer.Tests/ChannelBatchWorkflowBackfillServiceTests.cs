@@ -172,7 +172,7 @@ public sealed class ChannelBatchWorkflowBackfillServiceTests
 
     private static async Task<StainerDbContext> CreateMigratedContextAsync()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-channel-backfill-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-channel-backfill-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var connectionString = $"Data Source={databasePath}";
         DatabaseInitializer.EnsureDatabaseDirectory(connectionString);
         var options = new DbContextOptionsBuilder<StainerDbContext>()

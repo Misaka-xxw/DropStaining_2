@@ -427,7 +427,7 @@ public sealed class DabLifecycleTests
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var root = Path.Combine(Path.GetTempPath(), "stainer-dab-lifecycle-tests", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(TestPaths.TempRoot, "stainer-dab-lifecycle-tests", Guid.NewGuid().ToString("N"));
         var databasePath = Path.Combine(root, "stainer.db");
         var settings = new Dictionary<string, string?>
         {

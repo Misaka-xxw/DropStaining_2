@@ -329,14 +329,14 @@ public sealed class DigitalTwinCoordinateImportTests
 
     private static string WriteTempCsv(params string[] lines)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"stainer-dt-parse-{Guid.NewGuid():N}.csv");
+        var path = Path.Combine(TestPaths.TempRoot, $"stainer-dt-parse-{Guid.NewGuid():N}.csv");
         File.WriteAllLines(path, lines);
         return path;
     }
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-digital-twin-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-digital-twin-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {

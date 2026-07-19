@@ -370,7 +370,7 @@ public sealed class DefaultWorkflowSelectionIntegrationTests
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-default-workflow-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-default-workflow-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {

@@ -339,13 +339,28 @@ public sealed class DatabaseMaintenanceService(
         return alarms.Count;
     }
 
-    private static string ResolveAttemptDirectory(string backupStem)
+    private string ResolveAttemptRoot()
     {
-        var safeStem = string.Concat(backupStem.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-'));
-        return Path.GetFullPath(Path.Combine(Path.GetTempPath(), "stainer-backup-attempts", safeStem));
+        var configured = configuration["Database:BackupAttemptDirectory"];
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return Path.IsPathRooted(configured)
+                ? configured
+                : Path.GetFullPath(Path.Combine(environment.ContentRootPath, configured));
+        }
+
+        // 默认与正式备份同处（ContentRoot/../../data/backup-attempts，与仓库/部署同盘），
+        // 不再使用系统临时目录（C:），避免低 C: 余量下集成测试写满系统盘。
+        return Path.GetFullPath(Path.Combine(environment.ContentRootPath, "..", "..", "data", "backup-attempts"));
     }
 
-    private static async Task<BackupSqliteResult> BackupSqliteAsync(string databasePath, string backupPath, string attemptDirectory, CancellationToken cancellationToken)
+    private string ResolveAttemptDirectory(string backupStem)
+    {
+        var safeStem = string.Concat(backupStem.Select(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '-'));
+        return Path.GetFullPath(Path.Combine(ResolveAttemptRoot(), safeStem));
+    }
+
+    private async Task<BackupSqliteResult> BackupSqliteAsync(string databasePath, string backupPath, string attemptDirectory, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(attemptDirectory);
         var failedCandidates = new List<string>();
@@ -484,10 +499,10 @@ public sealed class DatabaseMaintenanceService(
         }
     }
 
-    private static async Task<BackupAttemptCleanupResult> CleanupAttemptDirectoryWithRetryAsync(string attemptDirectory, CancellationToken cancellationToken)
+    private async Task<BackupAttemptCleanupResult> CleanupAttemptDirectoryWithRetryAsync(string attemptDirectory, CancellationToken cancellationToken)
     {
         var fullAttemptDirectory = Path.GetFullPath(attemptDirectory);
-        var attemptRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "stainer-backup-attempts"));
+        var attemptRoot = ResolveAttemptRoot();
         if (!IsWithinDirectory(fullAttemptDirectory, attemptRoot))
         {
             return new BackupAttemptCleanupResult(false, $"Refused to clean attempt directory outside temp root: {fullAttemptDirectory}");

@@ -429,7 +429,7 @@ public sealed class DeviceAdapterInitializationTests
         bool startupInitializationEnabled = false)
     {
         var root = databasePath is null
-            ? Path.Combine(Path.GetTempPath(), "stainer-device-adapter-tests", Guid.NewGuid().ToString("N"))
+            ? Path.Combine(TestPaths.TempRoot, "stainer-device-adapter-tests", Guid.NewGuid().ToString("N"))
             : Path.GetDirectoryName(databasePath)!;
         databasePath ??= Path.Combine(root, "stainer.db");
         var leasePath = Path.Combine(root, $"machine-executor-{Guid.NewGuid():N}.lock");

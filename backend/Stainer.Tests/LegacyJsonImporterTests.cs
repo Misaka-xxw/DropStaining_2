@@ -12,7 +12,7 @@ public sealed class LegacyJsonImporterTests
     {
         var sourceDirectory = CreateLegacyFixture();
         await using var dbContext = await CreateMigratedContextAsync();
-        var reportPath = Path.Combine(Path.GetTempPath(), "stainer-import-tests", Guid.NewGuid().ToString("N"), "dry-run-report.json");
+        var reportPath = Path.Combine(TestPaths.TempRoot, "stainer-import-tests", Guid.NewGuid().ToString("N"), "dry-run-report.json");
         var importer = new LegacyJsonImporter(dbContext, new ReagentBarcodeParser());
 
         var report = await importer.ImportAsync(new LegacyImportOptions
@@ -106,7 +106,7 @@ public sealed class LegacyJsonImporterTests
 
     private static string CreateLegacyFixture(string operatorDisplayName = "Operator")
     {
-        var root = Path.Combine(Path.GetTempPath(), "stainer-legacy-fixtures", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(TestPaths.TempRoot, "stainer-legacy-fixtures", Guid.NewGuid().ToString("N"));
         var protocolDirectory = Path.Combine(root, "protocols");
         Directory.CreateDirectory(protocolDirectory);
 
@@ -214,7 +214,7 @@ public sealed class LegacyJsonImporterTests
 
     private static async Task<StainerDbContext> CreateMigratedContextAsync()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-legacy-import-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-legacy-import-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var connectionString = $"Data Source={databasePath}";
         var options = new DbContextOptionsBuilder<StainerDbContext>()
             .UseSqlite(connectionString)

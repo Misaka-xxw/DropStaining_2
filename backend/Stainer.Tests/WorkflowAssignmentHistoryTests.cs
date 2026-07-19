@@ -169,7 +169,7 @@ public sealed class WorkflowAssignmentHistoryTests
 
     private static async Task<StainerDbContext> CreateMigratedContextAsync()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-workflow-history-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-workflow-history-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var connectionString = $"Data Source={databasePath}";
         DatabaseInitializer.EnsureDatabaseDirectory(connectionString);
         var options = new DbContextOptionsBuilder<StainerDbContext>()

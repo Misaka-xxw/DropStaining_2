@@ -345,7 +345,7 @@ public sealed class MockBackendEndToEndAcceptanceTests
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-mock-e2e-acceptance", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-mock-e2e-acceptance", Guid.NewGuid().ToString("N"), "stainer.db");
         var leasePath = Path.Combine(Path.GetDirectoryName(databasePath)!, "machine-executor.lock");
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {

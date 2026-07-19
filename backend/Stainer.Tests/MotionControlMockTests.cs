@@ -508,7 +508,7 @@ public sealed class MotionControlMockTests
     private static FactoryContext CreateFactory(string? databasePath = null)
     {
         var root = databasePath is null
-            ? Path.Combine(Path.GetTempPath(), "stainer-motion-tests", Guid.NewGuid().ToString("N"))
+            ? Path.Combine(TestPaths.TempRoot, "stainer-motion-tests", Guid.NewGuid().ToString("N"))
             : Path.GetDirectoryName(databasePath)!;
         databasePath ??= Path.Combine(root, "stainer.db");
         var settings = new Dictionary<string, string?>

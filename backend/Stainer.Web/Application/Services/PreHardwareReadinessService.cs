@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Domain.Entities;
 using Stainer.Web.Infrastructure.Data;
@@ -15,7 +17,9 @@ public sealed class PreHardwareReadinessService(
     MotionControlService motionControlService,
     StainerDbContext dbContext,
     InMemoryRuntimeEventPublisher eventPublisher,
-    SafetyLogWriter safetyLogWriter)
+    SafetyLogWriter safetyLogWriter,
+    IConfiguration configuration,
+    IHostEnvironment environment)
 {
     public async Task<PreHardwareReadinessResponse> VerifyAsync(bool createBackup = true, CancellationToken cancellationToken = default)
     {
@@ -62,7 +66,7 @@ public sealed class PreHardwareReadinessService(
 
         if (createBackup)
         {
-            var backupDirectory = Path.Combine(Path.GetTempPath(), "stainer-prehardware-readiness-backups");
+            var backupDirectory = ResolvePreHardwareBackupDirectory();
             Directory.CreateDirectory(backupDirectory);
             var health = await databaseMaintenanceService.CheckAsync(cancellationToken);
             checks.Add(new PreHardwareReadinessCheckResponse(
@@ -121,5 +125,20 @@ public sealed class PreHardwareReadinessService(
             .Select(x => $"{x.Code}: {x.Message}")
             .ToList();
         return new PreHardwareReadinessResponse(blocking.Count == 0, DateTimeOffset.UtcNow, checks, blocking);
+    }
+
+    private string ResolvePreHardwareBackupDirectory()
+    {
+        var configured = configuration["PreHardware:BackupDirectory"];
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return Path.IsPathRooted(configured)
+                ? configured
+                : Path.GetFullPath(Path.Combine(environment.ContentRootPath, configured));
+        }
+
+        // 默认 ContentRoot/../../data/prehardware-backups（与仓库/部署同盘），不再写系统临时目录（C:），
+        // 避免低 C: 余量下集成测试写满系统盘。
+        return Path.GetFullPath(Path.Combine(environment.ContentRootPath, "..", "..", "data", "prehardware-backups"));
     }
 }

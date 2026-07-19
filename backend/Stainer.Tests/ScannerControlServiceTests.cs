@@ -105,7 +105,7 @@ public sealed class ScannerControlServiceTests
 
     private static async Task<ScannerControlTestContext> CreateServiceContextAsync(FakeDcr55ControlTransport transport)
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-scanner-control-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-scanner-control-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
         var options = new DbContextOptionsBuilder<StainerDbContext>()
             .UseSqlite($"Data Source={databasePath}")

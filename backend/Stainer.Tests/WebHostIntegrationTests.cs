@@ -688,7 +688,7 @@ public sealed class WebHostIntegrationTests
 
     private static WebApplicationFactory<Program> CreateFactory(string environment = "Testing")
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-web-host-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-web-host-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {

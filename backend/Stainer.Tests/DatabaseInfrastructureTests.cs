@@ -108,7 +108,7 @@ public sealed class DatabaseInfrastructureTests
 
     private static string CreateTempDatabasePath()
     {
-        return Path.Combine(Path.GetTempPath(), "stainer-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        return Path.Combine(TestPaths.TempRoot, "stainer-tests", Guid.NewGuid().ToString("N"), "stainer.db");
     }
 
     private static StainerDbContext CreateContext(string connectionString)

@@ -247,7 +247,7 @@ public sealed class OfflineRealDeviceAdapterTests
     [Fact]
     public async Task Real_mode_di_reuses_one_adapter_and_only_test_injected_fake_enables_offline_reads()
     {
-        var root = Path.Combine(Path.GetTempPath(), "stainer-real-boundary", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(TestPaths.TempRoot, "stainer-real-boundary", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var fake = new InMemoryFakeDeviceByteTransport();
         fake.EnqueueExchange(MainControllerProtocol.BuildWorkStatusRequest(), Response(0x01, 0x08, [0x01]));

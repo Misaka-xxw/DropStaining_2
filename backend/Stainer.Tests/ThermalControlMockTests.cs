@@ -249,7 +249,7 @@ public sealed class ThermalControlMockTests
 
     private static FactoryContext CreateFactory(string? databasePath = null, string deviceMode = DeviceModes.Mock)
     {
-        databasePath ??= Path.Combine(Path.GetTempPath(), "stainer-thermal-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        databasePath ??= Path.Combine(TestPaths.TempRoot, "stainer-thermal-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");

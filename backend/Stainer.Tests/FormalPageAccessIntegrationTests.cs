@@ -78,7 +78,7 @@ public sealed class FormalPageAccessIntegrationTests
 
     private static WebApplicationFactory<Program> CreateFactory(string environment = "Testing")
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-formal-page-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-formal-page-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment(environment);

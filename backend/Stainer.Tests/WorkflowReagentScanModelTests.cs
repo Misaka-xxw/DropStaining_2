@@ -280,7 +280,7 @@ public sealed class WorkflowReagentScanModelTests
 
     private static async Task<StainerDbContext> CreateMigratedContextAsync()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-workflow-reagent-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-workflow-reagent-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var connectionString = $"Data Source={databasePath}";
         var options = new DbContextOptionsBuilder<StainerDbContext>()
             .UseSqlite(connectionString)

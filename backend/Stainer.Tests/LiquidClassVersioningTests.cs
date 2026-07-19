@@ -212,7 +212,7 @@ public sealed class LiquidClassVersioningTests
     [Fact]
     public async Task Migration_marks_legacy_batches_runs_and_commands_for_manual_resolution()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "stainer-liquid-class-migration-tests", Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(TestPaths.TempRoot, "stainer-liquid-class-migration-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var options = new DbContextOptionsBuilder<StainerDbContext>()
             .UseSqlite($"Data Source={Path.Combine(directory, "stainer.db")}")
@@ -294,7 +294,7 @@ public sealed class LiquidClassVersioningTests
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-liquid-class-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-liquid-class-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         return new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing");

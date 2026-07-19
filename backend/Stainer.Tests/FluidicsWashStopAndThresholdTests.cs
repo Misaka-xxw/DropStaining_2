@@ -140,7 +140,7 @@ public sealed class FluidicsWashStopAndThresholdTests
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var root = Path.Combine(Path.GetTempPath(), "stainer-washstop-tests", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(TestPaths.TempRoot, "stainer-washstop-tests", Guid.NewGuid().ToString("N"));
         var settings = new Dictionary<string, string?>
         {
             ["ConnectionStrings:StainerDatabase"] = $"Data Source={Path.Combine(root, "stainer.db")}",

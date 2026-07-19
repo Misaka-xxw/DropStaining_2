@@ -369,7 +369,7 @@ public sealed class FluidicsControlMockTests
     private static FactoryContext CreateFactory(string? databasePath = null, string deviceMode = DeviceModes.Mock)
     {
         var root = databasePath is null
-            ? Path.Combine(Path.GetTempPath(), "stainer-fluidics-tests", Guid.NewGuid().ToString("N"))
+            ? Path.Combine(TestPaths.TempRoot, "stainer-fluidics-tests", Guid.NewGuid().ToString("N"))
             : Path.GetDirectoryName(databasePath)!;
         databasePath ??= Path.Combine(root, "stainer.db");
         var settings = new Dictionary<string, string?>

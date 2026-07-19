@@ -1558,7 +1558,7 @@ public sealed class BusinessWriteApiIntegrationTests
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-business-write-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-business-write-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {

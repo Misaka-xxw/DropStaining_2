@@ -257,7 +257,7 @@ public sealed class ReferenceDataSeederTests
 
     private static async Task<StainerDbContext> CreateMigratedContextAsync()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-reference-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-reference-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var connectionString = $"Data Source={databasePath}";
         var options = new DbContextOptionsBuilder<StainerDbContext>()
             .UseSqlite(connectionString)

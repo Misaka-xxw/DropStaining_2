@@ -154,7 +154,7 @@ public sealed class EngineeringPipettingApiTests
 
     private static WebApplicationFactory<Program> CreateFactory(Dictionary<string, string?>? overrides = null)
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-engineering-pipetting-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-engineering-pipetting-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var settings = new Dictionary<string, string?>
         {
             ["ConnectionStrings:StainerDatabase"] = $"Data Source={databasePath}",

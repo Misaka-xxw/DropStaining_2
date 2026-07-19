@@ -114,7 +114,7 @@ public sealed class PrecisionCalibrationConfigServiceTests
 
     private static async Task<TestContext> CreateContextAsync()
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-precision-calibration-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-precision-calibration-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
         var options = new DbContextOptionsBuilder<StainerDbContext>()
             .UseSqlite($"Data Source={databasePath}")

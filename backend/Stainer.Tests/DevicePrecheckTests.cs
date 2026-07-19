@@ -593,7 +593,7 @@ public sealed class DevicePrecheckTests
 
     private static WebApplicationFactory<Program> CreateFactory()
     {
-        var root = Path.Combine(Path.GetTempPath(), "stainer-precheck-tests", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(TestPaths.TempRoot, "stainer-precheck-tests", Guid.NewGuid().ToString("N"));
         var settings = new Dictionary<string, string?>
         {
             ["ConnectionStrings:StainerDatabase"] = $"Data Source={Path.Combine(root, "stainer.db")}",

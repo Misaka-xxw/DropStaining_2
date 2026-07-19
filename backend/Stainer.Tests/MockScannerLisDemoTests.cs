@@ -445,7 +445,7 @@ public sealed class MockScannerLisDemoTests
 
     private static WebApplicationFactory<Program> CreateFactory(string environment = "Testing", string deviceMode = DeviceModes.Mock)
     {
-        var databasePath = Path.Combine(Path.GetTempPath(), "stainer-mock-scanner-lis-tests", Guid.NewGuid().ToString("N"), "stainer.db");
+        var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-mock-scanner-lis-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         return new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
             {

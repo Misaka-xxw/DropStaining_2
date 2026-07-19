@@ -13,7 +13,7 @@ public sealed class DeviceCommunicationPersistenceTests
     [Fact]
     public async Task Sqlite_lock_keeps_durable_pending_record_and_does_not_repeat_adapter_command()
     {
-        var directory = Path.Combine(Path.GetTempPath(), "stainer-device-communication-tests", Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(TestPaths.TempRoot, "stainer-device-communication-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var databasePath = Path.Combine(directory, "stainer.db");
         var connectionString = $"Data Source={databasePath};Default Timeout=1";

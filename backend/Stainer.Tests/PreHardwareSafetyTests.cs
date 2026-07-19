@@ -108,7 +108,7 @@ public sealed class PreHardwareSafetyTests
     [Fact]
     public void Machine_executor_lease_allows_only_one_owner_for_the_same_lock_file()
     {
-        var lockPath = Path.Combine(Path.GetTempPath(), "stainer-lease-tests", Guid.NewGuid().ToString("N"), "machine-executor.lock");
+        var lockPath = Path.Combine(TestPaths.TempRoot, "stainer-lease-tests", Guid.NewGuid().ToString("N"), "machine-executor.lock");
         using var first = new MachineExecutorLeaseService(lockPath);
         using var second = new MachineExecutorLeaseService(lockPath);
 
@@ -412,7 +412,7 @@ public sealed class PreHardwareSafetyTests
 
     private static FactoryContext CreateFactory(Dictionary<string, string?>? extraSettings = null)
     {
-        var root = Path.Combine(Path.GetTempPath(), "stainer-prehardware-tests", Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(TestPaths.TempRoot, "stainer-prehardware-tests", Guid.NewGuid().ToString("N"));
         var databasePath = Path.Combine(root, "stainer.db");
         var logDirectory = Path.Combine(root, "logs");
         var backupDirectory = Path.Combine(root, "backups");
