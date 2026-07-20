@@ -113,7 +113,8 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
                 DeviceByteTransportStatuses.Failed,
                 "main_controller_command_not_supported",
                 $"Command 0x{requestFrame.ParentClass:X2}/0x{requestFrame.SubClass:X2} is not supported in the offline read-only boundary. " +
-                "Only TL_SYS_GET_WORK_STATUS (0x01/0x08) and TL_SYS_GET_NODE_STATUS (0x01/0x09) are allowed.");
+                "Only TL_SYS_GET_WORK_STATUS (0x01/0x08), TL_SYS_GET_NODE_STATUS (0x01/0x09), " +
+                "and heating read commands 0x04/0x09, 0x04/0x0A, 0x04/0x0B with board id 0..3 are allowed.");
         }
 
         return await SendAndReceiveAsync(request.Operation, request.RequestBytes, requestFrame, cancellationToken);
@@ -211,8 +212,15 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
         }
         finally
         {
-            try { port.Close(); }
-            catch { /* 关闭失败不影响已读结果 */ }
+            try
+            {
+                port.Close();
+                Diagnostic(MainControllerTransportDirection.None, requestBytes, null, "port_closed", null);
+            }
+            catch
+            {
+                Diagnostic(MainControllerTransportDirection.None, requestBytes, null, "port_close_failed", null);
+            }
             port.Dispose();
         }
     }
@@ -268,8 +276,15 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
         }
         finally
         {
-            try { port.Close(); }
-            catch { /* 关闭失败不影响已读结果 */ }
+            try
+            {
+                port.Close();
+                Diagnostic(MainControllerTransportDirection.None, null, null, "port_closed", null);
+            }
+            catch
+            {
+                Diagnostic(MainControllerTransportDirection.None, null, null, "port_close_failed", null);
+            }
             port.Dispose();
         }
     }
@@ -398,13 +413,35 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
         port.WriteTimeout = Math.Max((int)writeTimeout.TotalMilliseconds, 50);
     }
 
-    // 只读白名单：仅允许 TL_SYS_GET_WORK_STATUS（0x01/0x08）与 TL_SYS_GET_NODE_STATUS（0x01/0x09）。
+    // 只读白名单：允许 TL_SYS_GET_WORK_STATUS（0x01/0x08）、TL_SYS_GET_NODE_STATUS（0x01/0x09）
+    // 以及温度读取（HeatingClass 0x04 / subs 0x09/0x0A/0x0B，payload 须恰好 1 字节且 boardId ≤ 3）。
     // 协议中主机查询帧的 MessageType 为 RequestType（0x01）；写/控制命令同样使用 RequestType，
-    // 因此只能按 (ParentClass, SubClass) 精确白名单放行。
-    private static bool IsAllowedReadOnlyCommand(IceImmunoFrame frame) =>
-        frame.MessageType == IceImmunoSerialProtocol.RequestType
-        && frame.ParentClass == MainControllerProtocol.SystemClass
-        && (frame.SubClass == 0x08 || frame.SubClass == 0x09);
+    // 因此只能按 (ParentClass, SubClass, Payload) 精确白名单放行。
+    private static bool IsAllowedReadOnlyCommand(IceImmunoFrame frame)
+    {
+        if (frame.MessageType != IceImmunoSerialProtocol.RequestType)
+        {
+            return false;
+        }
+
+        // SystemClass 只读命令
+        if (frame.ParentClass == MainControllerProtocol.SystemClass
+            && (frame.SubClass == 0x08 || frame.SubClass == 0x09))
+        {
+            return true;
+        }
+
+        // HeatingClass 温度读取：sub 0x09（当前温度）、0x0A（目标温度）、0x0B（开关状态）
+        if (frame.ParentClass == MainControllerProtocol.HeatingClass
+            && (frame.SubClass == 0x09 || frame.SubClass == 0x0A || frame.SubClass == 0x0B)
+            && frame.Payload.Length == 1
+            && frame.Payload[0] <= 3)
+        {
+            return true;
+        }
+
+        return false;
+    }
 
     private static Parity MapParity(MainControllerParity parity) => parity switch
     {

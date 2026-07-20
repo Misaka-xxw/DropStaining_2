@@ -1,4 +1,5 @@
 using System.Text;
+using System.IO.Ports;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -19,18 +20,18 @@ public sealed class OfflineRealDeviceAdapterTests
         var nodes = Enumerable.Repeat((byte)1, 64).ToArray();
         nodes[7] = 2;
 
-        fake.EnqueueExchange(MainControllerProtocol.BuildWorkStatusRequest(), Response(0x01, 0x08, [0x01]));
-        fake.EnqueueExchange(MainControllerProtocol.BuildNodeStatusRequest(), Response(0x01, 0x09, nodes));
+        fake.EnqueueExchange(MainControllerProtocol.BuildWorkStatusRequest(), Response(0x01, 0x08, [0x01, 0x01]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildNodeStatusRequest(), Response(0x01, 0x09, [(byte)0x01, ..nodes]));
         fake.EnqueueExchange(MainControllerProtocol.BuildRunTimeRequest(), Response(0x01, 0x05, [1, 2, 3, 4]));
         fake.EnqueueExchange(
             MainControllerProtocol.BuildBoardTemperaturesRequest(2),
-            Response(0x04, 0x09, [2, 0xFB, 0xFF, 5, 0, 42, 0, 80, 0]));
+            Response(0x04, 0x09, [0x01, 2, 0xFB, 0xFF, 5, 0, 42, 0, 80, 0]));
         fake.EnqueueExchange(
             MainControllerProtocol.BuildBoardTargetTemperaturesRequest(2),
-            Response(0x04, 0x0A, [2, 1, 0, 2, 0, 3, 0, 4, 0]));
+            Response(0x04, 0x0A, [0x01, 2, 1, 0, 2, 0, 3, 0, 4, 0]));
         fake.EnqueueExchange(
             MainControllerProtocol.BuildBoardSwitchStatesRequest(2),
-            Response(0x04, 0x0B, [2, 1, 0, 0, 0, 1, 0, 0, 0]));
+            Response(0x04, 0x0B, [0x01, 2, 1, 0, 0, 0, 1, 0, 0, 0]));
         fake.EnqueueReceive(
             DeviceByteTransportEndpoints.MainController,
             Request(0x05, 0x04, [3, 1, 0]));
@@ -83,7 +84,7 @@ public sealed class OfflineRealDeviceAdapterTests
         var adapter = new UnavailableRealDeviceAdapter(fake);
         var ack = Response(0x01, 0x04, [0x01]);
         var put = Request(0x08, 0x03, Encoding.ASCII.GetBytes("ch1\r\nABC\r\n"));
-        var response = Response(0x01, 0x08, [0x01]);
+        var response = Response(0x01, 0x08, [0x01, 0x01]);
         var sticky = ack.Concat(put).Concat(response).ToArray();
         fake.EnqueueExchange(
             MainControllerProtocol.BuildWorkStatusRequest(),
@@ -99,7 +100,7 @@ public sealed class OfflineRealDeviceAdapterTests
         var qr = Assert.IsType<MainControllerQrText>(putReport.Value);
         Assert.Equal("ch1\r\nABC\r\n", qr.Text);
 
-        var badCrc = Response(0x01, 0x08, [0x01]);
+        var badCrc = Response(0x01, 0x08, [0x01, 0x01]);
         badCrc[^3] ^= 0x01;
         fake.EnqueueExchange(MainControllerProtocol.BuildWorkStatusRequest(), badCrc);
         var crc = await adapter.ReadControllerWorkStatusAsync();
@@ -250,7 +251,7 @@ public sealed class OfflineRealDeviceAdapterTests
         var root = Path.Combine(TestPaths.TempRoot, "stainer-real-boundary", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var fake = new InMemoryFakeDeviceByteTransport();
-        fake.EnqueueExchange(MainControllerProtocol.BuildWorkStatusRequest(), Response(0x01, 0x08, [0x01]));
+        fake.EnqueueExchange(MainControllerProtocol.BuildWorkStatusRequest(), Response(0x01, 0x08, [0x01, 0x01]));
 
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
@@ -281,6 +282,59 @@ public sealed class OfflineRealDeviceAdapterTests
         Assert.False(status.Ready);
         Assert.Equal(DeviceConnectionStatuses.Offline, Assert.Single(status.Modules).ConnectionStatus);
         Assert.True((await reads.ReadControllerWorkStatusAsync()).Ok);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_with_MainControllerSerialTransport_returns_Disconnected_without_opening_port()
+    {
+        var diagnosticCount = 0;
+        var serialTransport = new MainControllerSerialTransport(
+            new MainControllerConnectionOptions { PortName = "COM_MCU05_TEST_NONEXISTENT" },
+            _ => diagnosticCount++);
+        var adapter = new UnavailableRealDeviceAdapter(serialTransport);
+        var status = await adapter.GetStatusAsync();
+
+        Assert.False(status.Ready);
+        var module = Assert.Single(status.Modules);
+        Assert.Equal("main-controller", module.ModuleCode);
+        Assert.Equal(DeviceConnectionStatuses.Disconnected, module.ConnectionStatus);
+        Assert.Null(module.CurrentParametersJson);
+        Assert.Null(module.TargetParametersJson);
+        Assert.Equal(0, diagnosticCount);
+    }
+
+    [Fact]
+    public async Task GetStatusAsync_with_fake_MainControllerSerialTransport_does_not_create_or_open_serial_port()
+    {
+        var createCount = 0;
+        var fakePort = new NeverOpenedSerialPort();
+        var diagnostics = new List<MainControllerTransportDiagnostic>();
+        var serialTransport = new MainControllerSerialTransport(
+            new MainControllerConnectionOptions
+            {
+                PortName = "COM_MCU05_TEST_FAKE",
+                BaudRate = 115200,
+                DataBits = 8,
+                Parity = MainControllerParity.None,
+                StopBits = MainControllerStopBits.One,
+                Handshake = MainControllerHandshake.None
+            },
+            () =>
+            {
+                createCount++;
+                return fakePort;
+            },
+            diagnostics.Add);
+        var adapter = new UnavailableRealDeviceAdapter(serialTransport);
+
+        var status = await adapter.GetStatusAsync();
+
+        Assert.False(status.Ready);
+        Assert.Equal(DeviceConnectionStatuses.Disconnected, Assert.Single(status.Modules).ConnectionStatus);
+        Assert.Null(status.Modules[0].CurrentParametersJson);
+        Assert.Equal(0, createCount);
+        Assert.False(fakePort.OpenCalled);
+        Assert.Empty(diagnostics);
     }
 
     private static DeviceOperationRequest RequestFor(string moduleCode, string action) =>
@@ -361,5 +415,34 @@ public sealed class OfflineRealDeviceAdapterTests
 
         private sealed record ExchangeScript(byte[] ExpectedRequest, DeviceByteTransportResult Result);
         private sealed record ReceiveScript(string Endpoint, DeviceByteTransportResult Result);
+    }
+
+    private sealed class NeverOpenedSerialPort : ISerialPort
+    {
+        public string PortName { get; set; } = string.Empty;
+        public int BaudRate { get; set; }
+        public int DataBits { get; set; }
+        public Parity Parity { get; set; }
+        public StopBits StopBits { get; set; }
+        public Handshake Handshake { get; set; }
+        public int ReadTimeout { get; set; }
+        public int WriteTimeout { get; set; }
+        public bool IsOpen => false;
+        public int BytesToRead => 0;
+        public bool OpenCalled { get; private set; }
+
+        public void Open()
+        {
+            OpenCalled = true;
+            throw new InvalidOperationException("GetStatusAsync must not open the fake port.");
+        }
+
+        public void Close() { }
+        public void Write(byte[] buffer, int offset, int count) =>
+            throw new InvalidOperationException("GetStatusAsync must not write to the fake port.");
+        public int ReadByte() =>
+            throw new InvalidOperationException("GetStatusAsync must not read from the fake port.");
+        public void DiscardInBuffer() { }
+        public void Dispose() { }
     }
 }

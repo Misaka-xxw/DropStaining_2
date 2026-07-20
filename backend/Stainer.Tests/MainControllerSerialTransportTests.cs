@@ -163,8 +163,8 @@ public sealed class MainControllerSerialTransportTests
     [Fact]
     public async Task Exchange_node_status_sends_request_and_parses_ack_response()
     {
-        // 节点状态响应 payload 为 64 字节。
-        var payload = Enumerable.Repeat((byte)0x00, 64).ToArray();
+        // 节点状态响应 payload 为 65 字节：1 字节 ack (0x01) + 64 字节业务数据。
+        var payload = new[] { (byte)0x01 }.Concat(Enumerable.Repeat((byte)0x00, 64)).ToArray();
         var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
             MainControllerProtocol.SystemClass,
             0x09,
@@ -403,8 +403,312 @@ public sealed class MainControllerSerialTransportTests
         Assert.Equal("composite_endpoint_not_configured", unknown.ErrorCode);
     }
 
+    // ── MCU-01：端口生命周期 — 每次请求独立 Open→Close→Dispose ──
+
+    [Fact]
+    public async Task Exchange_opens_closes_and_disposes_port_per_single_request()
+    {
+        var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.SystemClass,
+            0x08,
+            IceImmunoSerialProtocol.ResponseType,
+            [0x01]);
+
+        var port = FakeMainControllerSerialPort.FromBytes(responseBytes);
+        var transport = CreateTransport(port);
+
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "read-work-status",
+                MainControllerProtocol.BuildWorkStatusRequest()));
+
+        Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+        Assert.True(port.OpenCalled);
+        Assert.True(port.CloseCalled);
+        Assert.True(port.Disposed);
+    }
+
+    [Fact]
+    public async Task Exchange_reopens_port_for_each_consecutive_request()
+    {
+        var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.SystemClass,
+            0x08,
+            IceImmunoSerialProtocol.ResponseType,
+            [0x01]);
+
+        // 两个独立 fake port 追踪各自生命周期
+        var port1 = FakeMainControllerSerialPort.FromBytes(responseBytes);
+        var port2 = FakeMainControllerSerialPort.FromBytes(responseBytes);
+        var callIndex = 0;
+        Func<FakeMainControllerSerialPort> nextPort = () => ++callIndex == 1 ? port1 : port2;
+
+        var transport = new MainControllerSerialTransport(Configured, () => nextPort());
+
+        var request = new DeviceByteTransportRequest(
+            DeviceByteTransportEndpoints.MainController,
+            "read-work-status",
+            MainControllerProtocol.BuildWorkStatusRequest());
+
+        var result1 = await transport.ExchangeAsync(request);
+        Assert.Equal(DeviceByteTransportStatuses.Succeeded, result1.Status);
+
+        var result2 = await transport.ExchangeAsync(request);
+        Assert.Equal(DeviceByteTransportStatuses.Succeeded, result2.Status);
+
+        // port1: 第一次请求 open→close→dispose
+        Assert.True(port1.OpenCalled);
+        Assert.True(port1.CloseCalled);
+        Assert.True(port1.Disposed);
+
+        // port2: 第二次请求 open→close→dispose
+        Assert.True(port2.OpenCalled);
+        Assert.True(port2.CloseCalled);
+        Assert.True(port2.Disposed);
+    }
+
+    // ── MCU-03：温度白名单 — HeatingClass subs 0x09/0x0A/0x0B, boardId 0-3 ──
+
+    [Fact]
+    public async Task Exchange_allows_board_temperatures_request_for_valid_board_ids()
+    {
+        // boardId 0..3 应全部通过白名单并打开端口
+        for (byte boardId = 0; boardId <= 3; boardId++)
+        {
+            var tempResponse = BuildTempResponse(MainControllerProtocol.HeatingClass, 0x09, boardId);
+            var port = FakeMainControllerSerialPort.FromBytes(tempResponse);
+            var transport = CreateTransport(port);
+
+            var requestBytes = MainControllerProtocol.BuildBoardTemperaturesRequest(boardId);
+            var result = await transport.ExchangeAsync(
+                new DeviceByteTransportRequest(
+                    DeviceByteTransportEndpoints.MainController,
+                    "read-board-temperatures",
+                    requestBytes));
+
+            Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+            Assert.True(port.OpenCalled);
+        }
+    }
+
+    [Fact]
+    public async Task Exchange_allows_board_target_temperatures_request_for_valid_board_ids()
+    {
+        for (byte boardId = 0; boardId <= 3; boardId++)
+        {
+            var tempResponse = BuildTempResponse(MainControllerProtocol.HeatingClass, 0x0A, boardId);
+            var port = FakeMainControllerSerialPort.FromBytes(tempResponse);
+            var transport = CreateTransport(port);
+
+            var requestBytes = MainControllerProtocol.BuildBoardTargetTemperaturesRequest(boardId);
+            var result = await transport.ExchangeAsync(
+                new DeviceByteTransportRequest(
+                    DeviceByteTransportEndpoints.MainController,
+                    "read-board-target-temperatures",
+                    requestBytes));
+
+            Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+            Assert.True(port.OpenCalled);
+        }
+    }
+
+    [Fact]
+    public async Task Exchange_allows_board_switch_states_request_for_valid_board_ids()
+    {
+        for (byte boardId = 0; boardId <= 3; boardId++)
+        {
+            var tempResponse = BuildTempResponse(MainControllerProtocol.HeatingClass, 0x0B, boardId);
+            var port = FakeMainControllerSerialPort.FromBytes(tempResponse);
+            var transport = CreateTransport(port);
+
+            var requestBytes = MainControllerProtocol.BuildBoardSwitchStatesRequest(boardId);
+            var result = await transport.ExchangeAsync(
+                new DeviceByteTransportRequest(
+                    DeviceByteTransportEndpoints.MainController,
+                    "read-board-switch-states",
+                    requestBytes));
+
+            Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+            Assert.True(port.OpenCalled);
+        }
+    }
+
+    [Fact]
+    public async Task Exchange_rejects_temperature_request_with_board_id_above_three()
+    {
+        var port = FakeMainControllerSerialPort.Empty();
+        var transport = CreateTransport(port);
+
+        var requestBytes = IceImmunoSerialProtocol.BuildRequestFrame(MainControllerProtocol.HeatingClass, 0x09, [0x04]);
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "read-board-temperatures",
+                requestBytes));
+
+        Assert.Equal(DeviceByteTransportStatuses.Failed, result.Status);
+        Assert.Equal("main_controller_command_not_supported", result.ErrorCode);
+        Assert.False(port.OpenCalled);
+    }
+
+    [Fact]
+    public async Task Exchange_rejects_temperature_request_with_empty_payload()
+    {
+        var port = FakeMainControllerSerialPort.Empty();
+        var transport = CreateTransport(port);
+
+        var requestBytes = IceImmunoSerialProtocol.BuildRequestFrame(MainControllerProtocol.HeatingClass, 0x09);
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "read-board-temperatures",
+                requestBytes));
+
+        Assert.Equal(DeviceByteTransportStatuses.Failed, result.Status);
+        Assert.Equal("main_controller_command_not_supported", result.ErrorCode);
+        Assert.False(port.OpenCalled);
+    }
+
+    [Fact]
+    public async Task Exchange_rejects_temperature_request_with_two_byte_payload()
+    {
+        var port = FakeMainControllerSerialPort.Empty();
+        var transport = CreateTransport(port);
+
+        var requestBytes = IceImmunoSerialProtocol.BuildRequestFrame(MainControllerProtocol.HeatingClass, 0x09, [0x00, 0x01]);
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "read-board-temperatures",
+                requestBytes));
+
+        Assert.Equal(DeviceByteTransportStatuses.Failed, result.Status);
+        Assert.Equal("main_controller_command_not_supported", result.ErrorCode);
+        Assert.False(port.OpenCalled);
+    }
+
+    [Theory]
+    [InlineData(0x04, 0x01, new byte[] { 0x00 })]
+    [InlineData(0x04, 0x08, new byte[] { 0x00 })]
+    [InlineData(0x05, 0x04, new byte[] { 0x00, 0x01, 0x00 })]
+    [InlineData(0x07, 0x06, new byte[] { })]
+    [InlineData(0x0A, 0x02, new byte[] { 0x00 })]
+    [InlineData(0x08, 0x06, new byte[] { })]
+    public async Task Exchange_rejects_control_or_unapproved_commands_without_opening_port(
+        byte parentClass,
+        byte subClass,
+        byte[] payload)
+    {
+        var port = FakeMainControllerSerialPort.Empty();
+        var transport = CreateTransport(port);
+
+        var requestBytes = IceImmunoSerialProtocol.BuildRequestFrame(parentClass, subClass, payload);
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "unapproved-main-controller-command",
+                requestBytes));
+
+        Assert.Equal(DeviceByteTransportStatuses.Failed, result.Status);
+        Assert.Equal("main_controller_command_not_supported", result.ErrorCode);
+        Assert.False(port.OpenCalled);
+        Assert.Empty(port.WriteCalls);
+    }
+
+    // ── MCU-05：port_closed / port_close_failed 诊断记录 ──
+
+    [Fact]
+    public async Task Exchange_records_port_closed_diagnostic_on_success()
+    {
+        var diagnostics = new List<MainControllerTransportDiagnostic>();
+
+        var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.SystemClass,
+            0x08,
+            IceImmunoSerialProtocol.ResponseType,
+            [0x01]);
+
+        var port = FakeMainControllerSerialPort.FromBytes(responseBytes);
+        var transport = new MainControllerSerialTransport(
+            Configured,
+            () => port,
+            diagnostics.Add);
+
+        await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "read-work-status",
+                MainControllerProtocol.BuildWorkStatusRequest()));
+
+        Assert.Contains(diagnostics, d => d.Reason == "port_closed");
+    }
+
+    [Fact]
+    public async Task Exchange_records_port_close_failed_diagnostic_when_close_throws()
+    {
+        var diagnostics = new List<MainControllerTransportDiagnostic>();
+
+        var responseBytes = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.SystemClass,
+            0x08,
+            IceImmunoSerialProtocol.ResponseType,
+            [0x01]);
+
+        var port = FakeMainControllerSerialPort.FromBytes(responseBytes);
+        port.ThrowOnClose = new InvalidOperationException("simulated close failure");
+        var transport = new MainControllerSerialTransport(
+            Configured,
+            () => port,
+            diagnostics.Add);
+
+        var result = await transport.ExchangeAsync(
+            new DeviceByteTransportRequest(
+                DeviceByteTransportEndpoints.MainController,
+                "read-work-status",
+                MainControllerProtocol.BuildWorkStatusRequest()));
+
+        // Exchange still succeeds because close failure doesn't affect already-read results
+        Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+        Assert.Contains(diagnostics, d => d.Reason == "port_close_failed");
+        // Port is still disposed despite close failure
+        Assert.True(port.Disposed);
+    }
+
+    [Fact]
+    public async Task Receive_records_port_closed_diagnostic_on_success()
+    {
+        var diagnostics = new List<MainControllerTransportDiagnostic>();
+
+        var putReport = IceImmunoSerialProtocol.EncodeFrame(
+            MainControllerProtocol.OptocouplerClass,
+            0x04,
+            IceImmunoSerialProtocol.RequestType,
+            [0x01, 0x10, 0x20]);
+
+        var port = FakeMainControllerSerialPort.ImmediatelyReadable(putReport);
+        var transport = new MainControllerSerialTransport(
+            Configured,
+            () => port,
+            diagnostics.Add);
+
+        await transport.ReceiveAsync(DeviceByteTransportEndpoints.MainController);
+
+        Assert.Contains(diagnostics, d => d.Reason == "port_closed");
+    }
+
     private static MainControllerSerialTransport CreateTransport(FakeMainControllerSerialPort port) =>
         new(Configured, () => port);
+
+    private static byte[] BuildTempResponse(byte parentClass, byte subClass, byte boardId)
+    {
+        // 10 bytes: [0x01 ack, boardId, 4 x int16 values]
+        var payload = new byte[10];
+        payload[0] = 0x01; // ACK
+        payload[1] = boardId;
+        // remaining 8 bytes: 4 x int16 temperature values (zeros)
+        return IceImmunoSerialProtocol.EncodeFrame(parentClass, subClass, IceImmunoSerialProtocol.ResponseType, payload);
+    }
 
     // 主控假串口：可预置设备返回字节，并在写入触发命令后允许读取。
     private sealed class FakeMainControllerSerialPort : ISerialPort
@@ -439,6 +743,7 @@ public sealed class MainControllerSerialTransportTests
         public bool CloseCalled { get; private set; }
         public bool Disposed { get; private set; }
         public Exception? ThrowOnOpen { get; set; }
+        public Exception? ThrowOnClose { get; set; }
 
         public static FakeMainControllerSerialPort Empty() => new([], false, false);
 
@@ -467,6 +772,10 @@ public sealed class MainControllerSerialTransportTests
         {
             CloseCalled = true;
             IsOpen = false;
+            if (ThrowOnClose is not null)
+            {
+                throw ThrowOnClose;
+            }
         }
 
         public void Write(byte[] buffer, int offset, int count)

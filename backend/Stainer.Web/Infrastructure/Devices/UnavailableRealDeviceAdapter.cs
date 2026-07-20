@@ -16,6 +16,28 @@ public sealed class UnavailableRealDeviceAdapter(IDeviceByteTransport? transport
     public Task<DeviceStatusSnapshot> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
+
+        if (transport is MainControllerSerialTransport)
+        {
+            return Task.FromResult(new DeviceStatusSnapshot(
+                Mode,
+                Name,
+                false,
+                0,
+                now,
+                [new DeviceModuleStatusSnapshot(
+                    "main-controller",
+                    DeviceConnectionStatuses.Disconnected,
+                    "Idle",
+                    null,
+                    null,
+                    null,
+                    "Main-controller serial transport is not connected.",
+                    now,
+                    0)],
+                []));
+        }
+
         var fakeTransportEnabled = transport is { IsConfigured: true };
         var connectionStatus = fakeTransportEnabled
             ? DeviceConnectionStatuses.Offline

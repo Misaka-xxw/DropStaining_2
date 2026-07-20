@@ -84,12 +84,12 @@ public sealed class OfflineHardwareProtocolTests
         Assert.True(ack.Succeeded);
         Assert.Equal(0x01, ack.ResponseCode);
 
-        var work = MainControllerProtocol.ParseWorkStatus(Decode("A50104000108020140BA5A"));
+        var work = MainControllerProtocol.ParseWorkStatus(Response(0x01, 0x08, [0x01, 0x01]));
         Assert.Equal(0x01, work.Value);
 
         var nodes = Enumerable.Repeat((byte)0x01, 64).ToArray();
         nodes[2] = 0x02;
-        var parsedNodes = MainControllerProtocol.ParseNodeStatuses(Response(0x01, 0x09, nodes));
+        var parsedNodes = MainControllerProtocol.ParseNodeStatuses(Response(0x01, 0x09, [(byte)0x01, ..nodes]));
         Assert.Equal(64, parsedNodes.Values.Length);
         Assert.Equal(0x02, parsedNodes.Values[2]);
 
@@ -101,20 +101,22 @@ public sealed class OfflineHardwareProtocolTests
     public void Main_controller_parses_little_endian_temperature_switch_and_pwm_fields()
     {
         var temperatures = MainControllerProtocol.ParseBoardTemperatures(
-            Decode("A5010C0004090202FBFF05002A0080002B8E5A"),
+            Response(0x04, 0x09, [0x01, 0x02, 0xFB, 0xFF, 0x05, 0x00, 0x2A, 0x00, 0x80, 0x00]),
             target: false);
         Assert.Equal(2, temperatures.BoardId);
         Assert.False(temperatures.IsTarget);
         Assert.Equal<short>([-5, 5, 42, 128], temperatures.ValuesCelsius);
 
         var targets = MainControllerProtocol.ParseBoardTemperatures(
-            Response(0x04, 0x0A, [0x01, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00]),
+            Response(0x04, 0x0A, [0x01, 0x01, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00]),
             target: true);
+        Assert.Equal(1, targets.BoardId);
         Assert.True(targets.IsTarget);
         Assert.Equal<short>([1, 2, 3, 4], targets.ValuesCelsius);
 
         var switches = MainControllerProtocol.ParseBoardSwitchStates(
-            Response(0x04, 0x0B, [0x03, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]));
+            Response(0x04, 0x0B, [0x01, 0x03, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00]));
+        Assert.Equal(3, switches.BoardId);
         Assert.Equal<ushort>([1, 0, 1, 0], switches.Values);
 
         var pwm = MainControllerProtocol.ParsePwmSpeeds(
@@ -170,6 +172,114 @@ public sealed class OfflineHardwareProtocolTests
         AssertRequest(MainControllerProtocol.BuildMixerRemainingCountRequest(3), 0x0A, 0x03, [0x03]);
         AssertRequest(MainControllerProtocol.BuildQrScanStatusRequest(), 0x08, 0x06, []);
         AssertRequest(MainControllerProtocol.BuildQrTextRequest(), 0x08, 0x01, []);
+    }
+
+    [Theory]
+    [InlineData(0x00)]
+    [InlineData(0x01)]
+    [InlineData(0x02)]
+    public void Work_status_success_parses_status_byte(byte status)
+    {
+        var work = MainControllerProtocol.ParseWorkStatus(Response(0x01, 0x08, [0x01, status]));
+        Assert.Equal(status, work.Value);
+    }
+
+    [Fact]
+    public void Work_status_failure_missing_status_byte()
+    {
+        var ex = Assert.Throws<IceImmunoProtocolException>(() =>
+            MainControllerProtocol.ParseWorkStatus(Response(0x01, 0x08, [0x01])));
+        Assert.Equal(IceImmunoProtocolError.InvalidPayload, ex.Error);
+    }
+
+    [Fact]
+    public void Work_status_failure_multi_byte_status()
+    {
+        var ex = Assert.Throws<IceImmunoProtocolException>(() =>
+            MainControllerProtocol.ParseWorkStatus(Response(0x01, 0x08, [0x01, 0x01, 0x02])));
+        Assert.Equal(IceImmunoProtocolError.InvalidPayload, ex.Error);
+    }
+
+    [Fact]
+    public void Work_status_failure_ack_type_not_success()
+    {
+        var ex = Assert.Throws<IceImmunoProtocolException>(() =>
+            MainControllerProtocol.ParseWorkStatus(Response(0x01, 0x08, [0x02, 0x01])));
+        Assert.Equal(IceImmunoProtocolError.InvalidPayload, ex.Error);
+    }
+
+    [Fact]
+    public void Node_status_success_excludes_ack_byte_from_values()
+    {
+        var data = Enumerable.Repeat((byte)0x02, 64).ToArray();
+        var statuses = MainControllerProtocol.ParseNodeStatuses(Response(0x01, 0x09, [(byte)0x01, ..data]));
+        Assert.Equal(64, statuses.Values.Length);
+        Assert.Equal(0x02, statuses.Values[0]);
+    }
+
+    [Fact]
+    public void Node_status_failure_too_short()
+    {
+        var data = Enumerable.Repeat((byte)0x01, 63).ToArray();
+        var ex = Assert.Throws<IceImmunoProtocolException>(() =>
+            MainControllerProtocol.ParseNodeStatuses(Response(0x01, 0x09, [(byte)0x01, ..data])));
+        Assert.Equal(IceImmunoProtocolError.InvalidPayload, ex.Error);
+    }
+
+    [Fact]
+    public void Node_status_failure_too_long()
+    {
+        var data = Enumerable.Repeat((byte)0x01, 65).ToArray();
+        var ex = Assert.Throws<IceImmunoProtocolException>(() =>
+            MainControllerProtocol.ParseNodeStatuses(Response(0x01, 0x09, [(byte)0x01, ..data])));
+        Assert.Equal(IceImmunoProtocolError.InvalidPayload, ex.Error);
+    }
+
+    [Fact]
+    public void Switch_state_value_out_of_range_throws_InvalidPayload()
+    {
+        var ex = Assert.Throws<IceImmunoProtocolException>(() =>
+            MainControllerProtocol.ParseBoardSwitchStates(
+                Response(0x04, 0x0B, [0x01, 0x01, 0x01, 0x00, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00])));
+        Assert.Equal(IceImmunoProtocolError.InvalidPayload, ex.Error);
+    }
+
+    [Fact]
+    public void Optocoupler_put_value_out_of_range_throws_InvalidPayload()
+    {
+        var ex = Assert.Throws<IceImmunoProtocolException>(() =>
+            MainControllerProtocol.ParseOptocouplerPut(Put(0x05, 0x04, [0x00, 0x02, 0x00])));
+        Assert.Equal(IceImmunoProtocolError.InvalidPayload, ex.Error);
+    }
+
+    [Fact]
+    public void Optocoupler_put_value_0_and_1_map_to_IsTriggered()
+    {
+        var off = MainControllerProtocol.ParseOptocouplerPut(Put(0x05, 0x04, [0x00, 0x00, 0x00]));
+        Assert.False(off.IsTriggered);
+        Assert.Equal(0, off.Value);
+
+        var on = MainControllerProtocol.ParseOptocouplerPut(Put(0x05, 0x04, [0x00, 0x01, 0x00]));
+        Assert.True(on.IsTriggered);
+        Assert.Equal(1, on.Value);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void Confirmed_optocoupler_channels_parse_with_ChannelId_and_IsTriggered(byte channelId)
+    {
+        var notTriggered = MainControllerProtocol.ParseOptocouplerPut(
+            Put(0x05, 0x04, [channelId, 0x00, 0x00]));
+        Assert.Equal(channelId, notTriggered.ChannelId);
+        Assert.False(notTriggered.IsTriggered);
+
+        var triggered = MainControllerProtocol.ParseOptocouplerPut(
+            Put(0x05, 0x04, [channelId, 0x01, 0x00]));
+        Assert.Equal(channelId, triggered.ChannelId);
+        Assert.True(triggered.IsTriggered);
     }
 
     [Fact]
@@ -263,6 +373,13 @@ public sealed class OfflineHardwareProtocolTests
             parentClass,
             subClass,
             IceImmunoSerialProtocol.ResponseType,
+            payload));
+
+    private static IceImmunoFrame Put(byte parentClass, byte subClass, byte[] payload) =>
+        IceImmunoSerialProtocol.DecodeFrame(IceImmunoSerialProtocol.EncodeFrame(
+            parentClass,
+            subClass,
+            IceImmunoSerialProtocol.RequestType,
             payload));
 
     private static void AssertRequest(byte[] bytes, byte parentClass, byte subClass, byte[] payload)

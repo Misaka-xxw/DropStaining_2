@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Linq;
 using System.Text;
 
 namespace Stainer.Web.Application.Devices;
@@ -33,14 +34,14 @@ public static class MainControllerProtocol
 
     public static MainControllerWorkStatus ParseWorkStatus(IceImmunoFrame frame)
     {
-        EnsureResponse(frame, SystemClass, 0x08, 1);
-        return new MainControllerWorkStatus(frame.Payload[0]);
+        var data = EnsureSuccessResponse(frame, SystemClass, 0x08, 1);
+        return new MainControllerWorkStatus(data[0]);
     }
 
     public static MainControllerNodeStatuses ParseNodeStatuses(IceImmunoFrame frame)
     {
-        EnsureResponse(frame, SystemClass, 0x09, 64);
-        return new MainControllerNodeStatuses(frame.Payload.ToArray());
+        var data = EnsureSuccessResponse(frame, SystemClass, 0x09, 64);
+        return new MainControllerNodeStatuses(data);
     }
 
     public static MainControllerRunTime ParseRunTime(IceImmunoFrame frame)
@@ -52,27 +53,31 @@ public static class MainControllerProtocol
 
     public static MainControllerTemperatureBoard ParseBoardTemperatures(IceImmunoFrame frame, bool target)
     {
-        EnsureResponse(frame, HeatingClass, target ? (byte)0x0A : (byte)0x09, 9);
-        return new MainControllerTemperatureBoard(
-            frame.Payload[0],
-            ReadInt16Values(frame.Payload.AsSpan(1), 4),
-            target);
+        var data = EnsureSuccessResponse(frame, HeatingClass, target ? (byte)0x0A : (byte)0x09, 9);
+        return new MainControllerTemperatureBoard(data[0], ReadInt16Values(data.AsSpan(1), 4), target);
     }
 
     public static MainControllerSwitchBoard ParseBoardSwitchStates(IceImmunoFrame frame)
     {
-        EnsureResponse(frame, HeatingClass, 0x0B, 9);
-        return new MainControllerSwitchBoard(frame.Payload[0], ReadUInt16Values(frame.Payload.AsSpan(1), 4));
+        var data = EnsureSuccessResponse(frame, HeatingClass, 0x0B, 9);
+        var values = ReadUInt16Values(data.AsSpan(1), 4);
+        if (values.Any(v => v != 0 && v != 1))
+        {
+            throw Error(IceImmunoProtocolError.InvalidPayload, "Temperature switch values must be 0 or 1.");
+        }
+        return new MainControllerSwitchBoard(data[0], values);
     }
 
     public static MainControllerOptocouplerStatus ParseOptocouplerPut(IceImmunoFrame frame)
     {
         EnsureFrame(frame, OptocouplerClass, 0x04, IceImmunoSerialProtocol.RequestType);
         EnsurePayload(frame, 3);
-        return new MainControllerOptocouplerStatus(
-            frame.Payload[0],
-            BinaryPrimitives.ReadUInt16LittleEndian(frame.Payload.AsSpan(1, 2)),
-            true);
+        var value = BinaryPrimitives.ReadUInt16LittleEndian(frame.Payload.AsSpan(1, 2));
+        if (value != 0 && value != 1)
+        {
+            throw Error(IceImmunoProtocolError.InvalidPayload, "Optocoupler value must be 0 (not triggered) or 1 (triggered).");
+        }
+        return new MainControllerOptocouplerStatus(frame.Payload[0], value, true);
     }
 
     public static MainControllerPwmSpeeds ParsePwmSpeeds(IceImmunoFrame frame)
@@ -158,6 +163,24 @@ public static class MainControllerProtocol
         return values;
     }
 
+    // Validates a response frame (parentClass/subClass, MessageType == Response), validates that
+    // the leading ack-type byte is 0x01 (success), and returns the business data that follows it.
+    // expectedDataLength is the required length of the business data EXCLUDING the ack byte, so the
+    // full payload must be exactly expectedDataLength + 1 bytes.
+    private static byte[] EnsureSuccessResponse(IceImmunoFrame frame, byte parentClass, byte subClass, int expectedDataLength)
+    {
+        EnsureFrame(frame, parentClass, subClass, IceImmunoSerialProtocol.ResponseType);
+        EnsurePayload(frame, expectedDataLength + 1);
+        if (frame.Payload[0] != 0x01)
+        {
+            throw Error(
+                IceImmunoProtocolError.InvalidPayload,
+                $"Response ack type is 0x{frame.Payload[0]:X2}; expected 0x01 (success).");
+        }
+
+        return frame.Payload.AsSpan(1, expectedDataLength).ToArray();
+    }
+
     private static void EnsureResponse(IceImmunoFrame frame, byte parentClass, byte subClass, int payloadLength)
     {
         EnsureFrame(frame, parentClass, subClass, IceImmunoSerialProtocol.ResponseType);
@@ -206,7 +229,10 @@ public sealed record MainControllerRunTime(byte[] RawValue);
 
 public sealed record MainControllerTemperatureBoard(byte BoardId, short[] ValuesCelsius, bool IsTarget);
 public sealed record MainControllerSwitchBoard(byte BoardId, ushort[] Values);
-public sealed record MainControllerOptocouplerStatus(byte ChannelId, ushort Value, bool IsPutReport);
+public sealed record MainControllerOptocouplerStatus(byte ChannelId, ushort Value, bool IsPutReport)
+{
+    public bool IsTriggered => Value == 1;
+}
 public sealed record MainControllerPwmSpeeds(ushort[] ValuesRpm);
 public sealed record MainControllerMixerValue(byte BoardId, ushort Value, MainControllerMixerValueKind Kind);
 public sealed record MainControllerQrScanStatus(ushort Value);
