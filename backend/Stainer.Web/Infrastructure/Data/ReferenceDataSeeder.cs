@@ -28,7 +28,84 @@ public sealed class ReferenceDataSeeder(StainerDbContext dbContext)
         var coordinateProfile = await SeedCoordinateProfileAsync(now, cancellationToken);
         await SeedCoordinatePointsAsync(coordinateProfile, now, cancellationToken);
         await SeedDefaultWorkflowTemplatesAsync(now, cancellationToken);
+        await SeedAbLiquidClassAsync(now, cancellationToken);
 
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    // 标准液体类型 Ab（一抗）作为真实种子数据，与 FactoryGeneral-v1 同机制。
+    // 幂等：按 code 查，已存在则跳过（绝不覆盖已有数据）。参数先用 FactoryGeneral-v1 基线占位，
+    // 待设备侧按液体粘度逐个调校——可在「配置 → 液体类型」UI 里直接改并保存。
+    private async Task SeedAbLiquidClassAsync(DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        const string AbLiquidClassCode = "Ab";
+        if (await dbContext.LiquidClassProfiles.AsNoTracking().AnyAsync(x => x.Code == AbLiquidClassCode, cancellationToken))
+        {
+            return;
+        }
+
+        var liquidClass = new LiquidClassProfile
+        {
+            Code = AbLiquidClassCode,
+            Name = "Antibody (一抗) liquid class",
+            AspirateSpeedUlPerSecond = 100,
+            DispenseSpeedUlPerSecond = 100,
+            LeadingAirGapUl = 5,
+            TrailingAirGapUl = 5,
+            ExcessVolumeUl = 0,
+            PreWetCycles = 1,
+            MixCycles = 0,
+            IsEnabled = true,
+            CreatedAtUtc = now
+        };
+        dbContext.LiquidClassProfiles.Add(liquidClass);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var version = new LiquidClassVersion
+        {
+            LiquidClassProfile = liquidClass,
+            LiquidClassProfileId = liquidClass.Id,
+            VersionNo = 1,
+            VersionLabel = "1",
+            Name = liquidClass.Name,
+            Status = LiquidClassVersionStatus.Enabled,
+            ChangeReason = "Factory seeded standard Liquid Class (Ab) baseline.",
+            ChangeSummaryJson = "{\"seeded\":true}",
+            LiquidDetectionEnabled = true,
+            LiquidDetectionSensitivityPercent = 50,
+            LiquidDetectionSpeedUmPerSecond = 1_000,
+            AspirateSpeedUlPerSecond = 100,
+            AspirateDelayMs = 100,
+            DispenseSpeedUlPerSecond = 100,
+            DispenseDelayMs = 100,
+            LeadingAirGapUl = 5,
+            TrailingAirGapUl = 5,
+            BlowoutVolumeUl = 10,
+            BlowoutDelayMs = 100,
+            VolumeAdjustmentUl = 0,
+            PreWetCycles = 1,
+            MixCycles = 0,
+            LiquidFollowingDepthUm = 2000,
+            RetractSpeedUmPerSecond = 1000,
+            ConditioningVolumeUl = 0,
+            BreakoffSpeedUlPerSecond = 0,
+            PostDispenseAirGapUl = 0,
+            CreatedAtUtc = now,
+            PublishedAtUtc = now,
+            EnabledAtUtc = now
+        };
+        version.ValidationRecords.Add(new LiquidClassValidationRecord
+        {
+            LiquidClassVersion = version,
+            LiquidClassVersionId = version.Id,
+            Stage = LiquidClassValidationStage.Enable,
+            IsValid = true,
+            ResultJson = "{\"valid\":true,\"source\":\"seed\"}",
+            CreatedAtUtc = now
+        });
+        dbContext.LiquidClassVersions.Add(version);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        liquidClass.EnabledVersionId = version.Id;
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 

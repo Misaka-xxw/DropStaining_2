@@ -5711,6 +5711,7 @@ function renderDebugPane() {
   if(activeDebugSection === 'com') autoLoadDebugComConfig();
   if(activeDebugSection === 'module') autoLoadModuleTestDeps();
   if(activeDebugSection === 'precision') autoLoadDebugPrecisionConfig();
+  if(activeDebugSection === 'liquid') readDebugLiquidClass();
 }
 
 function configNumberInput(id, label, unit='', value='', placeholder='请输入内容') {
@@ -6051,8 +6052,9 @@ function mixHeatDrawers() {
 
 // 液体类型参数：表单 -> SaveLiquidClassRequest。标注的单位换算（mm/s·mm -> μm/s·μm，×1000）为按表单标签的假设，待设备侧复核。
 function liquidClassFormParams() {
-  const num = id => { const v = Number(document.getElementById(id)?.value); return Number.isFinite(v) && v >= 0 ? Math.round(v) : null; };
-  const mmToUm = id => { const v = Number(document.getElementById(id)?.value); return Number.isFinite(v) && v >= 0 ? Math.round(v * 1000) : null; };
+  // 空字段必须返回 null（不发给后端），后端会从 source 版本继承；若发 0 会被校验拒绝（这些字段最小值 ≥1）。
+  const num = id => { const s = String(document.getElementById(id)?.value || '').trim(); if(s === '') return null; const v = Number(s); return Number.isFinite(v) && v >= 0 ? Math.round(v) : null; };
+  const mmToUm = id => { const s = String(document.getElementById(id)?.value || '').trim(); if(s === '') return null; const v = Number(s); return Number.isFinite(v) && v >= 0 ? Math.round(v * 1000) : null; };
   const yn = id => { const v = String(document.getElementById(id)?.value || ''); return v === '是' ? true : (v === '否' ? false : null); };
   const out = {};
   const set = (k, v) => { if(v !== null && v !== undefined) out[k] = v; };
@@ -6120,17 +6122,68 @@ async function loadLiquidClassSelectsFromBackend(preferredByMap) {
   hydrateLiquidClassSelects(preferredByMap);
 }
 
+// "当前液体类型"：配置页下拉框选中值 与 调试页"当前 Liquid Class"显示 共用的当前 code。
+// 跨子页/跨视图保持一致；初始 'Ab'，随配置页选择或调试页读取而更新。
+let currentLiquidClassCode = 'Ab';
+
+// 调试页「液体类型」子页：从后端读取当前液体类型，回显名称/吸液速度/加液速度。
+async function readDebugLiquidClass() {
+  const codeEl = document.getElementById('debugLiquidClassName');
+  const aspEl = document.getElementById('debugLiquidAspSpeedText');
+  const dispEl = document.getElementById('debugLiquidDispSpeedText');
+  let list = [];
+  try { list = await backendApi('/api/engineering/liquid-classes'); } catch(e) { list = []; }
+  const arr = Array.isArray(list) ? list : [];
+  if(arr.length) liquidClassOptionsCache = arr.map(x => ({ code: String(x.code || ''), name: String(x.name || x.code || '') })).filter(x => x.code);
+  const match = arr.find(x => x.code === currentLiquidClassCode) || arr[0];
+  if(!match) {
+    if(codeEl) codeEl.textContent = currentLiquidClassCode || '无';
+    if(aspEl) aspEl.textContent = '待配置';
+    if(dispEl) dispEl.textContent = '待配置';
+    log('调试：未读取到任何液体类型（请到 配置/液体类型 新建）', 'warn');
+    return;
+  }
+  currentLiquidClassCode = String(match.code);
+  const vers = Array.isArray(match.versions) ? match.versions : [];
+  const ver = vers.find(v => v && v.isReferenceable) || vers.find(v => v && v.status === 'Enabled') || vers[0] || {};
+  const num = (src, k) => { const x = src && src[k]; return (x !== null && x !== undefined && Number.isFinite(x)) ? x : null; };
+  const asp = num(ver, 'aspirateSpeedUlPerSecond') ?? num(match, 'aspirateSpeedUlPerSecond');
+  const disp = num(ver, 'dispenseSpeedUlPerSecond') ?? num(match, 'dispenseSpeedUlPerSecond');
+  if(codeEl) codeEl.textContent = String(match.name || match.code);
+  if(aspEl) aspEl.textContent = asp !== null ? `${asp} μL/s` : '待配置';
+  if(dispEl) dispEl.textContent = disp !== null ? `${disp} μL/s` : '待配置';
+  log(`调试：当前液体类型 ${match.code || match.name}（吸液 ${asp ?? '--'} / 加液 ${disp ?? '--'} μL/s）`, 'ok');
+}
+
 async function saveLiquidClassParams(isCreate) {
   const code = String(document.getElementById('liquidClassSelect')?.value || '').trim();
   const newName = String(document.getElementById('liquidClassNewNameInput')?.value || '').trim();
   const name = isCreate ? (newName || code) : code;
   const body = { commandId: makeCommandId(isCreate ? 'liquid-class-create' : 'liquid-class-save'), code, name, isEnabled: true, reason: isCreate ? 'twin 新建液体类型' : 'twin 保存液体类型参数', dangerousOperationConfirmed: false };
   if(!isCreate) Object.assign(body, liquidClassFormParams());
-  await writeApi('/api/engineering/liquid-classes', { method:'POST', body: JSON.stringify(body) });
-  log(`${isCreate ? '新建' : '保存'}液体类型 ${code} 已下发，需管理员 + 工程会话`, 'ok');
+  // 保存是工程写操作，必须先有工程会话（二次认证），否则后端返回 403「权限不足」。复用模块测试的会话开启逻辑（已活动则直接复用，否则弹窗要管理员密码）。
+  if(!(await ensureModuleEngineeringSession(`liquid-class:${code}`, isCreate ? '配置/液体类型：新建' : '配置/液体类型：保存参数'))) return;
+  const saved = await writeApi('/api/engineering/liquid-classes', { method:'POST', body: JSON.stringify(body) });
+  currentLiquidClassCode = code || currentLiquidClassCode;
+  // 后端保存只产生 Draft 版本，而读取/调试页显示的是 Enabled 版本。继续 发布→启用，
+  // 让刚改的参数成为生效版本；否则读出来仍是旧值（用户会以为"没存进去"）。
+  const newVersionId = saved?.liquidClassVersionId;
+  if(newVersionId) {
+    try {
+      await writeApi(`/api/engineering/liquid-class-versions/${encodeURIComponent(newVersionId)}/publish`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('liquid-class-publish'), reason: `twin 发布液体类型 ${code}`, dangerousOperationConfirmed: true }) });
+      await writeApi(`/api/engineering/liquid-class-versions/${encodeURIComponent(newVersionId)}/enable`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('liquid-class-enable'), reason: `twin 启用液体类型 ${code}`, dangerousOperationConfirmed: true }) });
+      log(`${isCreate ? '新建' : '保存'}液体类型 ${code} 已写入并启用为生效版本（v${saved?.versionNo ?? '?'}）`, 'ok');
+    } catch(e) {
+      log(`液体类型 ${code} 已保存为草稿，但发布/启用失败（读取仍显示旧版本）：${e?.message || e}`, 'warn');
+    }
+  } else {
+    log(`${isCreate ? '新建' : '保存'}液体类型 ${code} 已写入数据库（草稿）`, 'ok');
+  }
   await loadDatabaseSnapshot();
   // 保存后从数据库重新拉取，刷新所有液体类型下拉框（保留当前选中值）。
   await loadLiquidClassSelectsFromBackend({ liquidClassSelect: code, positionLiquidClassSelect: code, pipetteLiquidClassSelect: code });
+  // 重新读取以回显新的生效值。
+  await readLiquidClassParams();
 }
 
 async function readLiquidClassParams() {
@@ -6246,7 +6299,10 @@ async function autoLoadDebugComConfig() {
 function moduleTestParamsHtml() {
   return `<div class="engineering-form-grid">
     ${configSelect('debugModuleChannelSelect','通道',['通道1','通道2','通道3','通道4'],'通道1')}
+    ${configSelect('debugModuleArmOpSelect','加样臂操作',[['aspirate','吸液 aspirate'],['dispense','排液 dispense（需先吸液）'],['liquid-detect','探液 liquid-detect'],['wash','洗针 wash']],'aspirate')}
     ${configNumberInput('debugModuleArmVolumeInput','加样臂体积','μL',100)}
+    ${configTextInput('debugModuleArmPositionInput','加样臂点位 Position','WashInnerLeft','启用的坐标点编码，如 WashInnerLeft / DabA / P11')}
+    ${configSelect('debugModuleLiquidClassSelect','液体类型(吸液/排液需)',[['','(未加载)']],'')}
     <label>工程会话密码<input id="debugModuleEngPasswordInput" data-control-id="debugModuleEngPasswordInput" type="password" placeholder="加样臂测试需要（管理员登录密码）" autocomplete="off"></label>
     ${configSelect('debugModuleWashHoleSelect','清洗孔位',[['WashInnerLeft','内壁左(WashInnerLeft)'],['WashInnerRight','内壁右(WashInnerRight)'],['WashOuterLeft','外壁左(WashOuterLeft)'],['WashOuterRight','外壁右(WashOuterRight)']],'WashInnerLeft')}
     ${configNumberInput('debugModuleWashSpeedInput','清洗速度','%',50)}
@@ -6257,29 +6313,44 @@ function moduleDrawerCode() { return drawerFromChannelSelect('debugModuleChannel
 async function autoLoadModuleTestDeps() {
   try {
     const scanners = await backendApi('/api/scanners');
-    const sel = document.getElementById('debugModuleScannerSelect'); if(!sel) return;
-    const list = Array.isArray(scanners) ? scanners : [];
-    if(!list.length) { sel.innerHTML = '<option value="">(无扫码器，请到 配置/扫码器 创建)</option>'; return; }
-    sel.innerHTML = list.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name || s.id)}（${escapeHtml(s.scannerType || '')}）</option>`).join('');
+    const sel = document.getElementById('debugModuleScannerSelect');
+    if(sel) {
+      const list = Array.isArray(scanners) ? scanners : [];
+      if(!list.length) { sel.innerHTML = '<option value="">(无扫码器，请到 配置/扫码器 创建)</option>'; }
+      else sel.innerHTML = list.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name || s.id)}（${escapeHtml(s.scannerType || '')}）</option>`).join('');
+    }
   } catch(e) { /* 进入模块测试子页时静默加载扫码器列表，失败不阻塞 */ }
+  try {
+    const lcs = await backendApi('/api/engineering/liquid-classes');
+    const sel = document.getElementById('debugModuleLiquidClassSelect'); if(!sel) return;
+    const enabled = (Array.isArray(lcs) ? lcs : []).filter(x => x.isEnabled && x.enabledVersionId);
+    if(!enabled.length) { sel.innerHTML = '<option value="">(无启用的液体类型)</option>'; return; }
+    sel.innerHTML = enabled.map(x => `<option value="${escapeHtml(x.enabledVersionId)}">${escapeHtml(x.code || x.id)}（${escapeHtml(x.name || '')}）</option>`).join('');
+  } catch(e) { /* 进入模块测试子页时静默加载液体类型列表，失败不阻塞 */ }
 }
 async function ensureModuleEngineeringSession(target, reason) {
   try { const s = await backendApi('/api/engineering/session'); if(s && String(s.status||'').toLowerCase()==='active' && new Date(s.expiresAtUtc) > new Date()) return true; } catch(_) {}
   const inp = document.getElementById('debugModuleEngPasswordInput');
   let pwd = (inp?.value || '').trim();
-  if(!pwd) pwd = (window.prompt('加样臂测试需要工程会话。请输入管理员登录密码：') || '').trim();
-  if(!pwd) { log('已取消：加样臂测试需要工程会话密码', 'warn'); return false; }
+  if(!pwd) pwd = (window.prompt(`${reason || '该操作'}需要工程会话（二次认证）。请输入管理员登录密码：`) || '').trim();
+  if(!pwd) { log(`已取消：${reason || '该操作'}需要工程会话密码`, 'warn'); return false; }
   await writeApi('/api/engineering/session', { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-eng-session'), Password: pwd, Reason: reason, Target: target, DangerousOperationConfirmed: true, DurationMinutes: 30 }) });
   if(inp) inp.value = '';
-  log('工程会话已开启（30 分钟内有效，期间加样臂测试可直接复用）', 'ok');
+  log('工程会话已开启（30 分钟内有效，期间工程写操作可直接复用）', 'ok');
   return true;
 }
 async function runModuleArmTest() {
   const channel = (String(document.getElementById('debugModuleChannelSelect')?.value || '通道1').replace(/[^\d]/g,'')) || '1';
   const volume = Number(document.getElementById('debugModuleArmVolumeInput')?.value) || 100;
-  if(!(await ensureModuleEngineeringSession('pipetting-test:dispense', '调试：加样臂测试'))) return;
-  await writeApi('/api/engineering/pipetting-tests/dispense', { method:'POST', body: JSON.stringify({ CommandId: makeCommandId('debug-arm'), Channel: channel, VolumeUl: volume, Reason:'调试：加样臂测试', DangerousOperationConfirmed:true }) });
-  log(`加样臂测试已下发：通道${channel} 加液${volume}μL（已写入数据库命令日志）`, 'ok');
+  const op = document.getElementById('debugModuleArmOpSelect')?.value || 'aspirate';
+  const position = (document.getElementById('debugModuleArmPositionInput')?.value || '').trim() || 'WashInnerLeft';
+  const liquidClassVersionId = (document.getElementById('debugModuleLiquidClassSelect')?.value || '').trim();
+  if(!(await ensureModuleEngineeringSession(`pipetting-test:${op}`, '调试：加样臂测试'))) return;
+  const endpoint = ({ aspirate:'/api/engineering/pipetting-tests/aspirate', dispense:'/api/engineering/pipetting-tests/dispense', 'liquid-detect':'/api/engineering/pipetting-tests/liquid-detect', wash:'/api/engineering/pipetting-tests/wash' })[op] || '/api/engineering/pipetting-tests/aspirate';
+  const body = { CommandId: makeCommandId('debug-arm'), Channel: channel, Position: position, VolumeUl: volume, Reason:'调试：加样臂测试', DangerousOperationConfirmed:true };
+  if(liquidClassVersionId) body.LiquidClassVersionId = liquidClassVersionId;
+  await writeApi(endpoint, { method:'POST', body: JSON.stringify(body) });
+  log(`加样臂测试已下发：${op} 通道${channel} 点位${position} ${volume}μL${liquidClassVersionId?' +液体类型':''}（已写入数据库）`, 'ok');
   await loadDatabaseSnapshot();
 }
 async function runModuleBarcodeTest() {
@@ -6428,6 +6499,9 @@ async function dispatchEngineeringAction(action, btn) {
     if(action === '调试：清洗控制测试') return await runModuleWashTest();
     if(action === '调试：打开校验光') return await enableModuleCalibrationLight();
     if(action === '调试：停止全部测试') return await stopAllModuleTests();
+    if(action === '调试：打开液体类型配置') return; // 跳转由 openLiquidBtn 绑定负责；这里只避免误报"暂未接入"
+    if(action === '调试：读取当前液体类型') return await readDebugLiquidClass();
+    if(action === '调试：保存当前液体类型') { showSideTab('config'); renderConfigPane('liquid'); log('液体类型完整参数请在「配置 → 液体类型」编辑并保存（需工程会话）', 'ok'); return; }
     log(`${action}：暂未接入（样本清洗三按钮按约定保留原样，不绑后端）`, 'warn');
   } catch(err) { /* routed by writeApi where used */ }
   if(consoleNode) consoleNode.textContent += `\n[${new Date().toLocaleTimeString()}] ${action}`;
@@ -6578,10 +6652,22 @@ function bindConfigHandlers() {
   bindChannelBindingHandlers(root);
   bindEngineeringControlHandlers(root);
   bindSvgTargetLinks(root);
-  // 液体类型下拉框：先用缓存/默认值立即回填，再异步从数据库拉取刷新（仅当本子页含相关下拉框时）。
+  // 液体类型下拉框：用 currentLiquidClassCode 作为首选值回填（避免每次重渲染复位成 Ab），再异步从数据库刷新。
   if(LIQUID_CLASS_SELECT_IDS.some(id => document.getElementById(id))) {
-    hydrateLiquidClassSelects();
-    loadLiquidClassSelectsFromBackend();
+    const preferred = { liquidClassSelect: currentLiquidClassCode, positionLiquidClassSelect: currentLiquidClassCode, pipetteLiquidClassSelect: currentLiquidClassCode };
+    hydrateLiquidClassSelects(preferred);
+    if(document.getElementById('liquidClassSelect')) {
+      // 液体类型子页：进入即把当前类型的参数读进表单（顺带刷新下拉框缓存），避免空表单保存被后端校验拒绝。
+      readLiquidClassParams();
+    } else {
+      loadLiquidClassSelectsFromBackend(preferred); // 通道移位/移液测试子页：仅刷新下拉框。
+    }
+  }
+  // 配置页主下拉框变化时同步"当前液体类型"，使调试页显示与跨页选择保持一致。
+  const liquidSel = document.getElementById('liquidClassSelect');
+  if(liquidSel && !liquidSel.dataset.liquidCodeBound) {
+    liquidSel.dataset.liquidCodeBound = 'true';
+    liquidSel.addEventListener('change', () => { currentLiquidClassCode = String(liquidSel.value || currentLiquidClassCode || 'Ab'); });
   }
 }
 
