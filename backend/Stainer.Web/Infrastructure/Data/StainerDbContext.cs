@@ -24,6 +24,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<PrecisionCalibrationProfile> PrecisionCalibrationProfiles => Set<PrecisionCalibrationProfile>();
     public DbSet<MixerParameterProfile> MixerParameterProfiles => Set<MixerParameterProfile>();
     public DbSet<WashValveConfigProfile> WashValveConfigProfiles => Set<WashValveConfigProfile>();
+    public DbSet<AppSettingsProfile> AppSettingsProfiles => Set<AppSettingsProfile>();
     public DbSet<CoordinateProfile> CoordinateProfiles => Set<CoordinateProfile>();
     public DbSet<CoordinateProfileVersion> CoordinateProfileVersions => Set<CoordinateProfileVersion>();
     public DbSet<CoordinatePoint> CoordinatePoints => Set<CoordinatePoint>();
@@ -106,6 +107,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigurePrecisionCalibrationProfile(modelBuilder);
         ConfigureMixerParameterProfile(modelBuilder);
         ConfigureWashValveConfigProfile(modelBuilder);
+        ConfigureAppSettingsProfile(modelBuilder);
         ConfigureCoordinateProfile(modelBuilder);
         ConfigureCoordinateProfileVersion(modelBuilder);
         ConfigureCoordinatePoint(modelBuilder);
@@ -984,6 +986,26 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.HasIndex(x => x.ScopeKey).IsUnique();
     }
 
+    private static void ConfigureAppSettingsProfile(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<AppSettingsProfile>();
+        entity.ToTable("app_settings_profiles");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.ScopeKey).HasColumnName("scope_key").HasMaxLength(32).IsRequired();
+        entity.Property(x => x.DataInterface).HasColumnName("data_interface").HasMaxLength(64);
+        entity.Property(x => x.HostAddress).HasColumnName("host_address").HasMaxLength(256);
+        entity.Property(x => x.HeartbeatSec).HasColumnName("heartbeat_sec");
+        entity.Property(x => x.ReagentBottleCapacityMl).HasColumnName("reagent_bottle_capacity_ml").HasColumnType("TEXT");
+        entity.Property(x => x.ReagentTargetTempC).HasColumnName("reagent_target_temp_c").HasColumnType("TEXT");
+        entity.Property(x => x.WorkTargetTempC).HasColumnName("work_target_temp_c").HasColumnType("TEXT");
+        entity.Property(x => x.NeedleGapMm).HasColumnName("needle_gap_mm").HasColumnType("TEXT");
+        entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.ScopeKey).IsUnique();
+    }
+
     private static void ConfigureScannerRegion(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<ScannerRegion>();
@@ -1331,6 +1353,12 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         version.Property(x => x.ConditioningVolumeUl).HasColumnName("conditioning_volume_ul").IsRequired();
         version.Property(x => x.BreakoffSpeedUlPerSecond).HasColumnName("breakoff_speed_ul_per_second").IsRequired();
         version.Property(x => x.PostDispenseAirGapUl).HasColumnName("post_dispense_air_gap_ul").IsRequired();
+        version.Property(x => x.AspiratePostDelayMs).HasColumnName("aspirate_post_delay_ms").IsRequired();
+        version.Property(x => x.SystemTrailingAirGapUl).HasColumnName("system_trailing_air_gap_ul").IsRequired();
+        version.Property(x => x.DispenseLiquidDetectionEnabled).HasColumnName("dispense_liquid_detection_enabled").IsRequired();
+        version.Property(x => x.DispensePostDelayMs).HasColumnName("dispense_post_delay_ms").IsRequired();
+        version.Property(x => x.DispenseRetractSpeedUmPerSecond).HasColumnName("dispense_retract_speed_um_per_second").IsRequired();
+        version.Property(x => x.TrailingAirGapAfterEachDispenseEnabled).HasColumnName("trailing_air_gap_after_each_dispense_enabled").IsRequired();
         version.Property(x => x.CreatedByUserId).HasColumnName("created_by_user_id").HasMaxLength(36);
         version.Property(x => x.PublishedByUserId).HasColumnName("published_by_user_id").HasMaxLength(36);
         version.Property(x => x.EnabledByUserId).HasColumnName("enabled_by_user_id").HasMaxLength(36);

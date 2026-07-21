@@ -2,6 +2,7 @@ namespace Stainer.Web.Infrastructure.Web;
 
 using Stainer.Web.Application.Requests;
 using Stainer.Web.Application.Services;
+using Stainer.Web.Infrastructure.Devices;
 
 public static partial class WebHostEndpointExtensions
 {
@@ -10,6 +11,14 @@ public static partial class WebHostEndpointExtensions
     // 以规避 minimal API 对该请求类型（全简单属性 record）的 body 推断报错。
     private static void MapSerialConnectionEndpoints(WebApplication app)
     {
+        // 枚举本机真实可用串口名（只读名字，不开端口）。前端 COM 下拉据此显示真实端口，回退 COM1-4。
+        app.MapGet("/api/engineering/serial-ports", async (HttpContext context, UserSessionService sessionService, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(SerialPortEnumerator.ListAvailablePortNames());
+            }));
+
         app.MapGet("/api/engineering/serial-config/{deviceKey}", async (HttpContext context, string deviceKey, UserSessionService sessionService, SerialConnectionConfigService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {

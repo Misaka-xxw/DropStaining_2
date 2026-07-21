@@ -89,6 +89,12 @@ public sealed class EngineeringWriteService(
                     ConditioningVolumeUl = request.ConditioningVolumeUl ?? source?.ConditioningVolumeUl ?? 0,
                     BreakoffSpeedUlPerSecond = request.BreakoffSpeedUlPerSecond ?? source?.BreakoffSpeedUlPerSecond ?? 0,
                     PostDispenseAirGapUl = request.PostDispenseAirGapUl ?? source?.PostDispenseAirGapUl ?? 0,
+                    AspiratePostDelayMs = request.AspiratePostDelayMs ?? source?.AspiratePostDelayMs ?? 0,
+                    SystemTrailingAirGapUl = request.SystemTrailingAirGapUl ?? source?.SystemTrailingAirGapUl ?? 0,
+                    DispenseLiquidDetectionEnabled = request.DispenseLiquidDetectionEnabled ?? source?.DispenseLiquidDetectionEnabled ?? false,
+                    DispensePostDelayMs = request.DispensePostDelayMs ?? source?.DispensePostDelayMs ?? 0,
+                    DispenseRetractSpeedUmPerSecond = request.DispenseRetractSpeedUmPerSecond ?? source?.DispenseRetractSpeedUmPerSecond ?? 0,
+                    TrailingAirGapAfterEachDispenseEnabled = request.TrailingAirGapAfterEachDispenseEnabled ?? source?.TrailingAirGapAfterEachDispenseEnabled ?? false,
                     CreatedByUserId = actor.UserId,
                     CreatedAtUtc = now
                 };

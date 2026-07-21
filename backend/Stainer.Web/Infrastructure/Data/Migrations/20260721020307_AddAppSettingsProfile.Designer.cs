@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Stainer.Web.Infrastructure.Data;
 
@@ -10,9 +11,11 @@ using Stainer.Web.Infrastructure.Data;
 namespace Stainer.Web.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(StainerDbContext))]
-    partial class StainerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260721020307_AddAppSettingsProfile")]
+    partial class AddAppSettingsProfile
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
@@ -2346,10 +2349,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("INTEGER")
                         .HasColumnName("aspirate_delay_ms");
 
-                    b.Property<int>("AspiratePostDelayMs")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("aspirate_post_delay_ms");
-
                     b.Property<int>("AspirateSpeedUlPerSecond")
                         .HasColumnType("INTEGER")
                         .HasColumnName("aspirate_speed_ul_per_second");
@@ -2394,18 +2393,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                     b.Property<int>("DispenseDelayMs")
                         .HasColumnType("INTEGER")
                         .HasColumnName("dispense_delay_ms");
-
-                    b.Property<bool>("DispenseLiquidDetectionEnabled")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("dispense_liquid_detection_enabled");
-
-                    b.Property<int>("DispensePostDelayMs")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("dispense_post_delay_ms");
-
-                    b.Property<int>("DispenseRetractSpeedUmPerSecond")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("dispense_retract_speed_um_per_second");
 
                     b.Property<int>("DispenseSpeedUlPerSecond")
                         .HasColumnType("INTEGER")
@@ -2487,14 +2474,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT")
                         .HasColumnName("status");
-
-                    b.Property<int>("SystemTrailingAirGapUl")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("system_trailing_air_gap_ul");
-
-                    b.Property<bool>("TrailingAirGapAfterEachDispenseEnabled")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("trailing_air_gap_after_each_dispense_enabled");
 
                     b.Property<int>("TrailingAirGapUl")
                         .HasColumnType("INTEGER")

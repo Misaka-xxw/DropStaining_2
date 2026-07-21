@@ -60,6 +60,13 @@ public sealed class LiquidClassVersion
     //   PostDispenseAirGapUl    air gap aspirated after dispense to clear the tip and prevent dripping (uL).
     public int BreakoffSpeedUlPerSecond { get; set; }
     public int PostDispenseAirGapUl { get; set; }
+    // 吸液/加液补充参数（2026-07-20 补：原先表单有输入框但实体无字段，导致改了存不下）。
+    public int AspiratePostDelayMs { get; set; }
+    public int SystemTrailingAirGapUl { get; set; }
+    public bool DispenseLiquidDetectionEnabled { get; set; }
+    public int DispensePostDelayMs { get; set; }
+    public int DispenseRetractSpeedUmPerSecond { get; set; }
+    public bool TrailingAirGapAfterEachDispenseEnabled { get; set; }
     public string? CreatedByUserId { get; set; }
     public string? PublishedByUserId { get; set; }
     public string? EnabledByUserId { get; set; }

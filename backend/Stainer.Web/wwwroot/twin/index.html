@@ -2902,8 +2902,58 @@ async function syncLiquidThresholdsToBackend() {
       await writeApi('/api/fluidics/level-thresholds', { method:'POST', body: JSON.stringify(body) });
       synced++;
     }
-    if(synced) log(`液位阈值已同步到后端（${synced} 项，百分比×容量→μL）`, 'ok');
+    // 静默同步：液位阈值随"保存设置"一起落库，但不单独打日志，避免与运行参数日志重复刷屏。
   } catch(err) { /* routed by writeApi */ }
+}
+// ===== 设置模块 → 运行/通讯参数 ↔ 后端 app_settings_profiles（单行）=====
+// 7 个影响实际行为的参数（数据接口/主机地址/心跳/试剂瓶容量/试剂目标温度/工作目标温度/针间距）真存后端；
+// 界面偏好（日志保留/自动预检/最大可见步骤）仍由 localStorage 维护，不在此处。
+async function loadAppSettingsFromBackend() {
+  try {
+    const s = await backendApi('/api/engineering/app-settings');
+    const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = v; };
+    setVal('settingsDataInterfaceInput', s?.dataInterface);
+    setVal('settingsHostAddressInput', s?.hostAddress);
+    setVal('settingsHeartbeatInput', s?.heartbeatSec);
+    setVal('settingsReagentCapacityInput', s?.reagentBottleCapacityMl);
+    setVal('settingsReagentTargetInput', s?.reagentTargetTempC);
+    setVal('settingsWorkTargetInput', s?.workTargetTempC);
+    setVal('settingsNeedleGapInput', s?.needleGapMm);
+    // 合并到内存 appSettings（后端为这 7 项的权威；界面偏好保持本地值）
+    appSettings = Object.assign({}, appSettings, {
+      dataInterface: s?.dataInterface ?? appSettings.dataInterface,
+      hostAddress: s?.hostAddress ?? appSettings.hostAddress,
+      heartbeatSec: s?.heartbeatSec ?? appSettings.heartbeatSec,
+      reagentBottleCapacityMl: s?.reagentBottleCapacityMl ?? appSettings.reagentBottleCapacityMl,
+      reagentTargetTempC: s?.reagentTargetTempC ?? appSettings.reagentTargetTempC,
+      workTargetTempC: s?.workTargetTempC ?? appSettings.workTargetTempC,
+      needleGapMm: s?.needleGapMm ?? appSettings.needleGapMm
+    });
+  } catch(_) { /* 未保存过：保持 localStorage 默认，不报错 */ }
+}
+async function syncAppSettingsToBackend() {
+  const num = k => { const v = appSettings?.[k]; const n = Number(v); return (v == null || v === '' || !Number.isFinite(n)) ? null : n; };
+  const dataInterface = appSettings?.dataInterface || null;
+  const hostAddress = appSettings?.hostAddress || null;
+  const heartbeatSec = num('heartbeatSec');
+  const reagentBottleCapacityMl = num('reagentBottleCapacityMl');
+  const reagentTargetTempC = num('reagentTargetTempC');
+  const workTargetTempC = num('workTargetTempC');
+  const needleGapMm = num('needleGapMm');
+  await writeApi('/api/engineering/app-settings', { method:'PUT', body: JSON.stringify({
+    commandId: makeCommandId('app-settings'),
+    dataInterface, hostAddress, heartbeatSec, reagentBottleCapacityMl, reagentTargetTempC, workTargetTempC, needleGapMm,
+    reason: '设置模块：保存运行/通讯参数'
+  }) });
+  const parts = [];
+  if(dataInterface) parts.push(`接口=${dataInterface}`);
+  if(hostAddress) parts.push(`地址=${hostAddress}`);
+  if(heartbeatSec != null) parts.push(`心跳=${heartbeatSec}s`);
+  if(reagentBottleCapacityMl != null) parts.push(`瓶容量=${reagentBottleCapacityMl}ml`);
+  if(reagentTargetTempC != null) parts.push(`试剂温=${reagentTargetTempC}℃`);
+  if(workTargetTempC != null) parts.push(`工作温=${workTargetTempC}℃`);
+  if(needleGapMm != null) parts.push(`针间距=${needleGapMm}mm`);
+  log(`运行/通讯参数已保存到后端：${parts.join(' · ') || '无变更'}`, 'ok');
 }
 
 
@@ -3849,6 +3899,24 @@ function animateArmTo(x, y, z1, z2, duration=900) {
 }
 function runtimeStepTarget(step) {
   const pointCode = String(step?.targetPointCode || '').trim();
+  const action = `${step?.majorStepCode || ''} ${step?.actionType || ''}`.toLowerCase();
+  const reagentCode = String(step?.reagentCode || '').toUpperCase();
+  // 吸液类步骤（带试剂的 Dispense/Pipette，排除 wash/dab/heat）：机械臂先到「该步骤对应试剂」位吸液，
+  // 让"吸取试剂"可见、且与步骤试剂一一对应（不再直接跳到玻片）。找不到试剂位则回退到原目标。
+  const isLiquidAdd = !!reagentCode
+    && !action.includes('wash')
+    && !action.includes('dab')
+    && !action.includes('heat') && !action.includes('temp');
+  if(isLiquidAdd) {
+    if(reagentCode === 'DAB') {
+      const mixTargets = byCategory.get('混合液体配液区') || [];
+      const activeMix = mixTargets.find(item => ['ready','running','active'].includes(String(itemState.get(item.name) || '').toLowerCase()));
+      if(activeMix) return activeMix;
+    }
+    const reagentName = [...itemReagentCodes.entries()].find(([, code]) => String(code || '').toUpperCase() === reagentCode)?.[0];
+    if(reagentName) return findTarget(reagentName);
+  }
+
   const pointSlot = pointCode.toUpperCase().match(/^([A-D])-(0?[1-4])$/);
   if(pointSlot) {
     const channelNo = pointSlot[1].charCodeAt(0) - 64;
@@ -3863,18 +3931,7 @@ function runtimeStepTarget(step) {
     return findTarget(`R${channelNo}${Number(slotMatch[2])}`) || null;
   }
 
-  const action = `${step?.majorStepCode || ''} ${step?.actionType || ''}`.toLowerCase();
   if(action.includes('wash')) return findTarget('洗针头_右列_洗内壁_R1');
-  const reagentCode = String(step?.reagentCode || '').toUpperCase();
-  if(reagentCode === 'DAB') {
-    const mixTargets = byCategory.get('混合液体配液区') || [];
-    const activeMix = mixTargets.find(item => ['ready','running','active'].includes(String(itemState.get(item.name) || '').toLowerCase()));
-    if(activeMix) return activeMix;
-  }
-  if(reagentCode) {
-    const reagentName = [...itemReagentCodes.entries()].find(([, code]) => String(code || '').toUpperCase() === reagentCode)?.[0];
-    if(reagentName) return findTarget(reagentName);
-  }
   return pointCode ? findTarget(pointCode) : null;
 }
 function applyRuntimeDrivenState(nextRuntime, nextArm) {
@@ -3906,7 +3963,12 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
   currentTarget = visualTarget || null;
   if(!nextArm && !visualTarget) return;
   const armMatchesStep = !!(runtimeStep?.id && nextArm?.workflowStepExecutionId === runtimeStep.id);
-  const preferTimelineTarget = !!(running && stepTarget && !armMatchesStep);
+  // 吸液类步骤（带试剂的 Dispense/Pipette，排除 wash/dab/heat）始终走「步骤对应试剂位」stepTarget，
+  // 不被后端机械臂终态（玻片）覆盖——让"吸取试剂"稳定可见、且与该步试剂一一对应（HE/IHC 一致）。
+  const _lkRk = String(runtimeStep?.reagentCode || '').toUpperCase();
+  const _lkAct = `${runtimeStep?.majorStepCode || ''} ${runtimeStep?.actionType || ''}`.toLowerCase();
+  const stepIsLiquidAdd = !!(runtimeStep && _lkRk && !_lkAct.includes('wash') && !_lkAct.includes('dab') && !_lkAct.includes('heat') && !_lkAct.includes('temp'));
+  const preferTimelineTarget = !!(running && stepTarget && (!armMatchesStep || stepIsLiquidAdd));
   const end = {
     x:Number(homeVisualTarget?.x ?? (preferTimelineTarget ? stepTarget?.x : nextArm?.x) ?? stepTarget?.x ?? arm.x),
     y:Number(homeVisualTarget?.y ?? (preferTimelineTarget ? stepTarget?.y : nextArm?.y) ?? stepTarget?.y ?? arm.y),
@@ -3995,7 +4057,10 @@ function renderDetail(item) {
     const ch = getChannelIdFromName(item.name);
     const profile = getChannelProfile(ch);
     const stepDefs = getChannelStepDefs(ch);
-    const ops = stepDefs.length ? (slideOps.get(item.name) || []).map((done, idx) => `${idx+1}.${getStepDef(idx, item).label}${done?'✓':'○'}`).join(' / ') : '未选择通道配置文件';
+    // 步骤列表以「通道配置的真实步骤定义 stepDefs」为准（对应本次运行的工作流版本步数，如 HE=5），
+    // slideOps 只用于回显每步完成状态，避免 slideOps 数组长度陈旧导致只显示 1 步。
+    const doneFlags = slideOps.get(item.name) || [];
+    const ops = stepDefs.length ? stepDefs.map((def, idx) => `${idx+1}.${def.label || getStepDef(idx, item).label}${doneFlags[idx]?'✓':'○'}`).join(' / ') : '未选择通道配置文件';
     extra.push(`染色：${getSlideStain(item)}`);
     extra.push(`温度：${formatDbValue(getSlideTemp(item), '℃', v => v.toFixed(1))}`);
     extra.push(`配置：${profile ? profile.name : '未选择'}`);
@@ -4174,6 +4239,7 @@ async function loadScannerConfigIntoInputs() {
   let p;
   try { p = await backendApi(`/api/scanners/${encodeURIComponent(sc.id)}`); } catch(e) { return null; }
   const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = String(v); };
+  await populateComPortSelect('scannerComPortSelect'); // 先用本机真实串口重建扫码器 COM 下拉，再回填保存值
   setVal('scannerComPortSelect', p.port);
   setVal('scannerBaudRateSelect', p.baudRate);
   const preset = document.getElementById('scannerSerialPresetInput');
@@ -6154,6 +6220,12 @@ function liquidClassFormParams() {
   set('blowoutVolumeUl', num('dispBlowoutVolumeInput'));
   set('breakoffSpeedUlPerSecond', num('dispBreakoffSpeedInput'));
   set('retractSpeedUmPerSecond', mmToUm('aspRetractSpeedInput'));         // mm/s -> μm/s
+  set('aspiratePostDelayMs', num('aspPostDelayInput'));
+  set('systemTrailingAirGapUl', num('aspSystemTrailingAirGapInput'));
+  set('dispenseLiquidDetectionEnabled', yn('dispUseLldSelect'));
+  set('dispensePostDelayMs', num('dispPostDelayInput'));
+  set('dispenseRetractSpeedUmPerSecond', mmToUm('dispRetractSpeedInput'));
+  set('trailingAirGapAfterEachDispenseEnabled', yn('dispTrailingAfterEachSelect'));
   return out;
 }
 
@@ -6237,9 +6309,12 @@ async function readDebugLiquidClass() {
 }
 
 async function saveLiquidClassParams(isCreate) {
-  const code = String(document.getElementById('liquidClassSelect')?.value || '').trim();
+  const selectedCode = String(document.getElementById('liquidClassSelect')?.value || '').trim();
   const newName = String(document.getElementById('liquidClassNewNameInput')?.value || '').trim();
-  const name = isCreate ? (newName || code) : code;
+  // 新建：用"新建名称"输入的值作为新类型的 code（表单只有一个新建输入框），避免误用当前选中 code 覆盖现有类型；保存：用当前选中 code。
+  const code = isCreate ? newName : selectedCode;
+  const name = isCreate ? newName : selectedCode;
+  if(isCreate && !code) { log('请先在"新建名称"里输入新液体类型编码', 'warn'); return; }
   const body = { commandId: makeCommandId(isCreate ? 'liquid-class-create' : 'liquid-class-save'), code, name, isEnabled: true, reason: isCreate ? 'twin 新建液体类型' : 'twin 保存液体类型参数', dangerousOperationConfirmed: false };
   if(!isCreate) Object.assign(body, liquidClassFormParams());
   // 保存是工程写操作，必须先有工程会话（二次认证），否则后端返回 403「权限不足」。复用模块测试的会话开启逻辑（已活动则直接复用，否则弹窗要管理员密码）。
@@ -6300,6 +6375,12 @@ async function readLiquidClassParams() {
   setVal('dispBlowoutVolumeInput', num(ver, 'blowoutVolumeUl'));
   setVal('dispBreakoffSpeedInput', num(ver, 'breakoffSpeedUlPerSecond'));
   setVal('aspRetractSpeedInput', umToMm(num(ver, 'retractSpeedUmPerSecond')));
+  setVal('aspPostDelayInput', vp('aspiratePostDelayMs'));
+  setVal('aspSystemTrailingAirGapInput', vp('systemTrailingAirGapUl'));
+  setVal('dispUseLldSelect', ver.dispenseLiquidDetectionEnabled === true ? '是' : (ver.dispenseLiquidDetectionEnabled === false ? '否' : null));
+  setVal('dispPostDelayInput', vp('dispensePostDelayMs'));
+  setVal('dispRetractSpeedInput', umToMm(num(ver, 'dispenseRetractSpeedUmPerSecond')));
+  setVal('dispTrailingAfterEachSelect', ver.trailingAirGapAfterEachDispenseEnabled === true ? '是' : (ver.trailingAirGapAfterEachDispenseEnabled === false ? '否' : null));
   const label = match.code || match.name || code;
   log(`已读取液体类型 ${label} 参数（启用版本 v${ver.versionNo ?? '-'}，μm 字段 ÷1000 回显为 mm/mm·s⁻¹）`, 'ok');
 }
@@ -6445,8 +6526,23 @@ async function saveDebugComConfig() {
   log(`COM 口已保存到数据库：${body.portName || '未配置'} @ ${body.baudRate}，${body.dataBits}/${body.parity[0]}/${body.stopBits}`, 'ok');
   await readDebugComConfig();
 }
+// 用本机真实串口填充调试 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。保留当前选中值。
+// 用本机真实串口填充指定 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。调试/扫码器共用。
+// 注意：不保留渲染时的硬编码默认（如 COM1）——否则会把不存在的 COM1 混进真实端口列表。保存的端口由调用方随后回填。
+async function populateComPortSelect(selectId) {
+  let ports = null;
+  try { ports = await backendApi('/api/engineering/serial-ports'); } catch(e) { ports = null; }
+  const sel = document.getElementById(selectId);
+  if(!sel) return;
+  const arr = (Array.isArray(ports) && ports.length ? ports.map(String) : ['COM1','COM2','COM3','COM4']);
+  sel.innerHTML = arr.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+}
+
 async function autoLoadDebugComConfig() {
-  try { applyDebugComFromBackend(await backendApi('/api/engineering/serial-config/main-controller')); }
+  try {
+    await populateComPortSelect('debugComPortSelect'); // 先用本机真实串口重建下拉，再回填已保存的配置
+    applyDebugComFromBackend(await backendApi('/api/engineering/serial-config/main-controller'));
+  }
   catch(e) { /* 进入调试 COM 子页时静默回填后端配置，失败不阻塞 */ }
 }
 
@@ -7696,10 +7792,10 @@ function openSettingsPage(section='系统设置', userManage=false) {
         <div class="settings-section" id="settingsSectionRuntime"><strong>${escapeHtml(section)}</strong><div class="settings-line" id="settingsCurrentModeLine"><span>当前模式</span><b id="settingsModeText">${escapeHtml(mode)}</b></div><div class="settings-line" id="settingsPrecheckLine"><span>检测状态</span><b id="settingsPrecheckText">${precheckPassed ? '已通过' : '未完成'}</b></div><div class="settings-help">开始前必须通过检测；开始和暂停按钮在未通过检测前会引导进入检测页面。</div></div>
       </div>
       <div class="settings-subpane" id="settingsSubpaneCommunication" data-settings-subpane="communication">
-        <div class="settings-section" id="settingsSectionCommunication"><strong>通讯与数据</strong><div class="settings-edit-grid"><label>数据接口<select id="settingsDataInterfaceInput" data-control-id="settingsDataInterfaceInput"><option value="WebSocket 预留" ${appSettings.dataInterface==='WebSocket 预留'?'selected':''}>WebSocket 预留</option><option value="上位机直连" ${appSettings.dataInterface==='上位机直连'?'selected':''}>上位机直连</option><option value="离线模拟" ${appSettings.dataInterface==='离线模拟'?'selected':''}>离线模拟</option></select></label><label>上位机 / WebSocket 地址<input id="settingsHostAddressInput" data-control-id="settingsHostAddressInput" value="${escapeHtml(appSettings.hostAddress)}"></label><label>心跳间隔 / 秒<input id="settingsHeartbeatInput" type="number" min="1" step="1" value="${Number(appSettings.heartbeatSec)}"></label><label>日志保留条数<input id="settingsLogRetentionInput" type="number" min="50" step="50" value="${Number(appSettings.logRetention)}"></label></div><div class="settings-help">后续可直接接 WebSocket 或上位机实时数据。控件 ID 已预留，便于后端绑定。</div></div>
+        <div class="settings-section" id="settingsSectionCommunication"><strong>通讯与数据</strong><div class="settings-edit-grid"><label>数据接口<select id="settingsDataInterfaceInput" data-control-id="settingsDataInterfaceInput"><option value="WebSocket 预留" ${appSettings.dataInterface==='WebSocket 预留'?'selected':''}>WebSocket 预留</option><option value="上位机直连" ${appSettings.dataInterface==='上位机直连'?'selected':''}>上位机直连</option><option value="离线模拟" ${appSettings.dataInterface==='离线模拟'?'selected':''}>离线模拟</option></select></label><label>上位机 / WebSocket 地址<input id="settingsHostAddressInput" data-control-id="settingsHostAddressInput" value="${escapeHtml(appSettings.hostAddress)}"></label><label>心跳间隔 / 秒<input id="settingsHeartbeatInput" type="number" min="1" step="1" value="${appSettings.heartbeatSec ?? DEFAULT_APP_SETTINGS.heartbeatSec}"></label><label>日志保留条数<input id="settingsLogRetentionInput" type="number" min="50" step="50" value="${Number(appSettings.logRetention)}"></label></div><div class="settings-help">后续可直接接 WebSocket 或上位机实时数据。控件 ID 已预留，便于后端绑定。</div></div>
       </div>
       <div class="settings-subpane" id="settingsSubpaneDevice" data-settings-subpane="device">
-        <div class="settings-section" id="settingsSectionDeviceParameters"><strong>设备参数</strong><div class="settings-edit-grid"><label>针头间距 / mm<input id="settingsNeedleGapInput" type="number" min="0" step="0.1" value="${Number(appSettings.needleGapMm)}"></label><label>试剂瓶默认容量 / ml<input id="settingsReagentCapacityInput" type="number" min="0" step="0.1" value="${Number(appSettings.reagentBottleCapacityMl)}"></label><label>试剂区目标温度 / ℃<input id="settingsReagentTargetInput" type="number" step="0.1" value="${Number(appSettings.reagentTargetTempC)}"></label><label>染色区目标温度 / ℃<input id="settingsWorkTargetInput" type="number" step="0.1" value="${Number(appSettings.workTargetTempC)}"></label></div><div class="settings-help">试剂瓶容量用于试剂区图例 ml 汇总；温度用于当前模拟显示和配置默认值。</div></div>
+        <div class="settings-section" id="settingsSectionDeviceParameters"><strong>设备参数</strong><div class="settings-edit-grid"><label>针头间距 / mm<input id="settingsNeedleGapInput" type="number" min="0" step="0.1" value="${appSettings.needleGapMm ?? DEFAULT_APP_SETTINGS.needleGapMm}"></label><label>试剂瓶默认容量 / ml<input id="settingsReagentCapacityInput" type="number" min="0" step="0.1" value="${appSettings.reagentBottleCapacityMl ?? DEFAULT_APP_SETTINGS.reagentBottleCapacityMl}"></label><label>试剂区目标温度 / ℃<input id="settingsReagentTargetInput" type="number" step="0.1" value="${appSettings.reagentTargetTempC ?? DEFAULT_APP_SETTINGS.reagentTargetTempC}"></label><label>染色区目标温度 / ℃<input id="settingsWorkTargetInput" type="number" step="0.1" value="${appSettings.workTargetTempC ?? DEFAULT_APP_SETTINGS.workTargetTempC}"></label></div><div class="settings-help">试剂瓶容量用于试剂区图例 ml 汇总；温度用于当前模拟显示和配置默认值。</div></div>
       </div>
       <div class="settings-subpane" id="settingsSubpaneSafety" data-settings-subpane="safety">
         <div class="settings-section" id="settingsSectionSafetyThresholds"><strong>液路与安全阈值</strong><div class="settings-edit-grid"><label>纯水低液位 / %<input id="settingsPureThresholdInput" type="number" min="0" max="100" step="1" value="${Number(appSettings.pureLowThresholdPct)}"></label><label>PBS低液位 / %<input id="settingsPbsThresholdInput" type="number" min="0" max="100" step="1" value="${Number(appSettings.pbsLowThresholdPct)}"></label><label>废液满阈值 / %<input id="settingsWasteThresholdInput" type="number" min="0" max="100" step="1" value="${Number(appSettings.wasteFullThresholdPct)}"></label><label>排毒桶满阈值 / %<input id="settingsToxicThresholdInput" type="number" min="0" max="100" step="1" value="${Number(appSettings.toxicFullThresholdPct)}"></label></div></div>
@@ -7725,9 +7821,10 @@ function openSettingsPage(section='系统设置', userManage=false) {
     });
     const initialSettingsTab = document.querySelector('[data-settings-tab].active');
     toggleSettingsActions(initialSettingsTab ? initialSettingsTab.getAttribute('data-settings-tab') : 'runtime');
-    bindClick('settingsSaveBtn', async () => { saveSettingsFromPane(); await syncLiquidThresholdsToBackend(); });
+    bindClick('settingsSaveBtn', async () => { saveSettingsFromPane(); await syncAppSettingsToBackend(); await syncLiquidThresholdsToBackend(); });
     bindClick('settingsResetBtn', resetAppSettings);
     if(canShowUsers) bindUserManagementHandlers();
+    loadAppSettingsFromBackend(); // 进入设置页时用后端值回填 7 个运行/通讯参数（界面偏好仍用 localStorage）
   }
   showSideTab('settings');
   log(`打开${section}：右侧栏进入设置页面`, 'ok');

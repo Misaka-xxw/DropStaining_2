@@ -144,6 +144,12 @@ public sealed class EngineeringConfigService(
                 liquidPayload.ConditioningVolumeUl,
                 liquidPayload.BreakoffSpeedUlPerSecond,
                 liquidPayload.PostDispenseAirGapUl,
+                null,  // AspiratePostDelayMs（导入预览暂不传，由源版本继承）
+                null,  // SystemTrailingAirGapUl
+                null,  // DispenseLiquidDetectionEnabled
+                null,  // DispensePostDelayMs
+                null,  // DispenseRetractSpeedUmPerSecond
+                null,  // TrailingAirGapAfterEachDispenseEnabled
                 request.Target,
                 request.DangerousOperationConfirmed),
             actor,

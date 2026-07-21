@@ -286,6 +286,12 @@ public sealed record SaveLiquidClassRequest(
     int? ConditioningVolumeUl = null,
     int? BreakoffSpeedUlPerSecond = null,
     int? PostDispenseAirGapUl = null,
+    int? AspiratePostDelayMs = null,
+    int? SystemTrailingAirGapUl = null,
+    bool? DispenseLiquidDetectionEnabled = null,
+    int? DispensePostDelayMs = null,
+    int? DispenseRetractSpeedUmPerSecond = null,
+    bool? TrailingAirGapAfterEachDispenseEnabled = null,
     string? Target = null,
     bool DangerousOperationConfirmed = false);
 
