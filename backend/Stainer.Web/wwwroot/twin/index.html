@@ -3199,7 +3199,99 @@ function showReagentCoolingDetail(xMm=null, yMm=null) {
     <div class="object-engineering-panel" id="svg-reagent-temperature-control-object-engineering" data-control-id="svg-reagent-temperature-control-object-engineering">
       <section class="object-engineering-card" id="reagentCoolingControlCard" data-control-id="reagentCoolingControlCard"><strong>试剂制冷控制<span class="engineering-pill">对象详情</span></strong><div class="object-form-grid"><label>制冷温度<input id="reagentCoolingTargetInput" data-control-id="reagentCoolingTargetInput" value="${Number(appSettings?.reagentTargetTempC ?? 8).toFixed(1)}℃"></label><label>当前温度<input id="reagentCoolingCurrentInput" data-control-id="reagentCoolingCurrentInput" value="${currentReagentTemp()}" readonly></label></div><div class="object-actions"><button type="button" class="ok-lite" data-object-action="设置试剂制冷温度" data-object-name="试剂温度">设置温度</button><button type="button" data-object-action="查询试剂制冷温度" data-object-name="试剂温度">查询温度</button><button type="button" class="primary-lite" data-object-action="启动试剂制冷" data-object-name="试剂温度">启动制冷</button><button type="button" class="warn-lite" data-object-action="停止试剂制冷" data-object-name="试剂温度">停止制冷</button></div><div class="object-note">该区由原“配置 → 清洗混匀 → 试剂制冷控制”迁移而来，通过点击孪生页面试剂温度进入。</div></section>
     </div>`;
+  bindReagentCoolingControls(box);
   bindGenericObjectActionButtons(box);
+}
+
+// ===== 试剂制冷控制：对象详情四个按钮对接后端 thermal API（不再走通用模拟日志） =====
+function parseReagentTempCelsius(raw) {
+  // 兼容 "8" / "8.0" / "8℃" / "8 °C" / "-12.5°C" 等写法：取第一个数值
+  const match = raw == null ? null : String(raw).trim().match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : NaN;
+}
+function formatReagentTempCelsius(deciC) {
+  const v = Number(deciC);
+  return Number.isFinite(v) ? (v / 10).toFixed(1) + '℃' : '—';
+}
+async function fetchReagentCoolingState() {
+  const state = await backendApi('/api/thermal/state');
+  return (state && state.cooling) || null;
+}
+function applyReagentCoolingInputs(cooling) {
+  if(!cooling) return;
+  const target = document.getElementById('reagentCoolingTargetInput');
+  const current = document.getElementById('reagentCoolingCurrentInput');
+  if(target) target.value = formatReagentTempCelsius(cooling.targetTemperatureDeciC);
+  if(current) current.value = formatReagentTempCelsius(cooling.currentTemperatureDeciC);
+}
+function handleReagentCoolingError(err) {
+  // 401 走现有登录/错误处理逻辑；其余错误先写一条试剂制冷专用失败日志，再走统一路由
+  if(err && err.status === 401) { routeWriteError(err); return; }
+  log('试剂制冷控制失败：' + ((err && err.message) || '未知错误'), 'err');
+  routeWriteError(err);
+}
+async function queryReagentCooling() {
+  const cooling = await fetchReagentCoolingState();
+  // 先刷新 DB 快照（SVG reagentTempText、KPI 温度），再用 thermal state 覆写两个输入框，
+  // 避免 applyDatabaseSnapshot 用 control_values 把刚查询到的目标/当前温度覆盖回去
+  if(typeof loadDatabaseSnapshot === 'function') { try { await loadDatabaseSnapshot(); } catch(_) {} }
+  applyReagentCoolingInputs(cooling);
+  log(`查询试剂制冷温度：当前 ${formatReagentTempCelsius(cooling && cooling.currentTemperatureDeciC)} / 目标 ${formatReagentTempCelsius(cooling && cooling.targetTemperatureDeciC)} / 制冷 ${(cooling && cooling.isEnabled) ? '开启' : '关闭'} / 状态 ${(cooling && cooling.status) || '—'}`, 'ok');
+}
+async function sendReagentCooling(targetDeciC, isEnabled, actionLabel) {
+  // POST 响应自带最新 state.cooling，写入后无需再发一次 GET
+  const resp = await backendApi('/api/thermal/cooling', {
+    method: 'POST',
+    body: JSON.stringify({
+      commandId: makeCommandId('reagent-cooling'),
+      targetTemperatureDeciC: Math.round(targetDeciC),
+      isEnabled: !!isEnabled
+    })
+  });
+  log(`${actionLabel}成功：目标 ${(targetDeciC / 10).toFixed(1)}℃ / 制冷 ${isEnabled ? '开启' : '关闭'}`, 'ok');
+  // 写入成功后刷新 SVG/KPI 与两个文本框（同样先快照后覆写，保证公式最终生效）
+  if(typeof loadDatabaseSnapshot === 'function') { try { await loadDatabaseSnapshot(); } catch(_) {} }
+  applyReagentCoolingInputs((resp && resp.state && resp.state.cooling) || null);
+}
+const REAGENT_COOLING_ACTIONS = new Set(['设置试剂制冷温度', '查询试剂制冷温度', '启动试剂制冷', '停止试剂制冷']);
+function bindReagentCoolingControls(root = document) {
+  const REAGENT_TEMP_MIN_C = -20, REAGENT_TEMP_MAX_C = 40;
+  if(!root || typeof root.querySelectorAll !== 'function') return;
+  root.querySelectorAll('[data-object-action]').forEach(btn => {
+    const action = btn.getAttribute('data-object-action') || '';
+    if(!REAGENT_COOLING_ACTIONS.has(action)) return;          // 仅接管试剂制冷这四个按钮，其余仍由 bindGenericObjectActionButtons 走模拟日志
+    if(btn.dataset.objectActionBound === 'true') return;
+    btn.dataset.objectActionBound = 'true';
+    btn.addEventListener('click', async () => {
+      flashControl(btn);
+      try {
+        if(action === '查询试剂制冷温度') { await queryReagentCooling(); return; }
+        // 设置/启动/停止：都从目标温度输入框取值并做范围校验
+        const targetInput = document.getElementById('reagentCoolingTargetInput');
+        const celsius = parseReagentTempCelsius(targetInput ? targetInput.value : '');
+        if(!Number.isFinite(celsius)) {
+          log('试剂制冷控制：目标温度解析失败，请输入有效数字（例如 8 或 8.0℃）', 'warn');
+          return;
+        }
+        if(celsius < REAGENT_TEMP_MIN_C || celsius > REAGENT_TEMP_MAX_C) {
+          log(`试剂制冷控制：目标温度 ${celsius}℃ 超出允许范围 ${REAGENT_TEMP_MIN_C}~${REAGENT_TEMP_MAX_C}℃`, 'warn');
+          return;
+        }
+        const targetDeciC = Math.round(celsius * 10);
+        if(action === '设置试剂制冷温度') {
+          // 设置目标温度时不改变当前启停状态：先读后端 isEnabled，再下发
+          const cooling = await fetchReagentCoolingState();
+          await sendReagentCooling(targetDeciC, !!(cooling && cooling.isEnabled), '设置试剂制冷温度');
+        } else if(action === '启动试剂制冷') {
+          await sendReagentCooling(targetDeciC, true, '启动试剂制冷');
+        } else if(action === '停止试剂制冷') {
+          await sendReagentCooling(targetDeciC, false, '停止试剂制冷');
+        }
+      } catch(err) {
+        handleReagentCoolingError(err);
+      }
+    });
+  });
 }
 function showWaterModuleDetail(channelId, point={}) {
   selectedName = null;
