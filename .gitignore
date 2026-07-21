@@ -118,6 +118,8 @@ data/backups/
 # Local build, database probe, and backup artifacts
 /tmp-build/
 /tmp-dbprobe/
+/tmp-bridge-build/
+/tmp-hardware-tests-build/
 /data/*.bak
 /data/*.bak.*
 

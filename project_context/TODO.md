@@ -2,9 +2,9 @@
 
 # 全自动冰冻切片染色机上位机待办清单
 
-> 本文件以未完成工作为主，同时保留少量关键完成项用于追溯。Mock 业务闭环、正式数据库与 Web HMI 接入、历史 Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、扫码器配置持久化基础、扫码区域配置表达、试剂坐标锚点生成、DCR55 控制服务抽象、样本/试剂扫码职责与坐标语义确认、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证、坐标 Z 语义补齐、LiquidClass 参数补齐、工程手动移液测试 API、Workflow 通道关联模型评估及规划规则持久化均已进入提交基线。当前完整后端回归已恢复为 313/313 通过；当前重点是复核迁移与单页浏览器验收，并准备首次真实设备只读现场验收。
+> 本文件以未完成工作为主，同时保留少量关键完成项用于追溯。Mock 业务闭环、正式数据库与 Web HMI 接入、历史 Mock 浏览器验收、数字孪生 XY 基线、主控/DCR55/制冷离线协议、离线 Real 读取边界、扫码器配置持久化基础、扫码区域配置表达、试剂坐标锚点生成、DCR55 控制服务抽象、样本/试剂扫码职责与坐标语义确认、SOCON SDK 静态兼容性取证、23D SOCON 独立 x86 Bridge 骨架、P0-01 SOCON 兼容性报告收口、P0-02 Bridge 正式 net452 x86 构建验证、坐标 Z 语义补齐、LiquidClass 参数补齐、工程手动移液测试 API、Workflow 通道关联模型评估及规划规则持久化均已进入提交基线。2026-07-21 当前工作树完整后端回归为 313/313 通过，隔离空数据库 37 个 Migration 全量应用和 `/control-console` 浏览器验收已复核通过；正式旧数据升级兼容验证仍未完成，当前重点是准备首次真实设备只读现场验收。
 
-## 当前真实只读接入准备（2026-07-20，HEAD `97d8539`）
+## 当前真实只读接入准备（2026-07-21，HEAD `505f73b`）
 
 ### 已提交的软件基础
 
@@ -15,11 +15,14 @@
 
 ### 当前必做验证与清理
 
-- [x] 当前完整后端回归已修复：测试选择器明确选择 `FactoryGeneral-v1`，避免新增 `Ab` 后的唯一性歧义；Published Workflow 按确认规则允许原地修改、删除仍禁止。2026-07-21 当前工作树实测 **313 项全部通过、0 失败、0 跳过**；本轮测试修订尚未提交。
-- [ ] 在隔离数据库验证 `PersistWorkflowPlanningRules`、串口连接、精度校准、混匀参数和清洗阀配置相关迁移，确认旧数据兼容且无 pending migration。
-- [ ] 执行当前控制台/Workflow/时间线浏览器回归，确认最新配置、重置、扫码和运行接线没有破坏权限、审计、SignalR和Mock/Real边界。
-- [ ] 核对主仓库未跟踪的 `tmp-bridge-build/`、`tmp-hardware-tests-build/`；将可再生产物清理或加入忽略规则，仅保留明确需要的脱敏验收证据。
+- [x] 当前完整后端回归已修复：测试选择器明确选择 `FactoryGeneral-v1`，避免新增 `Ab` 后的唯一性歧义；Published Workflow 按确认规则允许原地修改、删除仍禁止。2026-07-21 当前工作树实测 **313 项全部通过、0 失败、0 跳过**；相关专项测试 16/16 通过；测试修订已进入当前 HEAD。
+- [x] 在隔离空数据库验证 37 个 Migration 可完整应用，首个 Migration 为 `20260624021457_InitialInfrastructure`，最后 Migration 为 `20260720050732_AddWashValveConfigProfile`；`integrity_check`、`foreign_key_check` 和关键基础查询通过，且无 pending model changes。正式旧数据升级兼容验证：未完成；当前仅完成空数据库全量迁移验证，不能将空数据库迁移成功写成旧数据升级兼容成功。
+- [x] 执行当前 `/control-console` 浏览器回归，确认最新配置、重置、扫码和运行接线没有破坏权限、审计、SignalR和Mock/Real边界。
+- [x] 核对主仓库未跟踪的 `tmp-bridge-build/`、`tmp-hardware-tests-build/`；确认二者已被 `.gitignore` 忽略，本轮未删除目录。忽略临时构建目录不代表其中内容已经提交或成为正式验收证据。
 - [x] 最新 SOCON Bridge 只读扩展已于 2026-07-20 正式构建：`Release|x86` **0 warning / 0 error**；从 `bin/x86/Release` 运行离线 `--self-test`，**93 checks passed**。本轮未配置 SDK、未连接硬件，不能替代 P1-01 SDK 部署验证或现场只读验收。
+- [ ] 使用受控迁移前数据库副本验证旧数据升级兼容；必须在临时副本执行，不得直接修改正式数据库。
+- [ ] 审核所有 Workflow 历史读取、时间线和导出路径，确认其使用冻结快照，避免 Published Workflow 原地修改导致历史解释漂移。本项不阻塞首次真实设备只读连接；在真实 Workflow 执行接入或正式发布验收前必须关闭。
+- [ ] 清理 CS0162 残余结构：BASELINE-CLOSE-01 首次构建曾报告一次 CS0162，后续普通 Release 构建和 `NoIncremental=true` 构建均为 0 warning / 0 error，当前无法稳定复现；`AllowPublishedWorkflowChildEdits = true` 之后存在结构性不可达分支。本轮未修改生产代码，该项不阻塞当前基线提交判断。
 
 ### 第一次真实设备测试计划
 
@@ -43,7 +46,7 @@
 
 ### 后续状态（已并入当前清单）
 
-- [ ] 浏览器级回归已随控制台验收脚本演进，但当前 HEAD 的最新复核仍未完成；统一由本文件顶部“当前必做验证与清理”跟踪，不再以 7 月 14 日版本单独判定。
+- [x] 浏览器级回归已随控制台验收脚本演进；2026-07-21 当前 HEAD 已通过 `/control-console` 验收脚本复核。后续代码变化后仍需重跑，不再以 7 月 14 日版本单独判定。
 - [x] 完整后端测试已于 2026-07-21 重跑并达到 313/313 通过；后续代码变化后继续按顶部清单重新记录。
 - [ ] 评估本次已提交的 `tmp-build/acceptance-build`、`tmp-build/final-review`、`tmp-build/review-build`、`tmp-build/acceptance-script.js` 和 `tmp-build/webcheck` 是否需要长期版本化；保留必要验收证据，并为纯临时构建产物完善 `.gitignore` 或仓库留存规则。
 - [x] 该轮源代码、专项测试、浏览器验收脚本调整及验收产物已提交至 `cd52b22`；这是提交完成时的历史状态，不表示当前 HEAD 的完整回归通过或当前工作区干净。
@@ -116,11 +119,11 @@
 
 - **历史记录保留**：Workflow 版本化、默认工作流、抗体映射、通道绑定、运行快照冻结等既有历史工作均保留追溯，不删除。
 - **评估结论**：经代码评估，现有 `WorkflowDefinition` / `WorkflowVersion` / `WorkflowStep` / `WorkflowReagentRequirement` 与 `ChannelBatch.SelectedWorkflowVersionId` 已满足“实验流程加载”需求；同一 Channel 内 4 个玻片共享同一 Workflow、不同 Channel 可选不同 Workflow 已被数据模型与运行实例化强制；`StainingTask.WorkflowVersionId` 为任务意图/兼容校验，`ChannelBatch.SelectedWorkflowVersionId` 为运行执行权威。
-- **结论**：无需新增一套 Workflow 定义/版本/通道关联模型；后续已为规划约束新增并提交 `WorkflowVersion.PlanningRulesJson` 和数据库迁移，因此“无需任何数据库字段或 Migration”的旧结论已失效。失败回归已修复；迁移验证仍按本文件顶部清单跟踪。
+- **结论**：无需新增一套 Workflow 定义/版本/通道关联模型；后续已为规划约束新增并提交 `WorkflowVersion.PlanningRulesJson` 和数据库迁移，因此“无需任何数据库字段或 Migration”的旧结论已失效。后端回归已恢复全绿；迁移验证按本文件顶部清单的事实边界记录，旧数据升级兼容仍待受控副本验证。
 
 ### 仍需完成（与上述配置能力配套）
 
-- 前端工程配置页面：LiquidClass 主要参数、坐标 Z-Travel/Z-Start/Z-End/Z-Dispense 的读写，以及 LiquidDetect/Aspirate/Dispense/Wash/Flush 工程移液测试均已在 `/control-console` 接线；后端回归已恢复全绿，仍需重跑浏览器验收，Real 动作继续 fail-closed。
+- 前端工程配置页面：LiquidClass 主要参数、坐标 Z-Travel/Z-Start/Z-End/Z-Dispense 的读写，以及 LiquidDetect/Aspirate/Dispense/Wash/Flush 工程移液测试均已在 `/control-console` 接线；后端回归已恢复全绿，当前 `/control-console` 浏览器验收已复核通过，后续代码变化后仍需重跑，Real 动作继续 fail-closed。
 - DCR55 真实硬件验证（见 P1-07）、主控真实硬件验证（见 P1-03）、SOCON 真实接入（见 P1-02）仍为未完成。
 - 样本扫码坐标落地（DCR55 工具偏移、Slot / `ScannerRegion` 扫码目标位、`SampleScan` 去留 / 改名）仍为未完成。
 - 试剂扫码通道映射（主控 `0x08` 的 `ch1–ch5` 与列 / R 位映射、EMPTY / INVALID 原始格式）仍为未完成。
@@ -128,8 +131,8 @@
 ## Workflow 执行 / 调度能力现状
 
 - **已实现**：Mock `MachineExecutor`、运行状态机、`WorkflowStepExecution`/运行账本、资源租约，以及暂停、恢复、重做和故障处理基础能力已进入提交基线。
-- **当前状态**：Mock 执行/调度能力已进入提交基线；测试已按 `FactoryGeneral-v1` 精确选择和“Published Workflow 允许原地修改、删除仍禁止”的确认契约修订，2026-07-21 当前工作树完整回归 313/313 通过。
-- **仍需完成**：修复完整回归、复核迁移并重跑 `/control-console` 浏览器验收；真实 Motion、液路、温控与设备动作编排仍属于 Real 接入任务，不因 Mock 执行器存在而放行。
+- **当前状态**：Mock 执行/调度能力已进入提交基线；测试已按 `FactoryGeneral-v1` 精确选择和“Published Workflow 允许原地修改、删除仍禁止”的确认契约修订，2026-07-21 当前工作树完整回归 313/313 通过。ChannelBatch 选择 Workflow 时保存 `WorkflowSnapshotJson`，已创建批次具备冻结快照，`WorkflowAssignmentHistory` 和 `AuditLog` 提供变更追溯。
+- **仍需完成**：审核所有 Workflow 历史读取、时间线和导出路径，确认其使用冻结快照，避免 Published Workflow 原地修改导致历史解释漂移；该项不阻塞首次真实设备只读连接，但在真实 Workflow 执行接入或正式发布验收前必须关闭。真实 Motion、液路、温控与设备动作编排仍属于 Real 接入任务，不因 Mock 执行器存在而放行。
 - **边界**：配置与执行分离；不绕过资源锁、命令幂等、审计、运行快照和 Real 安全门禁。
 
 ## P0：真实设备接入前的阻塞项
@@ -433,7 +436,7 @@
 ### P2-04｜完成 Real 模式端到端回归、权限与发布验收
 
 - **目标**：在真实设备 HE/IHC 流程稳定后，对正式 Web HMI、Real Adapter、Bridge、权限、审计、报警、运行追溯和部署边界进行发布前验收。
-- **当前状态**：Mock 后端完整回归已于 2026-07-21 恢复为 313/313 通过；最新单页浏览器回归仍待复核，Real 模式端到端发布验收尚未开始。
+- **当前状态**：Mock 后端完整回归已于 2026-07-21 恢复为 313/313 通过；最新 `/control-console` 单页浏览器回归已复核通过，Real 模式端到端发布验收尚未开始。
 - **前置条件**：P1-12、P1-13 完成；现场硬件、桥接进程和正式部署环境稳定。
 - **完成标准**：
   - 在正式或隔离验收环境执行后端、数据库、Bridge、Web HMI 和真实设备链路回归。
