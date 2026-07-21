@@ -6293,9 +6293,12 @@ async function readDebugLiquidClass() {
 }
 
 async function saveLiquidClassParams(isCreate) {
-  const code = String(document.getElementById('liquidClassSelect')?.value || '').trim();
+  const selectedCode = String(document.getElementById('liquidClassSelect')?.value || '').trim();
   const newName = String(document.getElementById('liquidClassNewNameInput')?.value || '').trim();
-  const name = isCreate ? (newName || code) : code;
+  // 新建：用"新建名称"输入的值作为新类型的 code（表单只有一个新建输入框），避免误用当前选中 code 覆盖现有类型；保存：用当前选中 code。
+  const code = isCreate ? newName : selectedCode;
+  const name = isCreate ? newName : selectedCode;
+  if(isCreate && !code) { log('请先在"新建名称"里输入新液体类型编码', 'warn'); return; }
   const body = { commandId: makeCommandId(isCreate ? 'liquid-class-create' : 'liquid-class-save'), code, name, isEnabled: true, reason: isCreate ? 'twin 新建液体类型' : 'twin 保存液体类型参数', dangerousOperationConfirmed: false };
   if(!isCreate) Object.assign(body, liquidClassFormParams());
   // 保存是工程写操作，必须先有工程会话（二次认证），否则后端返回 403「权限不足」。复用模块测试的会话开启逻辑（已活动则直接复用，否则弹窗要管理员密码）。
