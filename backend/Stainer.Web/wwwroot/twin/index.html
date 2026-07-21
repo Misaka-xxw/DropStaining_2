@@ -3899,6 +3899,24 @@ function animateArmTo(x, y, z1, z2, duration=900) {
 }
 function runtimeStepTarget(step) {
   const pointCode = String(step?.targetPointCode || '').trim();
+  const action = `${step?.majorStepCode || ''} ${step?.actionType || ''}`.toLowerCase();
+  const reagentCode = String(step?.reagentCode || '').toUpperCase();
+  // 吸液类步骤（带试剂的 Dispense/Pipette，排除 wash/dab/heat）：机械臂先到「该步骤对应试剂」位吸液，
+  // 让"吸取试剂"可见、且与步骤试剂一一对应（不再直接跳到玻片）。找不到试剂位则回退到原目标。
+  const isLiquidAdd = !!reagentCode
+    && !action.includes('wash')
+    && !action.includes('dab')
+    && !action.includes('heat') && !action.includes('temp');
+  if(isLiquidAdd) {
+    if(reagentCode === 'DAB') {
+      const mixTargets = byCategory.get('混合液体配液区') || [];
+      const activeMix = mixTargets.find(item => ['ready','running','active'].includes(String(itemState.get(item.name) || '').toLowerCase()));
+      if(activeMix) return activeMix;
+    }
+    const reagentName = [...itemReagentCodes.entries()].find(([, code]) => String(code || '').toUpperCase() === reagentCode)?.[0];
+    if(reagentName) return findTarget(reagentName);
+  }
+
   const pointSlot = pointCode.toUpperCase().match(/^([A-D])-(0?[1-4])$/);
   if(pointSlot) {
     const channelNo = pointSlot[1].charCodeAt(0) - 64;
@@ -3913,18 +3931,7 @@ function runtimeStepTarget(step) {
     return findTarget(`R${channelNo}${Number(slotMatch[2])}`) || null;
   }
 
-  const action = `${step?.majorStepCode || ''} ${step?.actionType || ''}`.toLowerCase();
   if(action.includes('wash')) return findTarget('洗针头_右列_洗内壁_R1');
-  const reagentCode = String(step?.reagentCode || '').toUpperCase();
-  if(reagentCode === 'DAB') {
-    const mixTargets = byCategory.get('混合液体配液区') || [];
-    const activeMix = mixTargets.find(item => ['ready','running','active'].includes(String(itemState.get(item.name) || '').toLowerCase()));
-    if(activeMix) return activeMix;
-  }
-  if(reagentCode) {
-    const reagentName = [...itemReagentCodes.entries()].find(([, code]) => String(code || '').toUpperCase() === reagentCode)?.[0];
-    if(reagentName) return findTarget(reagentName);
-  }
   return pointCode ? findTarget(pointCode) : null;
 }
 function applyRuntimeDrivenState(nextRuntime, nextArm) {
@@ -3956,7 +3963,12 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
   currentTarget = visualTarget || null;
   if(!nextArm && !visualTarget) return;
   const armMatchesStep = !!(runtimeStep?.id && nextArm?.workflowStepExecutionId === runtimeStep.id);
-  const preferTimelineTarget = !!(running && stepTarget && !armMatchesStep);
+  // 吸液类步骤（带试剂的 Dispense/Pipette，排除 wash/dab/heat）始终走「步骤对应试剂位」stepTarget，
+  // 不被后端机械臂终态（玻片）覆盖——让"吸取试剂"稳定可见、且与该步试剂一一对应（HE/IHC 一致）。
+  const _lkRk = String(runtimeStep?.reagentCode || '').toUpperCase();
+  const _lkAct = `${runtimeStep?.majorStepCode || ''} ${runtimeStep?.actionType || ''}`.toLowerCase();
+  const stepIsLiquidAdd = !!(runtimeStep && _lkRk && !_lkAct.includes('wash') && !_lkAct.includes('dab') && !_lkAct.includes('heat') && !_lkAct.includes('temp'));
+  const preferTimelineTarget = !!(running && stepTarget && (!armMatchesStep || stepIsLiquidAdd));
   const end = {
     x:Number(homeVisualTarget?.x ?? (preferTimelineTarget ? stepTarget?.x : nextArm?.x) ?? stepTarget?.x ?? arm.x),
     y:Number(homeVisualTarget?.y ?? (preferTimelineTarget ? stepTarget?.y : nextArm?.y) ?? stepTarget?.y ?? arm.y),
@@ -4045,7 +4057,10 @@ function renderDetail(item) {
     const ch = getChannelIdFromName(item.name);
     const profile = getChannelProfile(ch);
     const stepDefs = getChannelStepDefs(ch);
-    const ops = stepDefs.length ? (slideOps.get(item.name) || []).map((done, idx) => `${idx+1}.${getStepDef(idx, item).label}${done?'✓':'○'}`).join(' / ') : '未选择通道配置文件';
+    // 步骤列表以「通道配置的真实步骤定义 stepDefs」为准（对应本次运行的工作流版本步数，如 HE=5），
+    // slideOps 只用于回显每步完成状态，避免 slideOps 数组长度陈旧导致只显示 1 步。
+    const doneFlags = slideOps.get(item.name) || [];
+    const ops = stepDefs.length ? stepDefs.map((def, idx) => `${idx+1}.${def.label || getStepDef(idx, item).label}${doneFlags[idx]?'✓':'○'}`).join(' / ') : '未选择通道配置文件';
     extra.push(`染色：${getSlideStain(item)}`);
     extra.push(`温度：${formatDbValue(getSlideTemp(item), '℃', v => v.toFixed(1))}`);
     extra.push(`配置：${profile ? profile.name : '未选择'}`);
@@ -4224,6 +4239,7 @@ async function loadScannerConfigIntoInputs() {
   let p;
   try { p = await backendApi(`/api/scanners/${encodeURIComponent(sc.id)}`); } catch(e) { return null; }
   const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = String(v); };
+  await populateComPortSelect('scannerComPortSelect'); // 先用本机真实串口重建扫码器 COM 下拉，再回填保存值
   setVal('scannerComPortSelect', p.port);
   setVal('scannerBaudRateSelect', p.baudRate);
   const preset = document.getElementById('scannerSerialPresetInput');
@@ -6511,21 +6527,20 @@ async function saveDebugComConfig() {
   await readDebugComConfig();
 }
 // 用本机真实串口填充调试 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。保留当前选中值。
-async function populateDebugComPorts() {
+// 用本机真实串口填充指定 COM 下拉（GET /api/engineering/serial-ports）。失败/空时回退 COM1-4。调试/扫码器共用。
+// 注意：不保留渲染时的硬编码默认（如 COM1）——否则会把不存在的 COM1 混进真实端口列表。保存的端口由调用方随后回填。
+async function populateComPortSelect(selectId) {
   let ports = null;
   try { ports = await backendApi('/api/engineering/serial-ports'); } catch(e) { ports = null; }
-  const sel = document.getElementById('debugComPortSelect');
+  const sel = document.getElementById(selectId);
   if(!sel) return;
   const arr = (Array.isArray(ports) && ports.length ? ports.map(String) : ['COM1','COM2','COM3','COM4']);
-  const cur = String(sel.value || '');
-  const opts = (cur && !arr.includes(cur)) ? [cur, ...arr] : arr;
-  sel.innerHTML = opts.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
-  if(cur) sel.value = cur;
+  sel.innerHTML = arr.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
 }
 
 async function autoLoadDebugComConfig() {
   try {
-    await populateDebugComPorts(); // 先用本机真实串口重建下拉，再回填已保存的配置
+    await populateComPortSelect('debugComPortSelect'); // 先用本机真实串口重建下拉，再回填已保存的配置
     applyDebugComFromBackend(await backendApi('/api/engineering/serial-config/main-controller'));
   }
   catch(e) { /* 进入调试 COM 子页时静默回填后端配置，失败不阻塞 */ }

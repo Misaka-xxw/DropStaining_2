@@ -258,6 +258,16 @@ public sealed class MotionControlService(
                 return MotionDeviceResult.Failed(arm.LastErrorCode ?? "robot_arm_not_ready", arm.LastErrorMessage ?? "Robot arm is not ready.", MapStatusToDeviceStatus(arm.Status), ArmData(arm));
             }
 
+            // 吸液阶段：先把机械臂移到「该步骤对应试剂」源位并持久化一次，使"在试剂位吸液"成为可观测的中间状态（而非直接跳到玻片）。
+            arm.Status = MotionStatuses.Idle;
+            arm.CurrentTargetPointCode = source.SourcePositionCode;
+            arm.CurrentXUm = sourcePoint.CalibratedXUm;
+            arm.CurrentYUm = sourcePoint.CalibratedYUm;
+            arm.CurrentZUm = sourcePoint.SafeZUm ?? sourcePoint.CalibratedZUm;
+            arm.CoordinateProfileVersionId = snapshot.CoordinateProfileVersionId;
+            ApplyContext(arm, request);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
             var secondaryTarget = Convert.ToString(request.Parameters.GetValueOrDefault("secondaryTargetPointCode"));
             AddOperation(PipettingOperationTypes.LiquidDetect, DeviceCommandStatus.Completed, request, needle.NeedleCode, executionMode, source.SourcePositionCode, null, source.SourceType, reagentCode, source.ReagentBottleId, source.DabBatchId, source.SystemLiquidSourceType, source.SourcePositionCode, volume);
             AddOperation(PipettingOperationTypes.Aspirate, DeviceCommandStatus.Completed, request, needle.NeedleCode, executionMode, source.SourcePositionCode, null, source.SourceType, reagentCode, source.ReagentBottleId, source.DabBatchId, source.SystemLiquidSourceType, source.SourcePositionCode, volume);
