@@ -2437,6 +2437,9 @@ let demoPromise = null;
 let runtimeState = null;
 let runtimeArmAnimationSeq = 0;
 let runtimeArmTargetKey = null;
+let runtimePollTimer = null;
+let choreoToken = 0;
+let lastChoreoStepId = null;
 let lastRuntimeStepId = null;
 let arm = { x:177.75, y:17.0, z1:0, z2:0, fluid1:null, fluid2:null };
 const cameraStates = { reagent:'idle', arm:'idle' };
@@ -3989,22 +3992,33 @@ function animateArmTo(x, y, z1, z2, duration=900) {
     requestAnimationFrame(frame);
   });
 }
+// 前端试剂按 REAGENT_TYPE_LAYOUT_BY_ROW 静态布局（按行）。画面上"试剂类别"是按行固定的，
+// 所以机械臂吸液必须按这个布局定位，才能停在画面显示的正确试剂位（而不是后端放置的字母序位置）。
+const REAGENT_CODE_TO_TYPE_KEY = { P01:'primary-antibody', SEC:'secondary-antibody', HEM:'hematoxylin', EOS:'eosin', ETH:'absolute-ethanol', ACD:'acid-wash', BLK:'blocking' };
+function reagentRowByCode(code) {
+  const key = REAGENT_CODE_TO_TYPE_KEY[String(code || '').toUpperCase()];
+  if(!key) return null;
+  const typeIdx = REAGENT_TYPES.findIndex(t => t.key === key);
+  if(typeIdx < 0) return null;
+  const rowIdx = REAGENT_TYPE_LAYOUT_BY_ROW.indexOf(typeIdx);
+  return rowIdx >= 0 ? rowIdx + 1 : null;
+}
 function runtimeStepTarget(step) {
   const pointCode = String(step?.targetPointCode || '').trim();
   const action = `${step?.majorStepCode || ''} ${step?.actionType || ''}`.toLowerCase();
   const reagentCode = String(step?.reagentCode || '').toUpperCase();
-  // 吸液类步骤（带试剂的 Dispense/Pipette，排除 wash/dab/heat）：机械臂先到「该步骤对应试剂」位吸液，
-  // 让"吸取试剂"可见、且与步骤试剂一一对应（不再直接跳到玻片）。找不到试剂位则回退到原目标。
-  const isLiquidAdd = !!reagentCode
-    && !action.includes('wash')
-    && !action.includes('dab')
-    && !action.includes('heat') && !action.includes('temp');
+  // 按 ActionType 判断加液步（不能用 majorStepCode，否则 ACID_WASH/ETHANOL_WASH 这种"名字带 wash 的加液步"会被误判成洗）。
+  const isLiquidAdd = !!reagentCode && /dispens|pipett/i.test(String(step?.actionType || ''));
   if(isLiquidAdd) {
     if(reagentCode === 'DAB') {
       const mixTargets = byCategory.get('混合液体配液区') || [];
       const activeMix = mixTargets.find(item => ['ready','running','active'].includes(String(itemState.get(item.name) || '').toLowerCase()));
       if(activeMix) return activeMix;
     }
+    // 优先按前端静态试剂布局（试剂码→行→S码，列1）定位，与画面显示的试剂类别一致。
+    const rrow = reagentRowByCode(reagentCode);
+    if(rrow) { const t = findTarget(`试剂_S1${rrow}`); if(t) return t; }
+    // 回退：按后端放置(itemReagentCodes)反查
     const reagentName = [...itemReagentCodes.entries()].find(([, code]) => String(code || '').toUpperCase() === reagentCode)?.[0];
     if(reagentName) return findTarget(reagentName);
   }
@@ -4026,12 +4040,51 @@ function runtimeStepTarget(step) {
   if(action.includes('wash')) return findTarget('洗针头_右列_洗内壁_R1');
   return pointCode ? findTarget(pointCode) : null;
 }
+// 加液类步骤的前端自驱动分站动画：洗针位 → 该步试剂位 → 玻片位。
+// 完全不依赖慢快照轮询；用前端自己的坐标 + 该步 reagentCode 解析试剂位，保证“吸取的试剂与步骤对应”。
+async function playDispenseChoreography(step) {
+  const my = ++choreoToken;
+  lastChoreoStepId = step?.id || null;
+  const washT = findTarget('洗针头_右列_洗内壁_R1') || findTarget(HOME_TARGET_NAME);   // 洗针位
+  const reagentT = runtimeStepTarget(step);                                            // 带试剂 → 试剂位
+  const slideT = runtimeStepTarget({ ...step, reagentCode: null });                    // 去掉试剂 → 落到 slot/玻片位
+  const hop = async (label, t, holdMs) => {
+    if(my !== choreoToken) return;
+    if(t && Number.isFinite(t.x) && Number.isFinite(t.y)) {
+      log(`机械臂 → ${label} (${Number(t.x).toFixed(1)},${Number(t.y).toFixed(1)})`, '', step?.drawerCode || null);
+      const _dist = Math.hypot(Number(t.x) - arm.x, Number(t.y) - arm.y);
+      const _moveMs = Math.max(400, Math.min(900, _dist * 4));  // 按距离匀速（远的多花时间，近的少花），不再固定时长
+      await animateArmTo(Number(t.x), Number(t.y), arm.z1 ?? 0.6, arm.z2 ?? 0.3, _moveMs);
+      if(my !== choreoToken) return;
+    }
+    // 停留 + 可被取消的等待（新步骤开始时 choreoToken 自增，本段即中止）
+    const ticks = Math.ceil(holdMs / 200);
+    for(let i = 0; i < ticks && my === choreoToken; i++) await sleep(200);
+  };
+  await hop('洗针位（清洗）', washT, 800);
+  await hop('试剂位 ' + (step?.reagentCode || '(该步试剂)'), reagentT, 800);
+  await hop('玻片位（排液）', slideT, 800);
+}
+function ensureRuntimePoll() {
+  // 运行期间高频轮询轻量机械臂端点（让前端及时感知步骤切换，触发分站动画）。后端机械臂 XY 坐标未标定(null)，
+  // 所以这里不用后端坐标定位，机械臂位置由分站动画/stepTarget（前端坐标）决定。
+  if(running && !runtimePollTimer) {
+    runtimePollTimer = setInterval(async () => {
+      if(!running) { clearInterval(runtimePollTimer); runtimePollTimer = null; return; }
+      try {
+        const res = await fetch('/api/twin/arm', { cache:'no-store', credentials:'same-origin' });
+        if(res.ok) { const data = await res.json(); if(data?.arm) applyRuntimeDrivenState(runtimeState, data.arm); }
+      } catch(_) { /* 静默 */ }
+    }, 200);
+  }
+}
 function applyRuntimeDrivenState(nextRuntime, nextArm) {
   let runtimeStep = null;
   if(nextRuntime) {
     runtimeState = nextRuntime;
     const status = String(nextRuntime.status || '').toLowerCase();
     running = ['running','pending'].includes(status);
+    ensureRuntimePoll();
     paused = status === 'paused';
     currentStepIndex = Number(nextRuntime.completedStepCount || 0);
     const step = nextRuntime.currentStep || null;
@@ -4046,6 +4099,13 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
     if(status === 'faulted') setPhaseText('故障');
   }
 
+  // 加液类步骤：用前端自驱动分站动画（洗针位→试剂位→玻片位），不依赖慢快照轮询。
+  {
+    const _isDispense = !!runtimeStep && /dispens|pipett/i.test(String(runtimeStep?.actionType || ''));
+    if(_isDispense && running && runtimeStep.id !== lastChoreoStepId) playDispenseChoreography(runtimeStep);
+    if(_isDispense && running) return;  // 仅运行中才由分站动画驱动；刷新/残留状态(非运行)走原逻辑，不自动播放
+  }
+
   const stepTarget = runtimeStepTarget(runtimeStep);
   // 后端的 Home 是机械坐标 (0,0,0)；平面示意图的可视原点是洗针站内壁位。
   // 两套坐标系不能直接相加，否则 Mock 回零后机械臂会画到 SVG 左上角。
@@ -4057,12 +4117,14 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
   const armMatchesStep = !!(runtimeStep?.id && nextArm?.workflowStepExecutionId === runtimeStep.id);
   // 加液类(Dispense/Pipette)步骤直接跟随后端机械臂真实位置 nextArm：后端已按“试剂源位吸液 → 玻片排液”顺序移动机械臂，
   // 前端不再用 stepTarget 覆盖，避免每步开头先跳到玻片——正确序列应是 home → 试剂区 → 玻片。
-  const _lkAct = `${runtimeStep?.majorStepCode || ''} ${runtimeStep?.actionType || ''}`.toLowerCase();
-  const stepIsDispense = /dispens|pipett/i.test(_lkAct) && !_lkAct.includes('wash');
+  // 加液类(Dispense/Pipette)步骤由分站动画驱动；非加液步用 stepTarget（前端坐标，因后端机械臂坐标未标定为 null）。
+  const stepIsDispense = /dispens|pipett/i.test(String(runtimeStep?.actionType || ''));
   const preferTimelineTarget = !!(running && stepTarget && !armMatchesStep && !stepIsDispense);
+  // 运行结束/空闲时机械臂回 home（洗针区），不要停在或跳回最后一步的试剂位。
+  const idleHome = !running ? findTarget(HOME_TARGET_NAME) : null;
   const end = {
-    x:Number(homeVisualTarget?.x ?? (preferTimelineTarget ? stepTarget?.x : nextArm?.x) ?? stepTarget?.x ?? arm.x),
-    y:Number(homeVisualTarget?.y ?? (preferTimelineTarget ? stepTarget?.y : nextArm?.y) ?? stepTarget?.y ?? arm.y),
+    x:Number(homeVisualTarget?.x ?? idleHome?.x ?? (preferTimelineTarget ? stepTarget?.x : nextArm?.x) ?? stepTarget?.x ?? arm.x),
+    y:Number(homeVisualTarget?.y ?? idleHome?.y ?? (preferTimelineTarget ? stepTarget?.y : nextArm?.y) ?? stepTarget?.y ?? arm.y),
     z1:Number(nextArm?.z1 ?? (running ? .65 : arm.z1)), z2:Number(nextArm?.z2 ?? (running ? .35 : arm.z2))
   };
   const targetKey = `${runtimeStep?.id || ''}|${nextArm?.targetPointCode || ''}|${end.x.toFixed(3)}|${end.y.toFixed(3)}|${end.z1.toFixed(3)}|${end.z2.toFixed(3)}|${running}`;
@@ -4077,7 +4139,9 @@ function applyRuntimeDrivenState(nextRuntime, nextArm) {
   }
   const start = {...arm};
   const startedAt = performance.now();
-  const duration = Math.max(350, Math.min(1800, distance * 12));
+  // 动画时长压到 ≤300ms（远短于后端每个停靠点 0.6-1.5s 的停留），机械臂才能"走到并停住"每个停靠点
+  // （洗针位/试剂位/玻片位），而不是一直追赶、跳过较短的洗针位/试剂位。
+  const duration = Math.max(120, Math.min(300, distance * 4));
   function frame(now) {
     if(sequence !== runtimeArmAnimationSeq) return;
     const t = Math.min(1, (now - startedAt) / duration);

@@ -17,8 +17,8 @@ public sealed class MotionControlService(
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private const int DefaultPipetteAspirateVisibleMs = 700;
-    private const int DefaultPipetteWashVisibleMs = 600;
+    private const int DefaultPipetteAspirateVisibleMs = 2000;
+    private const int DefaultPipetteWashVisibleMs = 2000;
     private readonly int pipetteAspirateVisibleMs = ResolveVisibleDelay(
         configuration,
         environment,

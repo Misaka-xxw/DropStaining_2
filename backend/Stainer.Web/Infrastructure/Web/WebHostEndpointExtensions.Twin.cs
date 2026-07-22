@@ -26,6 +26,15 @@ public static partial class WebHostEndpointExtensions
             });
         });
 
+        app.MapGet("/api/twin/arm", async (HttpContext context, UserSessionService sessionService, TwinSnapshotService service, CancellationToken cancellationToken) =>
+        {
+            return await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Json(service.BuildArmSnapshot(), TwinSnapshotService.JsonOptions);
+            });
+        });
+
         app.MapGet("/api/twin/value/{controlId}", async (HttpContext context, string controlId, UserSessionService sessionService, TwinSnapshotService service, CancellationToken cancellationToken) =>
         {
             return await ExecuteBusinessAsync(async () =>

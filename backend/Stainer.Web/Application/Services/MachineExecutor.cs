@@ -13,7 +13,7 @@ namespace Stainer.Web.Application.Services;
 public sealed class MachineExecutor(IRuntimeEventPublisher eventPublisher, IDeviceAdapter deviceAdapter, IConfiguration configuration, IHostEnvironment environment)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private const int DefaultStepVisibleDelayMs = 1500;
+    private const int DefaultStepVisibleDelayMs = 2000;
     private readonly int stepVisibleDelayMs = ResolveStepVisibleDelay(configuration, environment);
     private readonly Channel<MachineExecutorCommand> commands = Channel.CreateUnbounded<MachineExecutorCommand>();
     private readonly ConcurrentDictionary<string, ControlFlags> flags = new(StringComparer.Ordinal);

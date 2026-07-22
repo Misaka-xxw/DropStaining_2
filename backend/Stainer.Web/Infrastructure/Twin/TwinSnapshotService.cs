@@ -51,6 +51,14 @@ public sealed class TwinSnapshotService
     private string ConnectionString
         => _connectionString ??= DatabasePathResolver.ResolveConnectionString(_configuration, _environment);
 
+    // 轻量端点：只返回机械臂位置（供前端高频轮询，避开整份快照 ~3s 的延迟）。
+    public Dictionary<string, object?> BuildArmSnapshot()
+    {
+        using var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+        return new Dictionary<string, object?> { ["arm"] = BuildArmPayload(connection) };
+    }
+
     public Dictionary<string, object?> BuildSnapshot()
     {
         using var connection = new SqliteConnection(ConnectionString);
