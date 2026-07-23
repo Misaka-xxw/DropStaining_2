@@ -72,7 +72,7 @@ Visual Studio 解决方案入口。主线代码在 `backend/`，桥接进程在 
 - **坐标**：`CoordinateProfileLifecycleService.cs`（坐标档案版本生命周期）、`CoordinateSnapshotFactory.cs`（快照工厂）、`ReagentCoordinateAnchorService.cs`/`ReagentCoordinateGenerationService.cs`（试剂列锚点与插值）、`DigitalTwinCoordinateImportService.cs`（孪生 CSV 导入）。
 - **液路/运动/温控/供水**：`FluidicsControlService.cs`（泵/混匀/液位/清洗/洗针）、`MotionControlService.cs`（机械臂/针/移液）、`ThermalControlService.cs`（温控点/制冷）、`WaterSupplyControlService.cs`（每通道供水）。
 - **DAB**：`DabLifecycleService.cs`（DAB 批次全生命周期）、`DabExpiryHostedService.cs`（过期扫描后台服务）。
-- **工程**：`EngineeringSessionService.cs`（工程会话）、`EngineeringWriteService.cs`/`EngineeringConfigService.cs`/`EngineeringQueryService.cs`/`EngineeringDiagnosticService.cs`（工程写/配置/查询/诊断）、`EngineeringPipettingService.cs`（工程移液测试）。
+- **工程**：`EngineeringSessionService.cs`（工程会话）、`EngineeringWriteService.cs`/`EngineeringConfigService.cs`/`EngineeringQueryService.cs`/`EngineeringDiagnosticService.cs`（工程写/配置/查询/诊断）、`EngineeringPipettingService.cs`（工程移液测试）、`RobotArmProcessActionService.cs`（移动到安全高度与吸液/排液/混匀/清洗原子动作的流程编排）。
 - **设备/预检/模式**：`DeviceControlService.cs`（设备状态/故障控制）、`ChannelHardwareStatusService.cs`（独立读取主控工作/节点状态并按配置映射 A–D，不写业务通道状态）、`ReagentPositionHardwareService.cs`（工程会话保护的试剂 XY/Z 现场运动）、`DeviceInitializationService.cs`（设备初始化步骤）、`DevicePrecheckService.cs`（11 项预检）、`DeviceModeService.cs`（Mock/Real 模式）、`PreHardwareReadinessService.cs`（启动就绪门禁）、`PreflightValidationService.cs`（预检报告聚合）、`ScannerControlService.cs`/`ScannerConfigurationService.cs`（扫码器控制/配置）。
 - **追溯/操作台**：`TraceabilityQueryService.cs`（历史运行/消耗追溯）、`OperatorSnapshotQueryService.cs`（操作台快照聚合）、`OperatorAlarmPresentation.cs`（告警码→中文摘要）。
 - **配置档案**：`AppSettingsConfigService.cs`/`SerialConnectionConfigService.cs`/`PrecisionCalibrationConfigService.cs`/`MixerParameterConfigService.cs`/`WashValveConfigService.cs`（各类工程配置 upsert）。
@@ -230,7 +230,7 @@ xUnit 测试项目（根目录平铺）。大量用 `WebApplicationFactory<Progr
 - `BusinessWriteApiIntegrationTests.cs`/`TraceabilityApiIntegrationTests.cs` — 业务写入 API 与追溯 API 集成。
 - `DeviceAdapterInitializationTests.cs`/`DeviceCommunicationPersistenceTests.cs`/`DevicePrecheckTests.cs` — 设备适配器/通信持久化四步范式/预检契约。
 - `OfflineRealDeviceAdapterTests.cs`/`OfflineHardwareProtocolTests.cs`/`ChannelHardwareStatusServiceTests.cs` — 真机适配器只读边界、协议帧及 A–D 配置映射/fail-closed 通道状态服务测试。
-- `SoconReagentHardwareActionClientTests.cs`/`EngineeringPipettingApiTests.cs` — SOCON 命名管道动作顺序/单位换算及 Real 模式工程移液分派测试。
+- `SoconReagentHardwareActionClientTests.cs`/`EngineeringPipettingApiTests.cs`/`RobotArmProcessActionServiceTests.cs` — SOCON 命名管道动作顺序/单位换算、工程移液流程及移动/原子动作失败分段测试。
 - `MainControllerSerialTransportTests.cs`/`Dcr55SerialTransportTests.cs`/`Dcr55RealAdapterTests.cs`/`Dcr55TolerantProtocolTests.cs`/`Dcr55TolerantRealAdapterTests.cs` — 串口 Transport / DCR55 adapter / 协议容错（注入假 ISerialPort，不开真 COM）。
 - `ReagentHardwareDispatcherTests.cs` — 试剂→硬件旁挂全链路（扫码确认→事件→Dispatcher→Sink→通信记录落库）。
 - `RuntimeLedgerExecutorTests.cs`/`MockBackendEndToEndAcceptanceTests.cs`/`MockScannerLisDemoTests.cs`/`MockRuntimeResetIntegrationTests.cs` — Mock 执行器/端到端验收/扫码 LIS/重置。
