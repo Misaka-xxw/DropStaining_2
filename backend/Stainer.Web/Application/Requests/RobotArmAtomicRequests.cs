@@ -26,7 +26,11 @@ public sealed record TakeLiquidRequest(
     string CommandId,
     string? NeedleCode,
     int VolumeUl,
-    string? Reason = null);
+    string? Reason = null,
+    // 可选：按调用指定吸液高度 / 安全高度（单位 µm）。未传则回退到 RobotArmAtomicHeights 配置。
+    // XY 移动由调用方负责，这里只决定 Z。
+    long? AspirateZUm = null,
+    long? SafeZUm = null);
 
 public sealed record PrepareMixRequest(
     string CommandId,

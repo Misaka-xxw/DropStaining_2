@@ -38,11 +38,14 @@ public sealed class RobotArmAtomicActionService(
     {
         RequireCommandId(request.CommandId);
         RequirePositiveVolume(request.VolumeUl, nameof(request.VolumeUl));
-        // MoveZ(吸液高度) -> Aspirate；安全高度回零由 RunAsync 统一保证。
+        // 支持按调用指定吸液高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
+        var aspirateZUm = request.AspirateZUm ?? _heights.AspirateZUm;
+        var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        // MoveZ(吸液高度) -> Aspirate；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.TakeLiquid, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: request.VolumeUl, clearsNeedle: false, cancellationToken, async steps =>
+            netVolumeUl: request.VolumeUl, clearsNeedle: false, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(_heights.AspirateZUm, cancellationToken); steps.Add(Step("MoveZ→吸液高度", _heights.AspirateZUm));
+            await _primitives.MoveZAsync(aspirateZUm, cancellationToken); steps.Add(Step("MoveZ→吸液高度", aspirateZUm));
             await _primitives.AspirateAsync(request.VolumeUl, cancellationToken); steps.Add(Step("Aspirate", request.VolumeUl));
         });
     }
@@ -52,7 +55,7 @@ public sealed class RobotArmAtomicActionService(
         RequireCommandId(request.CommandId);
         RequirePositiveVolume(request.VolumeUl, nameof(request.VolumeUl));
         return RunAsync(RobotAtomicActions.PrepareMix, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: -request.VolumeUl, clearsNeedle: false, cancellationToken, async steps =>
+            netVolumeUl: -request.VolumeUl, clearsNeedle: false, _heights.SafeZUm, cancellationToken, async steps =>
         {
             await _primitives.MoveZAsync(_heights.MixZUm, cancellationToken); steps.Add(Step("MoveZ→配液高度", _heights.MixZUm));
             await _primitives.DispenseAsync(request.VolumeUl, cancellationToken); steps.Add(Step("Dispense", request.VolumeUl));
@@ -64,7 +67,7 @@ public sealed class RobotArmAtomicActionService(
         RequireCommandId(request.CommandId);
         RequirePositiveVolume(request.VolumeUl, nameof(request.VolumeUl));
         return RunAsync(RobotAtomicActions.DispenseLiquid, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: -request.VolumeUl, clearsNeedle: false, cancellationToken, async steps =>
+            netVolumeUl: -request.VolumeUl, clearsNeedle: false, _heights.SafeZUm, cancellationToken, async steps =>
         {
             await _primitives.MoveZAsync(_heights.DispenseZUm, cancellationToken); steps.Add(Step("MoveZ→滴液高度", _heights.DispenseZUm));
             await _primitives.DispenseAsync(request.VolumeUl, cancellationToken); steps.Add(Step("Dispense", request.VolumeUl));
@@ -77,7 +80,7 @@ public sealed class RobotArmAtomicActionService(
         RequirePositiveVolume(request.WashVolumeUl, nameof(request.WashVolumeUl));
         RequirePositiveVolume(request.WasteVolumeUl, nameof(request.WasteVolumeUl));
         return RunAsync(RobotAtomicActions.WashInner, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: 0, clearsNeedle: true, cancellationToken, async steps =>
+            netVolumeUl: 0, clearsNeedle: true, _heights.SafeZUm, cancellationToken, async steps =>
         {
             await _primitives.MoveZAsync(_heights.WashInnerZUm, cancellationToken); steps.Add(Step("MoveZ→内壁清洗高度", _heights.WashInnerZUm));
             await _primitives.AspirateAsync(request.WashVolumeUl, cancellationToken); steps.Add(Step("Aspirate 清洗液", request.WashVolumeUl));
@@ -89,7 +92,7 @@ public sealed class RobotArmAtomicActionService(
     {
         RequireCommandId(request.CommandId);
         return RunAsync(RobotAtomicActions.WashOuter, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: 0, clearsNeedle: true, cancellationToken, async steps =>
+            netVolumeUl: 0, clearsNeedle: true, _heights.SafeZUm, cancellationToken, async steps =>
         {
             await _primitives.MoveZAsync(_heights.WashOuterZUm, cancellationToken); steps.Add(Step("MoveZ→外壁清洗高度", _heights.WashOuterZUm));
             await _primitives.WashOuterAsync(cancellationToken); steps.Add(Step("外壁清洗", null));
@@ -107,6 +110,7 @@ public sealed class RobotArmAtomicActionService(
         string? reason,
         int netVolumeUl,
         bool clearsNeedle,
+        long safeZUm,
         CancellationToken cancellationToken,
         Func<List<RobotArmAtomicStep>, Task> body)
     {
@@ -117,14 +121,14 @@ public sealed class RobotArmAtomicActionService(
         }
         finally
         {
-            await _primitives.MoveZAsync(_heights.SafeZUm, cancellationToken);
-            steps.Add(Step("MoveZ→安全高度", _heights.SafeZUm));
+            await _primitives.MoveZAsync(safeZUm, cancellationToken);
+            steps.Add(Step("MoveZ→安全高度", safeZUm));
         }
 
         if (_recorder is not null)
         {
             await _recorder.RecordAsync(
-                new RobotArmAtomicActionContext(commandId, needleCode, action, netVolumeUl, clearsNeedle, reason, _heights.SafeZUm),
+                new RobotArmAtomicActionContext(commandId, needleCode, action, netVolumeUl, clearsNeedle, reason, safeZUm),
                 cancellationToken);
         }
 

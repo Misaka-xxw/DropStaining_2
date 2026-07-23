@@ -215,6 +215,38 @@ public sealed class RobotArmAtomicActionTests
         Assert.Equal(PipettingOperationTypes.WashNeedle, operation.OperationType);
     }
 
+    // [TakeLiquid 契约] 按调用指定吸液 / 安全高度时覆盖配置；顺序固定为 下降 -> 吸液 -> 回安全高度；并复用 Mock 状态记录。
+    [Fact]
+    public async Task TakeLiquid_honors_per_call_heights_descends_aspirates_then_returns_safe_and_records()
+    {
+        await using var dbContext = await CreateMigratedContextAsync();
+        var primitives = new MockRobotMotionPrimitives();
+        var recorder = new MockStateAtomicActionRecorder(dbContext);
+        var service = new RobotArmAtomicActionService(primitives, Heights, recorder);
+
+        // 配置 Heights 中 AspirateZUm=1_000、SafeZUm=90_000；这里用调用参数覆盖为 7_777 / 88_888。
+        var result = await service.TakeLiquidAsync(new TakeLiquidRequest(
+            "cmd-takeliquid-contract", "Needle1", 100, "load ABC",
+            AspirateZUm: 7_777, SafeZUm: 88_888));
+        Assert.True(result.Ok, result.Message);
+
+        // 顺序契约：先下降到指定吸液高度 -> 再吸液 -> 最后回指定安全高度。
+        Assert.Equal(
+        [
+            RobotPrimitiveCall.MoveZ(7_777),
+            RobotPrimitiveCall.Aspirate(100),
+            RobotPrimitiveCall.MoveZ(88_888)
+        ], primitives.Calls);
+
+        // 复用现有 Mock 状态：机械臂停在本次安全高度，流水账落库。
+        var arm = await dbContext.RobotArmStates.SingleAsync();
+        Assert.Equal(88_888, arm.CurrentZUm);
+        Assert.Equal("cmd-takeliquid-contract", arm.CurrentCommandId);
+        var operation = await dbContext.PipettingOperations.SingleAsync(x => x.DeviceCommandExecutionId == "cmd-takeliquid-contract");
+        Assert.Equal(PipettingOperationTypes.Aspirate, operation.OperationType);
+        Assert.Equal(100, operation.VolumeUl);
+    }
+
     private static async Task<StainerDbContext> CreateMigratedContextAsync()
     {
         var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-atomic-action-tests", Guid.NewGuid().ToString("N"), "stainer.db");
