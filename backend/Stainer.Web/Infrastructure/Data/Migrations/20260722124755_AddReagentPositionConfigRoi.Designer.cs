@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Stainer.Web.Infrastructure.Data;
 
@@ -10,9 +11,11 @@ using Stainer.Web.Infrastructure.Data;
 namespace Stainer.Web.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(StainerDbContext))]
-    partial class StainerDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260722124755_AddReagentPositionConfigRoi")]
+    partial class AddReagentPositionConfigRoi
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
@@ -4035,20 +4038,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .HasColumnType("TEXT")
                         .HasColumnName("liquid_detect_z_mm");
 
-                    b.Property<string>("PipetteLiquidClassCode")
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("pipette_liquid_class_code");
-
-                    b.Property<string>("PipetteNeedleCode")
-                        .HasMaxLength(16)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("pipette_needle_code");
-
-                    b.Property<int?>("PipetteVolumeUl")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("pipette_volume_ul");
-
                     b.Property<string>("RackCode")
                         .IsRequired()
                         .HasMaxLength(8)
@@ -5481,173 +5470,6 @@ namespace Stainer.Web.Infrastructure.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("wash_valve_config_profiles", (string)null);
-                });
-
-            modelBuilder.Entity("Stainer.Web.Domain.Entities.WaterSupplyChannelState", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(36)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<string>("ChannelCode")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("channel_code");
-
-                    b.Property<int>("ChannelNo")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("channel_no");
-
-                    b.Property<string>("CurrentCommandId")
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("current_command_id");
-
-                    b.Property<string>("FaultCode")
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("fault_code");
-
-                    b.Property<string>("FaultMessage")
-                        .HasMaxLength(2000)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("fault_message");
-
-                    b.Property<int>("InletTemperatureDeciC")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("inlet_temperature_deci_c");
-
-                    b.Property<bool>("IsConnected")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("is_connected");
-
-                    b.Property<bool>("OutletEnabled")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_enabled");
-
-                    b.Property<int>("OutletFlowRateMlPerMinute")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_flow_rate_ml_per_minute");
-
-                    b.Property<int>("OutletTargetTemperatureDeciC")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_target_temperature_deci_c");
-
-                    b.Property<int>("OutletTemperatureDeciC")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_temperature_deci_c");
-
-                    b.Property<int>("OutletVolumeMl")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_volume_ml");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("status");
-
-                    b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("updated_at_utc");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ChannelCode")
-                        .IsUnique();
-
-                    b.HasIndex("ChannelNo")
-                        .IsUnique();
-
-                    b.ToTable("water_supply_channel_states", (string)null);
-                });
-
-            modelBuilder.Entity("Stainer.Web.Domain.Entities.WaterSupplyTelemetry", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasMaxLength(36)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("id");
-
-                    b.Property<string>("ChannelCode")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("channel_code");
-
-                    b.Property<int>("ChannelNo")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("channel_no");
-
-                    b.Property<string>("CommandId")
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("command_id");
-
-                    b.Property<string>("EventType")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("event_type");
-
-                    b.Property<string>("FaultCode")
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("fault_code");
-
-                    b.Property<int>("InletTemperatureDeciC")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("inlet_temperature_deci_c");
-
-                    b.Property<bool>("IsConnected")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("is_connected");
-
-                    b.Property<bool>("OutletEnabled")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_enabled");
-
-                    b.Property<int>("OutletFlowRateMlPerMinute")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_flow_rate_ml_per_minute");
-
-                    b.Property<int>("OutletTargetTemperatureDeciC")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_target_temperature_deci_c");
-
-                    b.Property<int>("OutletTemperatureDeciC")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_temperature_deci_c");
-
-                    b.Property<int>("OutletVolumeMl")
-                        .HasColumnType("INTEGER")
-                        .HasColumnName("outlet_volume_ml");
-
-                    b.Property<DateTimeOffset>("RecordedAtUtc")
-                        .HasColumnType("TEXT")
-                        .HasColumnName("recorded_at_utc");
-
-                    b.Property<string>("SourceId")
-                        .IsRequired()
-                        .HasMaxLength(36)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("source_id");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT")
-                        .HasColumnName("status");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RecordedAtUtc");
-
-                    b.HasIndex("SourceId", "RecordedAtUtc");
-
-                    b.ToTable("water_supply_telemetry", (string)null);
                 });
 
             modelBuilder.Entity("Stainer.Web.Domain.Entities.WorkflowAssignmentHistory", b =>

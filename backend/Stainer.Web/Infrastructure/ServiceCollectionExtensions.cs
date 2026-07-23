@@ -104,6 +104,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MixerParameterConfigService>();
         services.AddScoped<WashValveConfigService>();
         services.AddScoped<AppSettingsConfigService>();
+        services.AddScoped<ReagentPositionConfigService>();
         services.AddScoped<SerialConnectionConfigService>();
         services.AddScoped<ReagentCoordinateAnchorService>();
         services.AddScoped<ReagentCoordinateGenerationService>();

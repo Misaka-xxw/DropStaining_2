@@ -25,6 +25,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
     public DbSet<MixerParameterProfile> MixerParameterProfiles => Set<MixerParameterProfile>();
     public DbSet<WashValveConfigProfile> WashValveConfigProfiles => Set<WashValveConfigProfile>();
     public DbSet<AppSettingsProfile> AppSettingsProfiles => Set<AppSettingsProfile>();
+    public DbSet<ReagentPositionConfig> ReagentPositionConfigs => Set<ReagentPositionConfig>();
     public DbSet<CoordinateProfile> CoordinateProfiles => Set<CoordinateProfile>();
     public DbSet<CoordinateProfileVersion> CoordinateProfileVersions => Set<CoordinateProfileVersion>();
     public DbSet<CoordinatePoint> CoordinatePoints => Set<CoordinatePoint>();
@@ -110,6 +111,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         ConfigureMixerParameterProfile(modelBuilder);
         ConfigureWashValveConfigProfile(modelBuilder);
         ConfigureAppSettingsProfile(modelBuilder);
+        ConfigureReagentPositionConfig(modelBuilder);
         ConfigureCoordinateProfile(modelBuilder);
         ConfigureCoordinateProfileVersion(modelBuilder);
         ConfigureCoordinatePoint(modelBuilder);
@@ -1007,6 +1009,32 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
         entity.HasIndex(x => x.ScopeKey).IsUnique();
+    }
+
+    private static void ConfigureReagentPositionConfig(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<ReagentPositionConfig>();
+        entity.ToTable("reagent_position_configs");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).HasColumnName("id").HasMaxLength(36);
+        entity.Property(x => x.RackCode).HasColumnName("rack_code").HasMaxLength(8).IsRequired();
+        entity.Property(x => x.CalibratedXMm).HasColumnName("calibrated_x_mm");
+        entity.Property(x => x.CalibratedYMm).HasColumnName("calibrated_y_mm");
+        entity.Property(x => x.SafeZMm).HasColumnName("safe_z_mm");
+        entity.Property(x => x.LiquidDetectZMm).HasColumnName("liquid_detect_z_mm");
+        entity.Property(x => x.AspirateEndZMm).HasColumnName("aspirate_end_z_mm");
+        entity.Property(x => x.DispenseZMm).HasColumnName("dispense_z_mm");
+        entity.Property(x => x.RoiLeft).HasColumnName("roi_left");
+        entity.Property(x => x.RoiTop).HasColumnName("roi_top");
+        entity.Property(x => x.RoiWidth).HasColumnName("roi_width");
+        entity.Property(x => x.RoiHeight).HasColumnName("roi_height");
+        entity.Property(x => x.PipetteVolumeUl).HasColumnName("pipette_volume_ul");
+        entity.Property(x => x.PipetteNeedleCode).HasColumnName("pipette_needle_code").HasMaxLength(16);
+        entity.Property(x => x.PipetteLiquidClassCode).HasColumnName("pipette_liquid_class_code").HasMaxLength(64);
+        entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
+        entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
+        entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        entity.HasIndex(x => x.RackCode).IsUnique();
     }
 
     private static void ConfigureScannerRegion(ModelBuilder modelBuilder)
