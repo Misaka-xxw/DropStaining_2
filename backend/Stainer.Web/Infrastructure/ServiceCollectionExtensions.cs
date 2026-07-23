@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Stainer.Web.Application.Repositories;
+using Stainer.Web.Application.Requests;
 using Stainer.Web.Application.Services;
 using Stainer.Web.Infrastructure.Data;
 using Stainer.Web.Application.Devices;
@@ -113,6 +114,13 @@ public static class ServiceCollectionExtensions
         services.AddScoped<FluidicsControlService>();
         services.AddScoped<WaterSupplyControlService>();
         services.AddScoped<MotionControlService>();
+        // 机械臂业务原子操作层（第一阶段 Mock）：原子动作服务编排 IRobotMotionPrimitives，
+        // 当前注册 MockRobotMotionPrimitives，不接真实 SOCON；后续替换为真实实现即可，编排与单测不变。
+        services.AddScoped<IRobotMotionPrimitives, MockRobotMotionPrimitives>();
+        services.AddScoped<IRobotArmAtomicActionService, RobotArmAtomicActionService>();
+        // 记录器把原子动作净效果写入现有 Mock 运行状态 / 流水账（RobotArmState / NeedleState / PipettingOperations）。
+        services.AddScoped<IRobotArmAtomicActionRecorder, MockStateAtomicActionRecorder>();
+        services.AddSingleton<RobotArmAtomicHeights>();
         services.AddScoped<DeviceInitializationService>();
         services.AddScoped<DevicePrecheckService>();
         services.AddSingleton<StartupDeviceInitializationRunner>();
