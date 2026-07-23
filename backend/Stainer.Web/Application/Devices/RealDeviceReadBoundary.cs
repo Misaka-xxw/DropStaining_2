@@ -48,10 +48,14 @@ public static class DeviceByteTransportEndpoints
     public const string StandaloneCooling = "standalone-cooling-v1.0";
 }
 
-public interface IRealDeviceReadAdapter
+public interface IChannelHardwareStatusDeviceReader
 {
     Task<RealDeviceReadResult<MainControllerWorkStatus>> ReadControllerWorkStatusAsync(CancellationToken cancellationToken = default);
     Task<RealDeviceReadResult<MainControllerNodeStatuses>> ReadControllerNodeStatusesAsync(CancellationToken cancellationToken = default);
+}
+
+public interface IRealDeviceReadAdapter : IChannelHardwareStatusDeviceReader
+{
     Task<RealDeviceReadResult<MainControllerRunTime>> ReadControllerRunTimeAsync(CancellationToken cancellationToken = default);
     Task<RealDeviceReadResult<MainControllerTemperatureBoard>> ReadTemperaturesAsync(byte boardId, CancellationToken cancellationToken = default);
     Task<RealDeviceReadResult<MainControllerTemperatureBoard>> ReadTargetTemperaturesAsync(byte boardId, CancellationToken cancellationToken = default);

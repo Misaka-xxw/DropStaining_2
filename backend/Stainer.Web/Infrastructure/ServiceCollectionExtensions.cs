@@ -97,6 +97,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TraceabilityQueryService>();
         services.AddScoped<DeviceModeService>();
         services.AddScoped<DeviceControlService>();
+        services.AddScoped<ChannelHardwareStatusService>();
         services.AddScoped<ReagentQrScannerDeviceOperationService>();
         services.AddScoped<IReagentHardwareSink, ReagentHardwareSink>();
         services.AddScoped<ScannerConfigurationService>();
@@ -152,6 +153,10 @@ public static class ServiceCollectionExtensions
                 .GetSection("Device:MainController")
                 .Get<MainControllerConnectionOptions>() ?? new MainControllerConnectionOptions();
         services.AddSingleton(mainControllerConfiguration);
+        var channelHardwareStatusOptions = configuration
+                .GetSection("Device:ChannelHardwareStatus")
+                .Get<ChannelHardwareStatusOptions>() ?? new ChannelHardwareStatusOptions();
+        services.AddSingleton(channelHardwareStatusOptions);
 
             // DCR55-02 / P1-03-01：在 Real 模式下注册真实串口 Transport。
             // SerialPort 仅存在于 Dcr55SerialTransport / MainControllerSerialTransport（Transport 层），
@@ -175,6 +180,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<UnavailableRealDeviceAdapter>(serviceProvider =>
             new UnavailableRealDeviceAdapter(serviceProvider.GetRequiredService<IDeviceByteTransport>()));
         services.AddSingleton<IRealDeviceReadAdapter>(serviceProvider =>
+            serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
+        services.AddSingleton<IChannelHardwareStatusDeviceReader>(serviceProvider =>
             serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
 
         // The configured global adapter is fail-closed: Real never falls back to Mock.
