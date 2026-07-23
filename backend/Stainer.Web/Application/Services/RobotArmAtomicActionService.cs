@@ -54,10 +54,14 @@ public sealed class RobotArmAtomicActionService(
     {
         RequireCommandId(request.CommandId);
         RequirePositiveVolume(request.VolumeUl, nameof(request.VolumeUl));
+        // 支持按调用指定配液高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
+        var mixZUm = request.MixZUm ?? _heights.MixZUm;
+        var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        // MoveZ(配液高度) -> Dispense；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.PrepareMix, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: -request.VolumeUl, clearsNeedle: false, _heights.SafeZUm, cancellationToken, async steps =>
+            netVolumeUl: -request.VolumeUl, clearsNeedle: false, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(_heights.MixZUm, cancellationToken); steps.Add(Step("MoveZ→配液高度", _heights.MixZUm));
+            await _primitives.MoveZAsync(mixZUm, cancellationToken); steps.Add(Step("MoveZ→配液高度", mixZUm));
             await _primitives.DispenseAsync(request.VolumeUl, cancellationToken); steps.Add(Step("Dispense", request.VolumeUl));
         });
     }
@@ -66,10 +70,14 @@ public sealed class RobotArmAtomicActionService(
     {
         RequireCommandId(request.CommandId);
         RequirePositiveVolume(request.VolumeUl, nameof(request.VolumeUl));
+        // 支持按调用指定滴液高度 / 安全高度（未指定则回退到 RobotArmAtomicHeights 配置）；XY 由调用方负责。
+        var dispenseZUm = request.DispenseZUm ?? _heights.DispenseZUm;
+        var safeZUm = request.SafeZUm ?? _heights.SafeZUm;
+        // MoveZ(滴液高度) -> Dispense；安全高度回零由 RunAsync 用本次 safeZUm 统一保证。
         return RunAsync(RobotAtomicActions.DispenseLiquid, request.CommandId, request.NeedleCode, request.Reason,
-            netVolumeUl: -request.VolumeUl, clearsNeedle: false, _heights.SafeZUm, cancellationToken, async steps =>
+            netVolumeUl: -request.VolumeUl, clearsNeedle: false, safeZUm, cancellationToken, async steps =>
         {
-            await _primitives.MoveZAsync(_heights.DispenseZUm, cancellationToken); steps.Add(Step("MoveZ→滴液高度", _heights.DispenseZUm));
+            await _primitives.MoveZAsync(dispenseZUm, cancellationToken); steps.Add(Step("MoveZ→滴液高度", dispenseZUm));
             await _primitives.DispenseAsync(request.VolumeUl, cancellationToken); steps.Add(Step("Dispense", request.VolumeUl));
         });
     }

@@ -36,13 +36,19 @@ public sealed record PrepareMixRequest(
     string CommandId,
     string? NeedleCode,
     int VolumeUl,
-    string? Reason = null);
+    string? Reason = null,
+    // 可选：按调用指定配液高度 / 安全高度（单位 µm）。未传则回退到 RobotArmAtomicHeights 配置。
+    long? MixZUm = null,
+    long? SafeZUm = null);
 
 public sealed record DispenseLiquidRequest(
     string CommandId,
     string? NeedleCode,
     int VolumeUl,
-    string? Reason = null);
+    string? Reason = null,
+    // 可选：按调用指定滴液高度 / 安全高度（单位 µm）。未传则回退到 RobotArmAtomicHeights 配置。
+    long? DispenseZUm = null,
+    long? SafeZUm = null);
 
 public sealed record WashInnerRequest(
     string CommandId,
