@@ -113,14 +113,14 @@ public sealed class MainControllerSerialTransportTests
         var port = FakeMainControllerSerialPort.Empty();
         var transport = CreateTransport(port);
 
-        // 运行时间读取（SystemClass / 0x05）属其他读命令，本阶段不开放，保持拒绝。
-        var runTimeRequest = MainControllerProtocol.BuildRunTimeRequest();
+        // 其他系统读命令（SystemClass / 0x06）不在白名单（0x05/0x08/0x09 已放行），保持拒绝。
+        var otherRequest = IceImmunoSerialProtocol.BuildRequestFrame(MainControllerProtocol.SystemClass, 0x06);
 
         var result = await transport.ExchangeAsync(
             new DeviceByteTransportRequest(
                 DeviceByteTransportEndpoints.MainController,
-                "read-run-time",
-                runTimeRequest));
+                "read-other-system",
+                otherRequest));
 
         Assert.Equal(DeviceByteTransportStatuses.Failed, result.Status);
         Assert.Equal("main_controller_command_not_supported", result.ErrorCode);
@@ -778,12 +778,33 @@ public sealed class MainControllerSerialTransportTests
         Assert.Empty(port.WriteCalls);
     }
 
+    [Fact]
+    public async Task Exchange_allows_readonly_upload_commands_runtime_pwm_mixer()
+    {
+        // 设备→后端上传的只读命令：运行时间 0x01/0x05、PWM 检测值 0x07/0x06、混匀原点 0x0A/0x02、剩余次数 0x0A/0x03
+        static async Task AssertAllowed(byte parent, byte sub, byte[] payload, byte[] response)
+        {
+            var responseBytes = IceImmunoSerialProtocol.EncodeFrame(parent, sub, IceImmunoSerialProtocol.ResponseType, response);
+            var port = FakeMainControllerSerialPort.FromBytes(responseBytes);
+            var request = IceImmunoSerialProtocol.BuildRequestFrame(parent, sub, payload);
+            var result = await CreateTransport(port).ExchangeAsync(
+                new DeviceByteTransportRequest(DeviceByteTransportEndpoints.MainController, "upload-read", request));
+            Assert.Equal(DeviceByteTransportStatuses.Succeeded, result.Status);
+            Assert.True(port.OpenCalled);
+        }
+
+        await AssertAllowed(MainControllerProtocol.SystemClass, 0x05, [], [1, 2, 3, 4]);
+        await AssertAllowed(MainControllerProtocol.PwmClass, 0x06, [], [1, 0, 2, 0, 3, 0, 4, 0]);
+        await AssertAllowed(MainControllerProtocol.MixerClass, 0x02, [1], [1, 0, 0]);
+        await AssertAllowed(MainControllerProtocol.MixerClass, 0x03, [1], [1, 9, 0]);
+    }
+
     [Theory]
     [InlineData(0x04, 0x01, new byte[] { 0x00 })]
     [InlineData(0x04, 0x08, new byte[] { 0x00 })]
     [InlineData(0x05, 0x04, new byte[] { 0x00, 0x01, 0x00 })]
-    [InlineData(0x07, 0x06, new byte[] { })]
-    [InlineData(0x0A, 0x02, new byte[] { 0x00 })]
+    [InlineData(0x07, 0x09, new byte[] { })]  // PWM 未批准 subclass（写 0x02/0x04、读 0x06 已放行）
+    [InlineData(0x0A, 0x09, new byte[] { 0x00 })]  // Mixer 未批准 subclass（读 0x02/0x03 已放行）
     [InlineData(0x08, 0x09, new byte[] { })]  // QR 未批准 subclass（0x08/0x04、0x08/0x05、0x08/0x06、0x08/0x01 已放行）
     public async Task Exchange_rejects_control_or_unapproved_commands_without_opening_port(
         byte parentClass,
