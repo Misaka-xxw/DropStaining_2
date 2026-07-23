@@ -17,3 +17,11 @@ public sealed record SaveReagentPositionConfigRequest(
     string? PipetteNeedleCode,
     string? PipetteLiquidClassCode,
     string Reason);
+
+public sealed record MoveReagentPositionHardwareRequest(
+    string CommandId,
+    string NeedleCode,
+    string TargetZ,
+    string Reason,
+    string? Target = null,
+    bool DangerousOperationConfirmed = false);

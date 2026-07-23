@@ -29,4 +29,21 @@ namespace Stainer.SoconBridge
             get { return config.RealReadOnlyEnabled && enableRealReadOnlyArg; }
         }
     }
+
+    internal sealed class RealActionSessionGate
+    {
+        private readonly SoconReadOnlyConfig config;
+        private readonly bool launchEnabled;
+
+        public RealActionSessionGate(SoconReadOnlyConfig config, bool launchEnabled)
+        {
+            this.config = config;
+            this.launchEnabled = launchEnabled;
+        }
+
+        public bool IsEnabled
+        {
+            get { return launchEnabled && config != null && config.RealActionsEnabled; }
+        }
+    }
 }

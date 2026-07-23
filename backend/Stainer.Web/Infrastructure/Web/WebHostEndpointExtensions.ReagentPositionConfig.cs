@@ -23,5 +23,19 @@ public static partial class WebHostEndpointExtensions
                 if(request is null) return Results.BadRequest(new { code = "request_body_required", detail = "Request body is required." });
                 return Results.Ok(await service.SaveAsync(rackCode, request, actor, cancellationToken));
             }));
+
+        app.MapPost("/api/engineering/reagent-position-config/{rackCode}/move-test", async (HttpContext context, string rackCode, MoveReagentPositionHardwareRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, ReagentPositionHardwareService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(
+                    actor,
+                    request.CommandId,
+                    request.Reason,
+                    request.Target ?? $"reagent-position:{rackCode}:{request.TargetZ}",
+                    request.DangerousOperationConfirmed,
+                    cancellationToken);
+                return Results.Ok(await service.MoveAsync(rackCode, request, actor, cancellationToken));
+            }));
     }
 }

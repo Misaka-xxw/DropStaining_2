@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Stainer.Web.Application.Devices;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Services;
@@ -135,6 +136,61 @@ public sealed class EngineeringPipettingApiTests
         Assert.False(await dbContext.PipettingOperations.AnyAsync(x => x.DeviceCommandExecutionId == "cmd-eng-pipette-real-blocked"));
     }
 
+    [Fact]
+    public async Task Engineering_pipetting_real_mode_dispatches_confirmed_socon_action_before_persisting_state()
+    {
+        var hardware = new FakeReagentHardwareActionClient();
+        await using var factory = CreateFactory(new Dictionary<string, string?>
+        {
+            ["Device:Mode"] = DeviceModes.Real,
+            ["Device:HardwareAvailable"] = "true",
+            ["Device:UseMockWhenHardwareUnavailable"] = "false",
+            ["Device:DebugMode"] = "false"
+        }, hardware);
+        using var client = factory.CreateClient();
+        await LoginAsync(client, "admin", "admin");
+        await OpenEngineeringSessionAsync(client, "pipetting-real-socon");
+        var setup = await LoadSetupAsync(factory);
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<StainerDbContext>();
+            await dbContext.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE coordinate_points
+                SET calibrated_x_um = {12_000L},
+                    calibrated_y_um = {34_000L},
+                    safe_z_um = {90_000L},
+                    liquid_detect_z_um = {10_000L},
+                    aspirate_end_z_um = {20_000L}
+                WHERE point_code = {setup.PositionCode}
+                  AND coordinate_profile_version_id IN (
+                      SELECT active_version_id FROM coordinate_profiles WHERE is_active = 1
+                  )
+                """);
+        }
+
+        var response = await PostAsync<EngineeringPipettingTestResponse>(
+            client,
+            "/api/engineering/pipetting-tests/liquid-detect",
+            new
+            {
+                commandId = "cmd-eng-pipette-real-socon",
+                channel = "A",
+                needleCode = "Needle1",
+                position = setup.PositionCode,
+                reason = "confirmed SOCON liquid detect"
+            });
+
+        Assert.True(response.Ok, response.Message);
+        var sent = Assert.Single(hardware.Requests);
+        Assert.Equal(ReagentHardwareActionOperations.LiquidDetect, sent.Operation);
+        Assert.Equal("z1", sent.Axis);
+        Assert.Equal(12_000, sent.XUm);
+        Assert.Equal(34_000, sent.YUm);
+        Assert.Equal(10_000, sent.ActionZUm);
+        Assert.Equal(20_000, sent.LiquidDetectMaximumZUm);
+    }
+
     private static async Task<(string PositionCode, string LiquidClassVersionId)> LoadSetupAsync(WebApplicationFactory<Program> factory)
     {
         await using var scope = factory.Services.CreateAsyncScope();
@@ -152,7 +208,9 @@ public sealed class EngineeringPipettingApiTests
         return (point.PointCode, liquidClassVersion.Id);
     }
 
-    private static WebApplicationFactory<Program> CreateFactory(Dictionary<string, string?>? overrides = null)
+    private static WebApplicationFactory<Program> CreateFactory(
+        Dictionary<string, string?>? overrides = null,
+        IReagentHardwareActionClient? hardwareActionClient = null)
     {
         var databasePath = Path.Combine(TestPaths.TempRoot, "stainer-engineering-pipetting-tests", Guid.NewGuid().ToString("N"), "stainer.db");
         var settings = new Dictionary<string, string?>
@@ -180,6 +238,14 @@ public sealed class EngineeringPipettingApiTests
             }
 
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(settings));
+            if (hardwareActionClient is not null)
+            {
+                builder.ConfigureServices(services =>
+                {
+                    services.RemoveAll<IReagentHardwareActionClient>();
+                    services.AddSingleton(hardwareActionClient);
+                });
+            }
         });
     }
 
@@ -207,5 +273,23 @@ public sealed class EngineeringPipettingApiTests
         var body = await response.Content.ReadFromJsonAsync<T>();
         Assert.NotNull(body);
         return body!;
+    }
+
+    private sealed class FakeReagentHardwareActionClient : IReagentHardwareActionClient
+    {
+        public List<ReagentHardwareActionRequest> Requests { get; } = [];
+
+        public Task<ReagentHardwareActionResult> ExecuteAsync(
+            ReagentHardwareActionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Requests.Add(request);
+            return Task.FromResult(new ReagentHardwareActionResult(
+                true,
+                DeviceCommandStatuses.Succeeded,
+                null,
+                "ok",
+                ["MoveSafeZ", "MoveX", "MoveY", "LiquidDetect", "ReturnSafeZ"]));
+        }
     }
 }

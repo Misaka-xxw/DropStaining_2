@@ -107,6 +107,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WashValveConfigService>();
         services.AddScoped<AppSettingsConfigService>();
         services.AddScoped<ReagentPositionConfigService>();
+        services.AddScoped<ReagentPositionHardwareService>();
         services.AddScoped<SerialConnectionConfigService>();
         services.AddScoped<ReagentCoordinateAnchorService>();
         services.AddScoped<ReagentCoordinateGenerationService>();
@@ -157,6 +158,11 @@ public static class ServiceCollectionExtensions
                 .GetSection("Device:ChannelHardwareStatus")
                 .Get<ChannelHardwareStatusOptions>() ?? new ChannelHardwareStatusOptions();
         services.AddSingleton(channelHardwareStatusOptions);
+        var soconReagentHardwareOptions = configuration
+                .GetSection("Device:SoconReagentHardware")
+                .Get<SoconReagentHardwareOptions>() ?? new SoconReagentHardwareOptions();
+        services.AddSingleton(soconReagentHardwareOptions);
+        services.AddSingleton<IReagentHardwareActionClient, SoconReagentHardwareActionClient>();
 
             // DCR55-02 / P1-03-01：在 Real 模式下注册真实串口 Transport。
             // SerialPort 仅存在于 Dcr55SerialTransport / MainControllerSerialTransport（Transport 层），

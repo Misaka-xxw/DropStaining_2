@@ -34,6 +34,71 @@ namespace Stainer.SoconBridge
             get { return raw.RealReadOnlyEnabled; }
         }
 
+        public bool RealActionsEnabled
+        {
+            get { return raw.RealActionsEnabled; }
+        }
+
+        public bool IsSupportedPipetteApiMode
+        {
+            get { return string.Equals(raw.PipetteApiMode, "Z-SOPA", StringComparison.OrdinalIgnoreCase); }
+        }
+
+        public int ActionTimeoutMilliseconds
+        {
+            get
+            {
+                return raw.ActionLimits == null || raw.ActionLimits.ActionTimeoutMilliseconds <= 0
+                    ? 10000
+                    : raw.ActionLimits.ActionTimeoutMilliseconds;
+            }
+        }
+
+        public string ValidateActionPreconditions()
+        {
+            var session = ValidateSessionPreconditions();
+            if (session != null) return session;
+            if (!IsSupportedPipetteApiMode) return "ActionPipetteApiModeUnsupported";
+            if (raw.ActionLimits == null) return "ActionLimitsMissing";
+            if (raw.ActionLimits.MinimumXMm >= raw.ActionLimits.MaximumXMm
+                || raw.ActionLimits.MinimumYMm >= raw.ActionLimits.MaximumYMm
+                || raw.ActionLimits.MinimumZMm >= raw.ActionLimits.MaximumZMm
+                || raw.ActionLimits.MaximumSpeedMmPerSecond <= 0
+                || raw.ActionLimits.MaximumVolumeUl <= 0
+                || raw.ActionLimits.ActionTimeoutMilliseconds <= 0)
+            {
+                return "ActionLimitsInvalid";
+            }
+            return null;
+        }
+
+        public bool IsPositionAllowed(AxisRole role, double positionMm)
+        {
+            if (raw.ActionLimits == null || double.IsNaN(positionMm) || double.IsInfinity(positionMm)) return false;
+            switch (role)
+            {
+                case AxisRole.X: return positionMm >= raw.ActionLimits.MinimumXMm && positionMm <= raw.ActionLimits.MaximumXMm;
+                case AxisRole.Y: return positionMm >= raw.ActionLimits.MinimumYMm && positionMm <= raw.ActionLimits.MaximumYMm;
+                case AxisRole.Z1:
+                case AxisRole.Z2: return positionMm >= raw.ActionLimits.MinimumZMm && positionMm <= raw.ActionLimits.MaximumZMm;
+                default: return false;
+            }
+        }
+
+        public bool IsSpeedAllowed(double speedMmPerSecond)
+        {
+            return raw.ActionLimits != null
+                && speedMmPerSecond > 0
+                && speedMmPerSecond <= raw.ActionLimits.MaximumSpeedMmPerSecond
+                && !double.IsNaN(speedMmPerSecond)
+                && !double.IsInfinity(speedMmPerSecond);
+        }
+
+        public bool IsVolumeAllowed(int volumeUl)
+        {
+            return raw.ActionLimits != null && volumeUl > 0 && volumeUl <= raw.ActionLimits.MaximumVolumeUl;
+        }
+
         public string SdkDirectory
         {
             get { return raw.SdkDirectory ?? string.Empty; }

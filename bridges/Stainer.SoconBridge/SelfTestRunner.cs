@@ -55,9 +55,10 @@ namespace Stainer.SoconBridge
                 ReadOnlySessionDispatchesOnlyFakeAdapter();
                 LengthPrefixedProtocolRejectsMalformedRequests();
                 ConfiguredSdkRuntimeValidation();
-                ReadOnlySessionRejectedWhenRuntimeDependencyWarning();
+                ReadOnlySessionAcceptsCurrentVendorPackageWarning();
                 ReadOnlySessionRejectedWhenPortOrBaudInvalid();
                 ReadOnlySessionCloseFailsWhenClosePortReturnsFalse();
+                ActionSessionDispatchesWhitelistedCommands();
             }
 
             private void PingReturnsOffline()
@@ -316,7 +317,7 @@ namespace Stainer.SoconBridge
                 Assert(fake.CloseCount == 1, "Close must be called exactly once.");
             }
 
-            private void ReadOnlySessionRejectedWhenRuntimeDependencyWarning()
+            private void ReadOnlySessionAcceptsCurrentVendorPackageWarning()
             {
                 var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
                 var factoryCalls = 0;
@@ -337,10 +338,69 @@ namespace Stainer.SoconBridge
                     Command = "OpenConfiguredReadOnlySession"
                 });
 
-                Assert(!response.Success, "Runtime dependency warning must reject open.");
-                Assert(factoryCalls == 0, "Adapter must not be constructed when runtime warning is present.");
-                Assert(response.Details.SessionState == "Blocked", "Session must be blocked when runtime warning is present.");
-                Assert(response.Details.BlockReason == "DeploymentNotValidated", "Block reason must be DeploymentNotValidated.");
+                Assert(response.Success, "Current vendor package warning must not reject open.");
+                Assert(factoryCalls == 1, "Adapter must be constructed for the confirmed current vendor package.");
+                Assert(response.Details.SessionState == "Open", "Session must open when only legacy optional dependencies are absent.");
+            }
+
+            private void ActionSessionDispatchesWhitelistedCommands()
+            {
+                var rawConfig = CreateReadOnlyConfig();
+                rawConfig.RealActionsEnabled = true;
+                rawConfig.PipetteApiMode = "Z-SOPA";
+                rawConfig.ActionLimits = new ActionLimits
+                {
+                    MinimumXMm = 0,
+                    MaximumXMm = 500,
+                    MinimumYMm = 0,
+                    MaximumYMm = 500,
+                    MinimumZMm = 0,
+                    MaximumZMm = 200,
+                    MaximumSpeedMmPerSecond = 100,
+                    MaximumVolumeUl = 1000,
+                    ActionTimeoutMilliseconds = 10000
+                };
+                var config = SoconReadOnlyConfig.FromBridgeConfig(rawConfig);
+                var fake = new FakeActionAdapter();
+                var processor = new BridgeRequestProcessor(
+                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; },
+                    new RealActionSessionGate(config, true));
+
+                Assert(processor.Process(new BridgeRequest
+                {
+                    RequestId = "action-open",
+                    Command = "OpenConfiguredReadOnlySession"
+                }).Success, "Action session should open.");
+                Assert(processor.Process(new BridgeRequest
+                {
+                    RequestId = "action-move",
+                    Command = "MoveConfiguredAxis",
+                    Axis = "x",
+                    PositionMm = 100,
+                    SpeedMmPerSecond = 50
+                }).Success, "Whitelisted move should succeed.");
+                Assert(processor.Process(new BridgeRequest
+                {
+                    RequestId = "action-aspirate",
+                    Command = "AspirateConfigured",
+                    Axis = "z1",
+                    VolumeUl = 100
+                }).Success, "Whitelisted aspirate should succeed.");
+                var invalid = processor.Process(new BridgeRequest
+                {
+                    RequestId = "action-range",
+                    Command = "MoveConfiguredAxis",
+                    Axis = "x",
+                    PositionMm = 999,
+                    SpeedMmPerSecond = 50
+                });
+                Assert(!invalid.Success, "Out-of-range move must fail.");
+                Assert(fake.MoveCount == 1, "Only the valid move may reach the adapter.");
+                Assert(fake.AspirateCount == 1, "Aspirate should reach the adapter once.");
             }
 
             private void ReadOnlySessionRejectedWhenPortOrBaudInvalid()
@@ -752,7 +812,8 @@ namespace Stainer.SoconBridge
                     Y = true,
                     Z1 = true,
                     Z2 = true
-                }
+                },
+                PipetteApiMode = "Z-SOPA"
             };
         }
 
@@ -795,6 +856,63 @@ namespace Stainer.SoconBridge
             {
                 CloseCount++;
                 return new SoconAdapterResult { Success = closeSucceeds };
+            }
+
+            public void Dispose()
+            {
+            }
+        }
+
+        private sealed class FakeActionAdapter : ISoconActionAdapter
+        {
+            public int MoveCount { get; private set; }
+            public int AspirateCount { get; private set; }
+
+            public SoconAdapterResult Open(ReadOnlySessionParameters parameters)
+            {
+                return new SoconAdapterResult { Success = true };
+            }
+
+            public SoconBasicStatusResult ReadBasicStatus(ReadOnlySessionParameters parameters)
+            {
+                return new SoconBasicStatusResult { Confirmed = true, Initialized = true, Homed = true };
+            }
+
+            public SoconAxisPositionResult ReadAxisPosition(ReadOnlySessionParameters parameters)
+            {
+                return new SoconAxisPositionResult { Success = true, PositionMillimeters = 0 };
+            }
+
+            public SoconAdapterResult MoveAxis(ReadOnlySessionParameters parameters, double positionMm, double speedMmPerSecond, int timeoutMilliseconds)
+            {
+                MoveCount++;
+                return new SoconAdapterResult { Success = true };
+            }
+
+            public SoconAdapterResult Aspirate(ReadOnlySessionParameters parameters, int volumeUl, int timeoutMilliseconds)
+            {
+                AspirateCount++;
+                return new SoconAdapterResult { Success = true };
+            }
+
+            public SoconAdapterResult Dispense(ReadOnlySessionParameters parameters, int volumeUl, int timeoutMilliseconds)
+            {
+                return new SoconAdapterResult { Success = true };
+            }
+
+            public SoconAdapterResult DetectLiquid(ReadOnlySessionParameters parameters, double startMm, double maximumMm, int timeoutMilliseconds)
+            {
+                return new SoconAdapterResult { Success = true };
+            }
+
+            public SoconAdapterResult Stop(ReadOnlySessionParameters parameters)
+            {
+                return new SoconAdapterResult { Success = true };
+            }
+
+            public SoconAdapterResult Close()
+            {
+                return new SoconAdapterResult { Success = true };
             }
 
             public void Dispose()

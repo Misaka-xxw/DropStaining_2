@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Stainer.Web.Application.Devices;
 using Stainer.Web.Application.ReadModels;
 using Stainer.Web.Application.Requests;
 using Stainer.Web.Domain.Entities;
@@ -11,7 +12,8 @@ namespace Stainer.Web.Application.Services;
 public sealed class EngineeringPipettingService(
     StainerDbContext dbContext,
     CommandIdempotencyService idempotencyService,
-    DeviceModeService deviceModeService)
+    DeviceModeService deviceModeService,
+    IReagentHardwareActionClient reagentHardwareActionClient)
 {
     private static readonly SemaphoreSlim Gate = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -112,7 +114,7 @@ public sealed class EngineeringPipettingService(
             actor,
             async () =>
             {
-                EnsureMockMode();
+                EnsureSupportedMode(operationType);
                 await Gate.WaitAsync(cancellationToken);
                 try
                 {
@@ -159,6 +161,19 @@ public sealed class EngineeringPipettingService(
                             failedResponse,
                             "PipettingOperation",
                             failedOperation.Id);
+                    }
+
+                    if (!deviceModeService.IsMock)
+                    {
+                        var hardwareRequest = BuildHardwareRequest(operationType, needleCode, coordinatePoint, volumeUl);
+                        var hardwareResult = await reagentHardwareActionClient.ExecuteAsync(hardwareRequest, cancellationToken);
+                        if (!hardwareResult.Ok)
+                        {
+                            throw new BusinessRuleException(
+                                hardwareResult.ErrorCode ?? "engineering_pipetting_hardware_failed",
+                                hardwareResult.Message,
+                                StatusCodes.Status503ServiceUnavailable);
+                        }
                     }
 
                     ApplyArmState(arm, operationType, coordinatePoint, commandId);
@@ -507,15 +522,74 @@ public sealed class EngineeringPipettingService(
             });
     }
 
-    private void EnsureMockMode()
+    private void EnsureSupportedMode(string operationType)
     {
-        if (!deviceModeService.IsMock)
+        if (!deviceModeService.IsMock && operationType == PipettingOperationTypes.WashNeedle)
         {
             throw new BusinessRuleException(
-                "engineering_pipetting_real_not_available",
-                "Engineering pipetting tests are fail-closed outside Mock mode until real hardware validation is explicitly implemented.",
+                "engineering_pipetting_real_wash_not_available",
+                "Real needle wash is not a SOCON reagent action and remains fail-closed.",
                 StatusCodes.Status409Conflict);
         }
+    }
+
+    private static ReagentHardwareActionRequest BuildHardwareRequest(
+        string operationType,
+        string needleCode,
+        CoordinatePoint point,
+        int volumeUl)
+    {
+        if (!point.CalibratedXUm.HasValue || !point.CalibratedYUm.HasValue || !point.SafeZUm.HasValue)
+        {
+            throw new BusinessRuleException(
+                "engineering_pipetting_coordinate_incomplete",
+                "Real pipetting requires calibrated X/Y and safe Z coordinates.",
+                StatusCodes.Status409Conflict);
+        }
+
+        var axis = string.Equals(needleCode, NeedleCodes.Needle2, StringComparison.OrdinalIgnoreCase) ? "z2" : "z1";
+        if (operationType == PipettingOperationTypes.LiquidDetect)
+        {
+            if (!point.LiquidDetectZUm.HasValue || !point.AspirateEndZUm.HasValue)
+            {
+                throw new BusinessRuleException(
+                    "engineering_pipetting_liquid_detect_z_incomplete",
+                    "Real liquid detection requires start and maximum Z coordinates.",
+                    StatusCodes.Status409Conflict);
+            }
+
+            return new ReagentHardwareActionRequest(
+                ReagentHardwareActionOperations.LiquidDetect,
+                axis,
+                point.CalibratedXUm.Value,
+                point.CalibratedYUm.Value,
+                point.SafeZUm.Value,
+                point.LiquidDetectZUm.Value,
+                null,
+                point.AspirateEndZUm.Value);
+        }
+
+        var actionZ = operationType == PipettingOperationTypes.Dispense
+            ? point.DispenseZUm
+            : point.LiquidDetectZUm;
+        if (!actionZ.HasValue)
+        {
+            throw new BusinessRuleException(
+                "engineering_pipetting_action_z_incomplete",
+                "Real pipetting requires the configured action Z coordinate.",
+                StatusCodes.Status409Conflict);
+        }
+
+        return new ReagentHardwareActionRequest(
+            operationType == PipettingOperationTypes.Aspirate
+                ? ReagentHardwareActionOperations.Aspirate
+                : ReagentHardwareActionOperations.Dispense,
+            axis,
+            point.CalibratedXUm.Value,
+            point.CalibratedYUm.Value,
+            point.SafeZUm.Value,
+            actionZ.Value,
+            volumeUl);
     }
 
     private static int ResolveVolumeUl(string operationType, EngineeringPipettingTestRequest request)
