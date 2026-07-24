@@ -136,3 +136,4 @@ data/communication-patch-migration.db*
 .omc/
 
 .claude
+.agent
