@@ -4,7 +4,9 @@ using Stainer.Web.Application.Requests;
 using Stainer.Web.Application.Services;
 using Stainer.Web.Infrastructure.Data;
 using Stainer.Web.Application.Devices;
+using Stainer.Web.Application.Devices.SoconBridge;
 using Stainer.Web.Infrastructure.Devices;
+using Stainer.Web.Infrastructure.Devices.SoconBridge;
 using Stainer.Web.Infrastructure.Health;
 using Stainer.Web.Infrastructure.Repositories;
 using Stainer.Web.Infrastructure.Twin;
@@ -114,6 +116,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ReagentCoordinateAnchorService>();
         services.AddScoped<ReagentCoordinateGenerationService>();
         services.AddScoped<ScannerControlService>();
+        services.AddScoped<RobotArmConnectionService>();
         services.AddScoped<ThermalControlService>();
         services.AddScoped<FluidicsControlService>();
         services.AddScoped<WaterSupplyControlService>();
@@ -202,6 +205,18 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(mainControllerTransport);
         services.AddSingleton(dcr55Transport);
         services.AddSingleton<IDeviceByteTransport>(new CompositeDeviceByteTransport(mainControllerTransport, dcr55Transport));
+
+        // P0-2：只读 SoconBridge Named Pipe 客户端配置与注册。
+        // 仅绑定 PipeName / ConnectTimeout / ResponseTimeout；COM / 波特率 / sdkDirectory / NodeID 仍由
+        // Bridge 本机配置负责，绝不进入主项目配置。客户端不在构造期打开管道；是否真正调用由
+        // RobotArmConnectionService 的 Real + HardwareAvailable 门禁决定（Mock / 硬件不可用 / 配置
+        // 不完整一律 fail-closed，绝不把真实连接请求静默转成 Mock 成功）。
+        var soconBridgeOptions = configuration
+            .GetSection("Device:SoconBridge")
+            .Get<SoconBridgeClientOptions>() ?? new SoconBridgeClientOptions();
+        services.AddSingleton(soconBridgeOptions);
+        services.AddSingleton<ISoconBridgeClient>(serviceProvider =>
+            new NamedPipeSoconBridgeClient(serviceProvider.GetRequiredService<SoconBridgeClientOptions>()));
         services.AddSingleton<IDcr55Adapter>(serviceProvider =>
             new Dcr55RealAdapter(
                 serviceProvider.GetRequiredService<IDeviceByteTransport>(),
