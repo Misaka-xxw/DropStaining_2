@@ -14,6 +14,7 @@ public sealed class AppSettingsProfile
     public decimal? ReagentTargetTempC { get; set; }      // 试剂目标温度 ℃
     public decimal? WorkTargetTempC { get; set; }         // 工作目标温度 ℃
     public decimal? NeedleGapMm { get; set; }             // 针间距 mm
+    public decimal? SafeZMm { get; set; }                // Z 安全高度 mm（双针共用）
     public bool Enabled { get; set; } = true;
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAtUtc { get; set; }

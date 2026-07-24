@@ -4,7 +4,7 @@ using System.Globalization;
 
 namespace Stainer.SoconBridge
 {
-    internal sealed class BridgeRequestProcessor
+    internal sealed class BridgeRequestProcessor : IDisposable
     {
         private const string PingCommand = "Ping";
         private const string GetBridgeStatusCommand = "GetBridgeStatus";
@@ -30,6 +30,7 @@ namespace Stainer.SoconBridge
         private SessionState sessionState;
         private ISoconReadOnlyAdapter currentAdapter;
         private bool cacheValid;
+        private bool disposed;
 
         /// <summary>
         /// Backward-compatible 2-arg constructor. Session commands return
@@ -366,17 +367,25 @@ namespace Stainer.SoconBridge
 
             // Gate 2: FRESH deployment validation. Never rely on a historical
             // currentStatus -- the SDK files may have changed since the last
-            // check. The 2026-06-15 vendor package intentionally contains only
-            // SOCON.API/SOCON.Utility/can_bootloader; legacy optional dependency
-            // warnings remain diagnostic and no longer block this confirmed package.
+            // check. Requires Success==true AND no BLOCKING runtime dependency
+            // missing. The blocking subset (C1.C1Zip.4.dll) is reported via the
+            // structured Details.BlockingRuntimeDependenciesPresent flag, which
+            // the validator always populates on this success path. An advisory
+            // dependency (SOCON.ScEventBus.dll) still surfaces as
+            // SdkRuntimeDependenciesWarning but does NOT block -- it is only
+            // reachable via SOCON.Utility.Common.CheckRet, never on the OpenPort
+            // path. != true fail-closes when the flag is null (validator did not
+            // attest blocking deps present).
             var deployment = validator.Validate();
             currentStatus = deployment.Status;
+            var blockingRuntimeDependencyMissing = deployment.Details.BlockingRuntimeDependenciesPresent != true;
             Console.WriteLine(
-                "OpenConfiguredReadOnlySession deployment status={0} runtimeWarning={1}",
+                "OpenConfiguredReadOnlySession deployment status={0} blockingRuntimeDependencyMissing={1} runtimeWarning={2}",
                 deployment.Status,
+                blockingRuntimeDependencyMissing,
                 ContainsRuntimeDependencyWarning(deployment.Warnings));
 
-            if (!deployment.Success)
+            if (!deployment.Success || blockingRuntimeDependencyMissing)
             {
                 TransitionTo(SessionState.Blocked, "DeploymentNotValidated");
                 return CreateBlockedResponse(requestId, command, "DeploymentNotValidated");
@@ -423,7 +432,8 @@ namespace Stainer.SoconBridge
                 if (openResult == null || !openResult.Success)
                 {
                     var code = openResult == null ? "OpenFailed" : (openResult.ErrorCode ?? "OpenFailed");
-                    BestEffortClose(adapter);
+                    // Open failed: release the adapter (Close + Dispose) before blocking.
+                    ReleaseAdapter(adapter);
                     TransitionTo(SessionState.Blocked, code);
                     return CreateBlockedResponse(requestId, command, code);
                 }
@@ -437,7 +447,8 @@ namespace Stainer.SoconBridge
             }
             catch (Exception ex)
             {
-                BestEffortClose(adapter);
+                // Open threw: release the adapter (Close + Dispose) before blocking.
+                ReleaseAdapter(adapter);
                 Console.WriteLine("OpenConfiguredReadOnlySession exception type={0}", ex.GetType().Name);
                 TransitionTo(SessionState.Blocked, "OpenException");
                 return CreateBlockedResponse(requestId, command, "OpenException");
@@ -572,29 +583,39 @@ namespace Stainer.SoconBridge
             // throwing ClosePort fails closed to SessionBlocked -- the bridge
             // never reports a session closed that the device did not confirm. No
             // port/path/NodeID or underlying exception detail is leaked.
-            if (currentAdapter != null)
+            //
+            // Lifecycle: Close() is called first; the adapter is Dispose()d in
+            // finally REGARDLESS of the close outcome, so a failed or throwing
+            // ClosePort still releases the underlying SCDevice. The active
+            // adapter reference and cache are cleared after release.
+            SoconAdapterResult closeResult = null;
+            var adapter = currentAdapter;
+            if (adapter != null)
             {
-                SoconAdapterResult closeResult;
                 try
                 {
-                    closeResult = currentAdapter.Close();
+                    closeResult = adapter.Close();
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine("CloseConfiguredReadOnlySession exception type={0}", ex.GetType().Name);
                     closeResult = null;
                 }
+                finally
+                {
+                    // Always dispose, even when ClosePort failed or threw.
+                    DisposeAdapterSafely(adapter);
+                    currentAdapter = null;
+                    cacheValid = false;
+                }
 
                 if (closeResult == null || !closeResult.Success)
                 {
-                    currentAdapter = null;
-                    cacheValid = false;
                     TransitionTo(SessionState.Blocked, "CloseFailed");
                     return CreateBlockedResponse(requestId, command, "CloseFailed");
                 }
             }
 
-            currentAdapter = null;
             cacheValid = false;
             var previousState = sessionState;
             sessionState = SessionState.Closed;
@@ -802,6 +823,63 @@ namespace Stainer.SoconBridge
             catch (Exception)
             {
                 // Best effort: ClosePort must not throw out of Close.
+            }
+        }
+
+        // Best-effort Close then Dispose. Used on the Open failure/exception
+        // paths and on processor shutdown, where the close outcome is not
+        // captured. Exactly one Close and one Dispose per adapter.
+        private static void ReleaseAdapter(ISoconReadOnlyAdapter adapter)
+        {
+            if (adapter == null)
+            {
+                return;
+            }
+
+            BestEffortClose(adapter);
+            DisposeAdapterSafely(adapter);
+        }
+
+        private static void DisposeAdapterSafely(ISoconReadOnlyAdapter adapter)
+        {
+            if (adapter == null)
+            {
+                return;
+            }
+
+            try
+            {
+                adapter.Dispose();
+            }
+            catch (Exception)
+            {
+                // Best effort: Dispose must not throw out of session teardown.
+            }
+        }
+
+        /// <summary>
+        /// Releases the active session adapter (Close -&gt; Dispose) under the
+        /// session lock. Idempotent; used at Bridge shutdown. Never throws and a
+        /// disposal exception never overwrites the last session outcome.
+        /// </summary>
+        public void Dispose()
+        {
+            if (disposed)
+            {
+                return;
+            }
+            disposed = true;
+
+            lock (sessionSync)
+            {
+                var adapter = currentAdapter;
+                currentAdapter = null;
+                cacheValid = false;
+                if (adapter != null)
+                {
+                    // Session was Open: execute Close -> Dispose on the adapter.
+                    ReleaseAdapter(adapter);
+                }
             }
         }
 

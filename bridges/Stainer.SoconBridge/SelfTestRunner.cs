@@ -50,15 +50,253 @@ namespace Stainer.SoconBridge
                 RequiredTypeFailureIsReported();
                 DeploymentValidatedWithCompleteFakeFiles();
                 DeploymentValidatedWithRuntimeWarnings();
+                DeploymentValidatedWhenOnlyScEventBusMissing();
+                BlockingRuntimeDependencyReportedWhenC1ZipMissing();
                 ActionCommandsAreNotSupported();
                 ReadOnlySessionGateFailsClosed();
                 ReadOnlySessionDispatchesOnlyFakeAdapter();
+                ReadOnlySessionOpensWhenOnlyScEventBusMissing();
+                ReadOnlySessionBlockedWhenC1ZipMissing();
+                ReadOnlySessionBlockedWhenBothRuntimeDepsMissing();
+                ReadOnlySessionFailsClosedWhenBlockingPresenceNotAttested();
                 LengthPrefixedProtocolRejectsMalformedRequests();
                 ConfiguredSdkRuntimeValidation();
-                ReadOnlySessionAcceptsCurrentVendorPackageWarning();
                 ReadOnlySessionRejectedWhenPortOrBaudInvalid();
                 ReadOnlySessionCloseFailsWhenClosePortReturnsFalse();
                 ActionSessionDispatchesWhitelistedCommands();
+                // P0-4 ClosePort / Dispose lifecycle coverage:
+                CloseThenDisposeOrderAfterOpen();
+                AdapterReleasedWhenOpenFails();
+                AdapterReleasedWhenOpenThrows();
+                CloseFailedStillDisposedAndBlocked();
+                CloseThrowsStillDisposedAndBlocked();
+                ProcessorDisposeReleasesOpenAdapter();
+                RepeatedDisposeAndCloseDoNotDoubleRelease();
+                MultiRoundOpenCloseReleasesIndependentAdapters();
+                DisposeThrowDoesNotOverwriteCloseResult();
+            }
+
+            // ---- P0-4 lifecycle: ClosePort / Dispose ----
+
+            private void CloseThenDisposeOrderAfterOpen()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-close-order", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed before close.");
+
+                var close = processor.Process(new BridgeRequest { RequestId = "p04-close-order", Command = "CloseConfiguredReadOnlySession" });
+                Assert(close.Success, "Close should succeed.");
+
+                Assert(fake.CloseCount == 1, "Close must be called exactly once.");
+                Assert(fake.DisposeCount == 1, "Dispose must be called exactly once after close.");
+                Assert(fake.Calls.Count >= 2, "Call trace must record Close and Dispose.");
+                Assert(fake.Calls[fake.Calls.Count - 2] == "Close", "Close must precede Dispose.");
+                Assert(fake.Calls[fake.Calls.Count - 1] == "Dispose", "Dispose must follow Close.");
+            }
+
+            private void AdapterReleasedWhenOpenFails()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(false, false, true, false, false);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-open-fail", Command = "OpenConfiguredReadOnlySession" });
+                Assert(!open.Success, "Open failure must be reported.");
+                Assert(open.Details.SessionState == "Blocked", "Session must block on open failure.");
+
+                Assert(fake.OpenCount == 1, "Open must be attempted once.");
+                Assert(fake.CloseCount == 1, "Adapter must be closed once after open failure.");
+                Assert(fake.DisposeCount == 1, "Adapter must be disposed once after open failure.");
+            }
+
+            private void AdapterReleasedWhenOpenThrows()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(true, true, true, false, false);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-open-throw", Command = "OpenConfiguredReadOnlySession" });
+                Assert(!open.Success, "Open throw must fail-closed.");
+                Assert(open.Details.SessionState == "Blocked", "Session must block on open throw.");
+                Assert(open.Details.BlockReason == "OpenException", "Block reason must be OpenException.");
+
+                Assert(fake.OpenCount == 1, "Open must be attempted once.");
+                Assert(fake.CloseCount == 1, "Adapter must be closed once after open threw.");
+                Assert(fake.DisposeCount == 1, "Adapter must be disposed once after open threw.");
+            }
+
+            private void CloseFailedStillDisposedAndBlocked()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(false);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-close-fail", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed before testing close failure.");
+
+                var close = processor.Process(new BridgeRequest { RequestId = "p04-close-fail", Command = "CloseConfiguredReadOnlySession" });
+                Assert(!close.Success, "ClosePort failure must block.");
+                Assert(close.Details.SessionState == "Blocked", "Session must be blocked when ClosePort fails.");
+                Assert(close.Details.BlockReason == "CloseFailed", "Block reason must be CloseFailed.");
+
+                Assert(fake.CloseCount == 1, "Close must be attempted once.");
+                Assert(fake.DisposeCount == 1, "Adapter must be disposed once even when ClosePort failed.");
+            }
+
+            private void CloseThrowsStillDisposedAndBlocked()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(true, false, true, true, false);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-close-throw", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed before testing close throw.");
+
+                var close = processor.Process(new BridgeRequest { RequestId = "p04-close-throw", Command = "CloseConfiguredReadOnlySession" });
+                Assert(!close.Success, "Throwing ClosePort must block.");
+                Assert(close.Details.SessionState == "Blocked", "Session must be blocked when ClosePort throws.");
+                Assert(close.Details.BlockReason == "CloseFailed", "Block reason must be CloseFailed.");
+
+                Assert(fake.CloseCount == 1, "Close must be attempted once.");
+                Assert(fake.DisposeCount == 1, "Adapter must be disposed once even when ClosePort threw.");
+            }
+
+            private void ProcessorDisposeReleasesOpenAdapter()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-proc-dispose", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed before processor dispose.");
+
+                processor.Dispose();
+
+                // Session was Open: processor.Dispose must execute Close -> Dispose once each.
+                Assert(fake.CloseCount == 1, "Processor.Dispose must Close the active adapter once.");
+                Assert(fake.DisposeCount == 1, "Processor.Dispose must Dispose the active adapter once.");
+                Assert(fake.Calls[fake.Calls.Count - 2] == "Close", "Processor.Dispose must Close before Dispose.");
+                Assert(fake.Calls[fake.Calls.Count - 1] == "Dispose", "Processor.Dispose must Dispose after Close.");
+            }
+
+            private void RepeatedDisposeAndCloseDoNotDoubleRelease()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-idempotent", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed.");
+
+                processor.Dispose();
+                processor.Dispose();
+                Assert(fake.CloseCount == 1, "Repeated processor.Dispose must not Close again.");
+                Assert(fake.DisposeCount == 1, "Repeated processor.Dispose must not Dispose again.");
+
+                // Closing after disposal must not re-invoke the (already released) adapter.
+                processor.Process(new BridgeRequest { RequestId = "p04-idempotent", Command = "CloseConfiguredReadOnlySession" });
+                Assert(fake.CloseCount == 1, "Close after dispose must not re-invoke adapter Close.");
+                Assert(fake.DisposeCount == 1, "Close after dispose must not re-invoke adapter Dispose.");
+
+                processor.Dispose();
+            }
+
+            private void MultiRoundOpenCloseReleasesIndependentAdapters()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var created = new List<FakeReadOnlyAdapter>();
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        var fresh = new FakeReadOnlyAdapter();
+                        created.Add(fresh);
+                        return fresh;
+                    });
+
+                for (var i = 0; i < 2; i++)
+                {
+                    var open = processor.Process(new BridgeRequest { RequestId = "p04-multi-" + i, Command = "OpenConfiguredReadOnlySession" });
+                    Assert(open.Success, "Each round should open.");
+                    var close = processor.Process(new BridgeRequest { RequestId = "p04-multi-" + i, Command = "CloseConfiguredReadOnlySession" });
+                    Assert(close.Success, "Each round should close.");
+                }
+
+                Assert(created.Count == 2, "Each round must create an independent adapter.");
+                foreach (var fresh in created)
+                {
+                    Assert(fresh.OpenCount == 1, "Each adapter must be opened once.");
+                    Assert(fresh.CloseCount == 1, "Each adapter must be closed once.");
+                    Assert(fresh.DisposeCount == 1, "Each adapter must be disposed once.");
+                }
+
+                processor.Dispose();
+            }
+
+            private void DisposeThrowDoesNotOverwriteCloseResult()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var fake = new FakeReadOnlyAdapter(true, false, true, false, true);
+                var processor = new BridgeRequestProcessor(
+                    ValidatedDeployment(),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate { return fake; });
+
+                var open = processor.Process(new BridgeRequest { RequestId = "p04-dispose-throw", Command = "OpenConfiguredReadOnlySession" });
+                Assert(open.Success, "Open should succeed.");
+
+                var close = processor.Process(new BridgeRequest { RequestId = "p04-dispose-throw", Command = "CloseConfiguredReadOnlySession" });
+                // Close succeeded; the subsequent Dispose threw but must NOT turn this into a failure.
+                Assert(close.Success, "Dispose exception must not overwrite a successful Close result.");
+                Assert(close.Details.SessionState == "Closed", "Session must close despite Dispose throwing.");
+                Assert(close.Message == "SessionClosed", "Close message must reflect confirmed close.");
+                Assert(fake.CloseCount == 1, "Close called once.");
+                Assert(fake.DisposeCount == 1, "Dispose attempted once (and swallowed).");
+
+                processor.Dispose();
             }
 
             private void PingReturnsOffline()
@@ -204,6 +442,46 @@ namespace Stainer.SoconBridge
                     Assert(Contains(result.Warnings, BridgeWarningCodes.SdkRuntimeDependenciesWarning), "Runtime dependency warning should be returned.");
                     Assert(Contains(result.Details.MissingFiles, "SOCON.ScEventBus.dll"), "Missing SOCON.ScEventBus.dll should be reported.");
                     Assert(Contains(result.Details.MissingFiles, "C1.C1Zip.4.dll"), "Missing C1.C1Zip.4.dll should be reported.");
+                    Assert(result.Details.BlockingRuntimeDependenciesPresent == false, "A blocking runtime dependency is missing when both are absent.");
+                });
+            }
+
+            private void DeploymentValidatedWhenOnlyScEventBusMissing()
+            {
+                WithTempDirectory(delegate(string sdkDirectory)
+                {
+                    WriteCoreFakeSdk(sdkDirectory);
+                    WriteTextFile(Path.Combine(sdkDirectory, "C1.C1Zip.4.dll"), "fake");
+                    // SOCON.ScEventBus.dll intentionally absent (advisory only).
+
+                    var validator = CreateValidator(sdkDirectory, sdkDirectory, true);
+                    var result = validator.Validate();
+
+                    Assert(result.Status == BridgeStatus.DeploymentValidated, "Only ScEventBus missing should still validate.");
+                    Assert(Contains(result.Warnings, BridgeWarningCodes.SdkRuntimeDependenciesWarning), "Advisory dependency warning should still be returned.");
+                    Assert(Contains(result.Details.MissingFiles, "SOCON.ScEventBus.dll"), "Missing SOCON.ScEventBus.dll should be reported.");
+                    Assert(!Contains(result.Details.MissingFiles, "C1.C1Zip.4.dll"), "C1.C1Zip.4.dll must not be reported when present.");
+                    Assert(result.Details.BlockingRuntimeDependenciesPresent == true, "No blocking runtime dependency is missing when only ScEventBus is absent.");
+                    Assert(result.Details.RuntimeDependenciesPresent == false, "An advisory dependency is still missing, so the union flag stays false.");
+                });
+            }
+
+            private void BlockingRuntimeDependencyReportedWhenC1ZipMissing()
+            {
+                WithTempDirectory(delegate(string sdkDirectory)
+                {
+                    WriteCoreFakeSdk(sdkDirectory);
+                    WriteTextFile(Path.Combine(sdkDirectory, "SOCON.ScEventBus.dll"), "fake");
+                    // C1.C1Zip.4.dll intentionally absent (blocking).
+
+                    var validator = CreateValidator(sdkDirectory, sdkDirectory, true);
+                    var result = validator.Validate();
+
+                    Assert(result.Status == BridgeStatus.DeploymentValidated, "C1Zip missing should not change core validation status.");
+                    Assert(Contains(result.Warnings, BridgeWarningCodes.SdkRuntimeDependenciesWarning), "Runtime dependency warning should be returned.");
+                    Assert(Contains(result.Details.MissingFiles, "C1.C1Zip.4.dll"), "Missing C1.C1Zip.4.dll should be reported.");
+                    Assert(!Contains(result.Details.MissingFiles, "SOCON.ScEventBus.dll"), "SOCON.ScEventBus.dll must not be reported when present.");
+                    Assert(result.Details.BlockingRuntimeDependenciesPresent == false, "A blocking runtime dependency is missing when C1Zip is absent.");
                 });
             }
 
@@ -266,7 +544,7 @@ namespace Stainer.SoconBridge
                 var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
                 var fake = new FakeReadOnlyAdapter();
                 var processor = new BridgeRequestProcessor(
-                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    ValidatedDeployment(),
                     BridgeStatus.Offline,
                     config,
                     new RealReadOnlySessionGate(config, true),
@@ -317,8 +595,94 @@ namespace Stainer.SoconBridge
                 Assert(fake.CloseCount == 1, "Close must be called exactly once.");
             }
 
-            private void ReadOnlySessionAcceptsCurrentVendorPackageWarning()
+            private void ReadOnlySessionOpensWhenOnlyScEventBusMissing()
             {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var factoryCalls = 0;
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    ValidatorWithRuntimeState(true, new List<string> { "SOCON.ScEventBus.dll" }),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        factoryCalls++;
+                        return fake;
+                    });
+
+                var response = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-only-sceventbus-open",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+
+                Assert(response.Success, "Only ScEventBus missing must NOT block open.");
+                Assert(factoryCalls == 1, "Adapter factory must be invoked (enters Open) when only ScEventBus is missing.");
+                Assert(fake.OpenCount == 1, "Adapter Open must be called when only ScEventBus is missing.");
+                Assert(response.Details.SessionState == "Open", "Session must be Open when only ScEventBus is missing.");
+            }
+
+            private void ReadOnlySessionBlockedWhenC1ZipMissing()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var factoryCalls = 0;
+                var processor = new BridgeRequestProcessor(
+                    ValidatorWithRuntimeState(false, new List<string> { "C1.C1Zip.4.dll" }),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        factoryCalls++;
+                        return new FakeReadOnlyAdapter();
+                    });
+
+                var response = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-c1zip-missing-block",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+
+                Assert(!response.Success, "Missing C1.C1Zip.4.dll must block open.");
+                Assert(factoryCalls == 0, "Adapter must not be constructed when C1.C1Zip.4.dll is missing.");
+                Assert(response.Details.SessionState == "Blocked", "Session must be blocked when C1.C1Zip.4.dll is missing.");
+                Assert(response.Details.BlockReason == "DeploymentNotValidated", "Block reason must be DeploymentNotValidated.");
+            }
+
+            private void ReadOnlySessionBlockedWhenBothRuntimeDepsMissing()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var factoryCalls = 0;
+                var processor = new BridgeRequestProcessor(
+                    ValidatorWithRuntimeState(false, new List<string> { "C1.C1Zip.4.dll", "SOCON.ScEventBus.dll" }),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        factoryCalls++;
+                        return new FakeReadOnlyAdapter();
+                    });
+
+                var response = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-both-runtime-missing-block",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+
+                Assert(!response.Success, "Missing both runtime dependencies must block open.");
+                Assert(factoryCalls == 0, "Adapter must not be constructed when C1.C1Zip.4.dll is among the missing deps.");
+                Assert(response.Details.SessionState == "Blocked", "Session must be blocked when both runtime deps are missing.");
+                Assert(response.Details.BlockReason == "DeploymentNotValidated", "Block reason must be DeploymentNotValidated.");
+            }
+
+            private void ReadOnlySessionFailsClosedWhenBlockingPresenceNotAttested()
+            {
+                // A validator that returns DeploymentValidated with a runtime
+                // warning but does NOT populate BlockingRuntimeDependenciesPresent
+                // (null) must fail closed: the processor cannot prove no blocking
+                // dependency is missing, so it blocks before OpenPort.
                 var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
                 var factoryCalls = 0;
                 var processor = new BridgeRequestProcessor(
@@ -334,13 +698,14 @@ namespace Stainer.SoconBridge
 
                 var response = processor.Process(new BridgeRequest
                 {
-                    RequestId = "self-test-runtime-warning-reject",
+                    RequestId = "self-test-blocking-presence-unknown",
                     Command = "OpenConfiguredReadOnlySession"
                 });
 
-                Assert(response.Success, "Current vendor package warning must not reject open.");
-                Assert(factoryCalls == 1, "Adapter must be constructed for the confirmed current vendor package.");
-                Assert(response.Details.SessionState == "Open", "Session must open when only legacy optional dependencies are absent.");
+                Assert(!response.Success, "Unknown blocking-presence must fail closed.");
+                Assert(factoryCalls == 0, "Adapter must not be constructed when blocking presence is not attested.");
+                Assert(response.Details.SessionState == "Blocked", "Session must be blocked when blocking presence is not attested.");
+                Assert(response.Details.BlockReason == "DeploymentNotValidated", "Block reason must be DeploymentNotValidated.");
             }
 
             private void ActionSessionDispatchesWhitelistedCommands()
@@ -363,7 +728,7 @@ namespace Stainer.SoconBridge
                 var config = SoconReadOnlyConfig.FromBridgeConfig(rawConfig);
                 var fake = new FakeActionAdapter();
                 var processor = new BridgeRequestProcessor(
-                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    ValidatedDeployment(),
                     BridgeStatus.Offline,
                     config,
                     new RealReadOnlySessionGate(config, true),
@@ -412,7 +777,7 @@ namespace Stainer.SoconBridge
                     var config = SoconReadOnlyConfig.FromBridgeConfig(baseConfig);
                     var factoryCalls = 0;
                     var processor = new BridgeRequestProcessor(
-                        new CountingValidator(BridgeStatus.DeploymentValidated),
+                        ValidatedDeployment(),
                         BridgeStatus.Offline,
                         config,
                         new RealReadOnlySessionGate(config, true),
@@ -441,7 +806,7 @@ namespace Stainer.SoconBridge
                     var config = SoconReadOnlyConfig.FromBridgeConfig(baseConfig);
                     var factoryCalls = 0;
                     var processor = new BridgeRequestProcessor(
-                        new CountingValidator(BridgeStatus.DeploymentValidated),
+                        ValidatedDeployment(),
                         BridgeStatus.Offline,
                         config,
                         new RealReadOnlySessionGate(config, true),
@@ -469,7 +834,7 @@ namespace Stainer.SoconBridge
                 var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
                 var fake = new FakeReadOnlyAdapter(false);
                 var processor = new BridgeRequestProcessor(
-                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    ValidatedDeployment(),
                     BridgeStatus.Offline,
                     config,
                     new RealReadOnlySessionGate(config, true),
@@ -546,6 +911,34 @@ namespace Stainer.SoconBridge
                     new FixedArchitectureProbe(isX86Process),
                     new PeArchitectureInspector(),
                     new FixedManagedAssemblyLoadProbe(managedLoadSucceeds, requiredTypesAvailable));
+            }
+
+            // A deployment-validated validator that positively attests no
+            // blocking runtime dependency is missing (the normal validated
+            // state). Used by happy-path Open tests so Gate 2 passes.
+            private static ISdkDeploymentValidator ValidatedDeployment()
+            {
+                return new CountingValidator(
+                    BridgeStatus.DeploymentValidated,
+                    null,
+                    new BridgeResponseDetails { BlockingRuntimeDependenciesPresent = true });
+            }
+
+            // A deployment-validated validator that simulates a specific runtime
+            // dependency state: blockingPresent drives the structured gate
+            // signal, missingFiles drives both the warning and the reported
+            // MissingFiles list.
+            private static ISdkDeploymentValidator ValidatorWithRuntimeState(bool blockingPresent, List<string> missingFiles)
+            {
+                var warnings = (missingFiles == null || missingFiles.Count == 0)
+                    ? new List<string>()
+                    : new List<string> { BridgeWarningCodes.SdkRuntimeDependenciesWarning };
+                var details = new BridgeResponseDetails
+                {
+                    BlockingRuntimeDependenciesPresent = blockingPresent,
+                    MissingFiles = missingFiles
+                };
+                return new CountingValidator(BridgeStatus.DeploymentValidated, warnings, details);
             }
 
             private void ConfiguredSdkRuntimeValidation()
@@ -707,11 +1100,16 @@ namespace Stainer.SoconBridge
                 }
             }
 
-            private static void WriteCompleteFakeSdk(string sdkDirectory, bool includeRuntimeDependencies)
+            private static void WriteCoreFakeSdk(string sdkDirectory)
             {
                 WriteTextFile(Path.Combine(sdkDirectory, "SOCON.API.dll"), "fake");
                 WriteTextFile(Path.Combine(sdkDirectory, "SOCON.Utility.dll"), "fake");
                 WriteFakePe(Path.Combine(sdkDirectory, "can_bootloader.dll"), X86Machine);
+            }
+
+            private static void WriteCompleteFakeSdk(string sdkDirectory, bool includeRuntimeDependencies)
+            {
+                WriteCoreFakeSdk(sdkDirectory);
 
                 if (includeRuntimeDependencies)
                 {
@@ -819,11 +1217,17 @@ namespace Stainer.SoconBridge
 
         private sealed class FakeReadOnlyAdapter : ISoconReadOnlyAdapter
         {
+            private readonly bool openSucceeds;
+            private readonly bool openThrows;
             private readonly bool closeSucceeds;
+            private readonly bool closeThrows;
+            private readonly bool disposeThrows;
 
             public int OpenCount { get; private set; }
             public int PositionReadCount { get; private set; }
             public int CloseCount { get; private set; }
+            public int DisposeCount { get; private set; }
+            public List<string> Calls { get; private set; }
 
             public FakeReadOnlyAdapter()
                 : this(true)
@@ -831,14 +1235,31 @@ namespace Stainer.SoconBridge
             }
 
             public FakeReadOnlyAdapter(bool closeSucceeds)
+                : this(true, false, closeSucceeds, false, false)
             {
+            }
+
+            // Full control: openSucceeds / openThrows / closeSucceeds / closeThrows / disposeThrows.
+            public FakeReadOnlyAdapter(bool openSucceeds, bool openThrows, bool closeSucceeds, bool closeThrows, bool disposeThrows)
+            {
+                this.openSucceeds = openSucceeds;
+                this.openThrows = openThrows;
                 this.closeSucceeds = closeSucceeds;
+                this.closeThrows = closeThrows;
+                this.disposeThrows = disposeThrows;
+                Calls = new List<string>();
             }
 
             public SoconAdapterResult Open(ReadOnlySessionParameters parameters)
             {
                 OpenCount++;
-                return new SoconAdapterResult { Success = true };
+                Calls.Add("Open");
+                if (openThrows)
+                {
+                    throw new InvalidOperationException("simulated open failure");
+                }
+
+                return new SoconAdapterResult { Success = openSucceeds };
             }
 
             public SoconBasicStatusResult ReadBasicStatus(ReadOnlySessionParameters parameters)
@@ -855,11 +1276,23 @@ namespace Stainer.SoconBridge
             public SoconAdapterResult Close()
             {
                 CloseCount++;
+                Calls.Add("Close");
+                if (closeThrows)
+                {
+                    throw new InvalidOperationException("simulated close failure");
+                }
+
                 return new SoconAdapterResult { Success = closeSucceeds };
             }
 
             public void Dispose()
             {
+                DisposeCount++;
+                Calls.Add("Dispose");
+                if (disposeThrows)
+                {
+                    throw new InvalidOperationException("simulated dispose failure");
+                }
             }
         }
 
@@ -924,16 +1357,23 @@ namespace Stainer.SoconBridge
         {
             private readonly BridgeStatus status;
             private readonly List<string> warnings;
+            private readonly BridgeResponseDetails details;
 
             public CountingValidator(BridgeStatus status)
-                : this(status, null)
+                : this(status, null, null)
             {
             }
 
             public CountingValidator(BridgeStatus status, List<string> warnings)
+                : this(status, warnings, null)
+            {
+            }
+
+            public CountingValidator(BridgeStatus status, List<string> warnings, BridgeResponseDetails details)
             {
                 this.status = status;
                 this.warnings = warnings ?? new List<string>();
+                this.details = details;
             }
 
             public int Count { get; private set; }
@@ -941,7 +1381,7 @@ namespace Stainer.SoconBridge
             public SdkDeploymentValidationResult Validate()
             {
                 Count++;
-                return new SdkDeploymentValidationResult(status, new BridgeResponseDetails(), warnings);
+                return new SdkDeploymentValidationResult(status, details ?? new BridgeResponseDetails(), warnings);
             }
         }
 

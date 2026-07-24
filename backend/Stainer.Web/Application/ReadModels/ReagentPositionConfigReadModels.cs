@@ -15,6 +15,7 @@ public sealed record ReagentPositionConfigResponse(
     int? PipetteVolumeUl,
     string? PipetteNeedleCode,
     string? PipetteLiquidClassCode,
+    string? LiquidClassCode,
     bool Enabled,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? UpdatedAtUtc);

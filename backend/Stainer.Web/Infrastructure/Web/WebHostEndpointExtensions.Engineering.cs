@@ -255,5 +255,29 @@ public static partial class WebHostEndpointExtensions
                 await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason, request.Target ?? $"device-profile:{request.Code}", request.DangerousOperationConfirmed, cancellationToken);
                 return Results.Ok(await service.SaveDeviceProfileAsync(request, actor, cancellationToken));
             }));
+
+        // P0-2：机械臂只读 Bridge 会话受控工程入口。只接 Open/Close 及 Bridge 状态查询，
+        // 不含任何机械臂动作。POST 走命令幂等 + 工程写会话；GET 状态仅需 admin。
+        // 响应只返回稳定、脱敏的状态/错误；Bridge 响应是运行时连接状态来源。
+        app.MapPost("/api/engineering/robot-arm/read-only-session/open", async (HttpContext context, RobotArmConnectionRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, RobotArmConnectionService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason, request.Target ?? "socon-bridge:read-only-session:open", request.DangerousOperationConfirmed, cancellationToken);
+                return Results.Ok(await service.OpenReadOnlySessionAsync(request, actor, cancellationToken));
+            }));
+        app.MapPost("/api/engineering/robot-arm/read-only-session/close", async (HttpContext context, RobotArmConnectionRequest request, UserSessionService sessionService, EngineeringSessionService engineeringSessionService, RobotArmConnectionService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                var actor = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                await engineeringSessionService.RequireWriteSessionAsync(actor, request.CommandId, request.Reason, request.Target ?? "socon-bridge:read-only-session:close", request.DangerousOperationConfirmed, cancellationToken);
+                return Results.Ok(await service.CloseReadOnlySessionAsync(request, actor, cancellationToken));
+            }));
+        app.MapGet("/api/engineering/robot-arm/read-only-session/status", async (HttpContext context, UserSessionService sessionService, RobotArmConnectionService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["admin"], cancellationToken);
+                return Results.Ok(await service.GetStatusAsync(cancellationToken));
+            }));
     }
 }

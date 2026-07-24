@@ -270,9 +270,25 @@ namespace Stainer.SoconBridge
             "can_bootloader.dll"
         };
 
-        private static readonly string[] RuntimeDependencyFiles =
+        // Runtime dependencies are split into two classes so the open gate can
+        // treat them differently without parsing warning text.
+        //
+        // Advisory: SOCON.ScEventBus.dll is referenced only by
+        // SOCON.Utility.Common.CheckRet (an error-log event-publishing helper
+        // that is never on the OpenPort / connection path and has no callers in
+        // SOCON.API or SOCON.Utility). Its absence is reported as a warning but
+        // must NOT block read-only sessions.
+        //
+        // Blocking: C1.C1Zip.4.dll (ComponentOne) is required at runtime by
+        // code paths the bridge cannot statically rule out, so its absence still
+        // blocks sessions.
+        private static readonly string[] AdvisoryRuntimeDependencyFiles =
         {
-            "SOCON.ScEventBus.dll",
+            "SOCON.ScEventBus.dll"
+        };
+
+        private static readonly string[] BlockingRuntimeDependencyFiles =
+        {
             "C1.C1Zip.4.dll"
         };
 
@@ -378,8 +394,25 @@ namespace Stainer.SoconBridge
                 return new SdkDeploymentValidationResult(BridgeStatus.SdkFilesMissing, details, warnings, runtimeDetails);
             }
 
-            var missingRuntimeDependencies = FindMissingFiles(sdkDirectory, RuntimeDependencyFiles);
+            var missingBlocking = FindMissingFiles(sdkDirectory, BlockingRuntimeDependencyFiles);
+            var missingAdvisory = FindMissingFiles(sdkDirectory, AdvisoryRuntimeDependencyFiles);
+
+            // Report the union of missing runtime dependencies (blocking listed
+            // first for stable ordering). MissingFiles is surfaced to IPC
+            // consumers and is also asserted by self-tests.
+            var missingRuntimeDependencies = new List<string>(missingBlocking);
+            missingRuntimeDependencies.AddRange(missingAdvisory);
+            AddFileChecks(runtimeDetails, sdkDirectory, BlockingRuntimeDependencyFiles);
+            AddFileChecks(runtimeDetails, sdkDirectory, AdvisoryRuntimeDependencyFiles);
+
+            // RuntimeDependenciesPresent keeps its original meaning: true only
+            // when EVERY runtime dep (advisory + blocking) is present.
+            // BlockingRuntimeDependenciesPresent is the structured signal the
+            // open gate consumes: true unless a blocking dep is missing. It is
+            // always populated on this success path so the processor never has
+            // to guess from warning text.
             details.RuntimeDependenciesPresent = missingRuntimeDependencies.Count == 0;
+            details.BlockingRuntimeDependenciesPresent = missingBlocking.Count == 0;
             if (missingRuntimeDependencies.Count > 0)
             {
                 details.MissingFiles = missingRuntimeDependencies;

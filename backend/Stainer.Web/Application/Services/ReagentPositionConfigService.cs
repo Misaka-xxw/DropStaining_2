@@ -69,6 +69,7 @@ public sealed class ReagentPositionConfigService(
                 if (request.PipetteVolumeUl.HasValue) cfg.PipetteVolumeUl = request.PipetteVolumeUl;
                 if (!string.IsNullOrWhiteSpace(request.PipetteNeedleCode)) cfg.PipetteNeedleCode = request.PipetteNeedleCode.Trim();
                 if (!string.IsNullOrWhiteSpace(request.PipetteLiquidClassCode)) cfg.PipetteLiquidClassCode = request.PipetteLiquidClassCode.Trim();
+                if (!string.IsNullOrWhiteSpace(request.LiquidClassCode)) cfg.LiquidClassCode = request.LiquidClassCode.Trim();
                 cfg.Enabled = true;
                 cfg.UpdatedAtUtc = DateTimeOffset.UtcNow;
 
@@ -87,7 +88,7 @@ public sealed class ReagentPositionConfigService(
     private static ReagentPositionConfigResponse ToResponse(ReagentPositionConfig c) => new(
         c.RackCode, c.CalibratedXMm, c.CalibratedYMm, c.SafeZMm, c.LiquidDetectZMm, c.AspirateEndZMm, c.DispenseZMm,
         c.RoiLeft, c.RoiTop, c.RoiWidth, c.RoiHeight,
-        c.PipetteVolumeUl, c.PipetteNeedleCode, c.PipetteLiquidClassCode,
+        c.PipetteVolumeUl, c.PipetteNeedleCode, c.PipetteLiquidClassCode, c.LiquidClassCode,
         c.Enabled, c.CreatedAtUtc, c.UpdatedAtUtc);
 
     private static object ToAudit(ReagentPositionConfig c) => new
@@ -112,11 +113,10 @@ public sealed class ReagentPositionConfigService(
     private static string NormalizeRackCode(string? rackCode)
     {
         var normalized = (rackCode ?? string.Empty).Trim().ToUpperInvariant();
-        // 接受试剂位 R1-R40 和玻片位 A-01 ~ D-04
-        if (System.Text.RegularExpressions.Regex.IsMatch(normalized, @"^R([1-9]|[1-3]\d|40)$")
-            || System.Text.RegularExpressions.Regex.IsMatch(normalized, @"^[A-D]-0[1-4]$"))
-            return normalized;
-        throw new BusinessRuleException("rack_code_invalid", "rackCode must be R1-R40 or A-01~D-04.", StatusCodes.Status400BadRequest);
+        // 接受所有坐标点码：R1-R40（试剂）、A-01~D-04（玻片）、DabA/DabB（A/B液）、M1-M8（配液）、WashOuterLeft 等。
+        if (string.IsNullOrWhiteSpace(normalized) || normalized.Length > 32 || !System.Text.RegularExpressions.Regex.IsMatch(normalized, @"^[A-Z0-9_-]+$"))
+            throw new BusinessRuleException("rack_code_invalid", "rackCode must be 1-32 alphanumeric characters (e.g. R12, A-04, DabA, M1, WashOuterLeft).", StatusCodes.Status400BadRequest);
+        return normalized;
     }
 
     private static decimal? ValidateRange(decimal? value, string fieldName, decimal minimum, decimal maximum)
