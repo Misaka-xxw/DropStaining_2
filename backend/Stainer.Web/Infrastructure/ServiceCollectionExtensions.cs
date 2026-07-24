@@ -97,6 +97,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TraceabilityQueryService>();
         services.AddScoped<DeviceModeService>();
         services.AddScoped<DeviceControlService>();
+        services.AddScoped<ChannelHardwareStatusService>();
         services.AddScoped<ReagentQrScannerDeviceOperationService>();
         services.AddScoped<IReagentHardwareSink, ReagentHardwareSink>();
         services.AddScoped<ScannerConfigurationService>();
@@ -106,6 +107,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WashValveConfigService>();
         services.AddScoped<AppSettingsConfigService>();
         services.AddScoped<ReagentPositionConfigService>();
+        services.AddScoped<ReagentPositionHardwareService>();
+        services.AddScoped<CoordinatePointHardwareService>();
+        services.AddScoped<RobotArmEngineeringService>();
         services.AddScoped<SerialConnectionConfigService>();
         services.AddScoped<ReagentCoordinateAnchorService>();
         services.AddScoped<ReagentCoordinateGenerationService>();
@@ -115,11 +119,26 @@ public static class ServiceCollectionExtensions
         services.AddScoped<WaterSupplyControlService>();
         services.AddScoped<MotionControlService>();
         var requestedMode = DeviceModes.Normalize(configuration["Device:Mode"]);
-        // 机械臂业务原子操作层：Mock 模式使用 Mock primitives；Real 模式 fail-closed，绝不回退 Mock。
-        services.AddScoped<IRobotMotionPrimitives>(_ =>
-            requestedMode == DeviceModes.Real
-                ? new UnavailableRobotMotionPrimitives()
-                : new MockRobotMotionPrimitives());
+        // 机械臂业务原子操作层：Mock 模式使用 Mock primitives；
+        // Real 模式下仅在 Device:SoconRobotMotion:Enabled=true 时接 SOCON（复用已审核 Z-SOPA 路径），
+        // 否则 UnavailableRobotMotionPrimitives 兜底 409——绝不回退 Mock。
+        services.AddScoped<IRobotMotionPrimitives>(serviceProvider =>
+        {
+            if (requestedMode != DeviceModes.Real)
+            {
+                return new MockRobotMotionPrimitives();
+            }
+
+            var soconRobotMotionOptions = serviceProvider.GetRequiredService<SoconRobotMotionPrimitivesOptions>();
+            if (!soconRobotMotionOptions.Enabled)
+            {
+                return new UnavailableRobotMotionPrimitives();
+            }
+
+            return new SoconRobotMotionPrimitives(
+                serviceProvider.GetRequiredService<IReagentHardwareActionClient>(),
+                soconRobotMotionOptions);
+        });
         services.AddScoped<IRobotArmAtomicActionService, RobotArmAtomicActionService>();
         services.AddScoped<IRobotArmProcessActionService, RobotArmProcessActionService>();
         services.AddSingleton<RobotArmAtomicHeights>();
@@ -154,6 +173,19 @@ public static class ServiceCollectionExtensions
                 .GetSection("Device:MainController")
                 .Get<MainControllerConnectionOptions>() ?? new MainControllerConnectionOptions();
         services.AddSingleton(mainControllerConfiguration);
+        var channelHardwareStatusOptions = configuration
+                .GetSection("Device:ChannelHardwareStatus")
+                .Get<ChannelHardwareStatusOptions>() ?? new ChannelHardwareStatusOptions();
+        services.AddSingleton(channelHardwareStatusOptions);
+        var soconReagentHardwareOptions = configuration
+                .GetSection("Device:SoconReagentHardware")
+                .Get<SoconReagentHardwareOptions>() ?? new SoconReagentHardwareOptions();
+        services.AddSingleton(soconReagentHardwareOptions);
+        services.AddSingleton<IReagentHardwareActionClient, SoconReagentHardwareActionClient>();
+        var soconRobotMotionOptions = configuration
+                .GetSection("Device:SoconRobotMotion")
+                .Get<SoconRobotMotionPrimitivesOptions>() ?? new SoconRobotMotionPrimitivesOptions();
+        services.AddSingleton(soconRobotMotionOptions);
 
             // DCR55-02 / P1-03-01：在 Real 模式下注册真实串口 Transport。
             // SerialPort 仅存在于 Dcr55SerialTransport / MainControllerSerialTransport（Transport 层），
@@ -177,6 +209,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<UnavailableRealDeviceAdapter>(serviceProvider =>
             new UnavailableRealDeviceAdapter(serviceProvider.GetRequiredService<IDeviceByteTransport>()));
         services.AddSingleton<IRealDeviceReadAdapter>(serviceProvider =>
+            serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
+        services.AddSingleton<IChannelHardwareStatusDeviceReader>(serviceProvider =>
             serviceProvider.GetRequiredService<UnavailableRealDeviceAdapter>());
 
         // The configured global adapter is fail-closed: Real never falls back to Mock.

@@ -35,12 +35,19 @@ The server rejects the connection without processing when the request length is 
 {
   "requestId": "string",
   "command": "string",
-  "axis": "x|y|z1|z2 (only for GetConfiguredAxisPositions)"
+  "axis": "x|y|z1|z2",
+  "positionMm": 0,
+  "speedMmPerSecond": 0,
+  "volumeUl": 0,
+  "startMm": 0,
+  "maximumMm": 0
 }
 ```
 
 `axis` is a role name, not a NodeID. The bridge resolves it against its local
 allowlist; requests cannot provide a port, baud rate, SDK path, or NodeID.
+The numeric fields are optional and accepted only by their corresponding action
+command; private local limits are authoritative.
 
 ## Response
 
@@ -78,6 +85,13 @@ allowlist; requests cannot provide a port, baud rate, SDK path, or NodeID.
   confirm. Only a confirmed `ClosePort` success returns `sessionState=Closed`,
   `sessionOpen=false`, `cacheValid=false` (message `SessionClosed`). No
   port/path/NodeID or underlying exception detail is leaked.
+- `MoveConfiguredAxis`: moves one configured/calibrated axis to an absolute
+  millimeter position and waits for completion.
+- `AspirateConfigured` / `DispenseConfigured`: run the configured Z-SOPA
+  pipette for `z1` or `z2` and wait for completion.
+- `DetectLiquidConfigured`: runs Z-SOPA liquid detection between configured
+  start/maximum Z positions and waits for completion.
+- `StopConfiguredAxis`: stops one configured, whitelisted logical axis.
 
 Unknown commands return:
 
@@ -89,10 +103,18 @@ Unknown commands return:
 }
 ```
 
-The three session read commands are intentionally narrow. They never accept
-connection details from IPC and never expose them in a response. No motion,
-pump, liquid detection, initialization, homing, generic port-opening, or wait
-command is supported.
+All session commands are intentionally narrow. They never accept connection
+details from IPC and never expose them in a response. Initialization, homing,
+generic port-opening and arbitrary SDK invocation remain unsupported.
+
+## Real Action Gate
+
+Actions require `--enable-real-actions` and local `realActionsEnabled=true`, in
+addition to the read-session deployment/connection gate. Every axis must be
+whitelisted and calibrated. `actionLimits` must define ordered X/Y/Z ranges and
+positive maximum speed, volume and timeout. The currently audited pipette model
+is `pipetteApiMode=Z-SOPA`. Any missing or out-of-range value is rejected before
+the adapter is called.
 
 ## Real Read-only Gate
 
@@ -115,15 +137,12 @@ The local configuration file is deployment-specific and must not be committed.
 
 `OpenConfiguredReadOnlySession` calls `ValidateSdkDeployment` internally. It does
 NOT rely on a prior `ValidateSdkDeployment` (BRG-01) result. The fresh validation
-must return status `DeploymentValidated` (`Success==true`) **and** must NOT carry
-`SdkRuntimeDependenciesWarning`. The runtime dependencies are `SOCON.ScEventBus.dll`
-and `C1.C1Zip.4.dll`.
+must return status `DeploymentValidated` (`Success==true`).
 
-Note: `ValidateSdkDeployment` keeps its own diagnostic semantics — when those DLLs
-are missing it still returns `DeploymentValidated` **with**
-`SdkRuntimeDependenciesWarning`. However, `OpenConfiguredReadOnlySession` treats that
-warning as a hard block (blockReason `DeploymentNotValidated`). This prevents SDK
-files changing after a prior validation.
+Note: older packages referenced `SOCON.ScEventBus.dll` and `C1.C1Zip.4.dll`.
+The confirmed 2026-06-15 package omits them, so their warning remains diagnostic
+and does not by itself block opening. Core file, PE and managed-type failures
+remain hard blocks.
 
 ### Gate 3 — Connection-parameter fail-closed validation
 

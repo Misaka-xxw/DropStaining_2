@@ -114,11 +114,12 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
                 DeviceByteTransportStatuses.Failed,
                 "main_controller_command_not_supported",
                 $"Command 0x{requestFrame.ParentClass:X2}/0x{requestFrame.SubClass:X2} is not on the approved main-controller whitelist. " +
-                "Allowed: TL_SYS_GET_WORK_STATUS (0x01/0x08), TL_SYS_GET_NODE_STATUS (0x01/0x09), " +
+                "Allowed: TL_SYS_GET_RUN_TIME (0x01/0x05), TL_SYS_GET_WORK_STATUS (0x01/0x08), TL_SYS_GET_NODE_STATUS (0x01/0x09), " +
                 "heating read commands 0x04/0x09, 0x04/0x0A, 0x04/0x0B with board id 0..3, " +
                 "cooling commands 0x03/0x01..0x06 (reads empty payload; 0x03/0x04 target UINT16 0..40, 0x03/0x06 switch UINT16 0/1), " +
                 "reagent QR commands 0x08/0x04 (start scan), 0x08/0x05 (reset), 0x08/0x06 (status), 0x08/0x01 (text) with empty payload, " +
-                "and wash PWM writes 0x07/0x02 (single [id:uint8][value:int16 LE -100..100]), 0x07/0x04 (all 4×int16 LE -100..100).");
+                "wash PWM 0x07/0x02 (single [id:uint8][value:int16 LE -100..100]), 0x07/0x04 (all 4×int16 LE -100..100), 0x07/0x06 (read detect values), " +
+                "and mixer read 0x0A/0x02 (origin), 0x0A/0x03 (remaining count) with board id 0..3.");
         }
 
         return await SendAndReceiveAsync(request.Operation, request.RequestBytes, requestFrame, cancellationToken);
@@ -427,8 +428,9 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
     //   - CoolingClass 0x03：只读 0x01/0x02/0x03/0x05（payload 空）；写入 0x04（目标温度）、0x06（开关）
     //     payload 恰 2 字节 UINT16 LE，且值在协议量程内（温度 0..40，开关 0/1）
     //   - QrClass 0x08：写入 0x04（启动扫描）、0x05（复位）payload 空；只读 0x06（扫描状态）、0x01（文本）payload 空
-    //   - PwmClass 0x07：写入 0x02（单通道 [pwmId][int16 LE -100..100]）、0x04（全通道 4×int16 LE -100..100）
-    // 其他命令（含 RESET、加热写、混匀、IO 等）一律拒绝，不发出字节。
+    //   - PwmClass 0x07：写入 0x02（单通道 [pwmId][int16 LE -100..100]）、0x04（全通道 4×int16 LE -100..100）；只读 0x06（检测值）payload 空
+    //   - MixerClass 0x0A：只读 0x02（原点）、0x03（剩余次数），payload 恰 1 字节 boardId ≤ 3
+    // 其他命令（含 RESET、加热写、IO 等）一律拒绝，不发出字节。
     private static bool IsApprovedMainControllerCommand(IceImmunoFrame frame)
     {
         if (frame.MessageType != IceImmunoSerialProtocol.RequestType)
@@ -436,9 +438,9 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
             return false;
         }
 
-        // SystemClass 只读命令
+        // SystemClass 只读命令：0x05（运行时间）、0x08（工作状态）、0x09（节点状态）
         if (frame.ParentClass == MainControllerProtocol.SystemClass
-            && (frame.SubClass == 0x08 || frame.SubClass == 0x09))
+            && (frame.SubClass == 0x05 || frame.SubClass == 0x08 || frame.SubClass == 0x09))
         {
             return true;
         }
@@ -490,6 +492,18 @@ public sealed class MainControllerSerialTransport : IDeviceByteTransport
             {
                 MainControllerProtocol.PwmSetIdValueSub => IsValidPwmSinglePayload(frame.Payload),
                 MainControllerProtocol.PwmSetAllValueSub => IsValidPwmAllPayload(frame.Payload),
+                0x06 => frame.Payload.Length == 0,  // 读取全部 PWM 检测值（设备上传）
+                _ => false
+            };
+        }
+
+        // MixerClass（混匀，父类 0x0A）：只读 0x02（原点）、0x03（剩余次数），payload 恰 1 字节 boardId ≤ 3（设备上传）。
+        if (frame.ParentClass == MainControllerProtocol.MixerClass)
+        {
+            return frame.SubClass switch
+            {
+                0x02 => frame.Payload.Length == 1 && frame.Payload[0] <= 3,
+                0x03 => frame.Payload.Length == 1 && frame.Payload[0] <= 3,
                 _ => false
             };
         }

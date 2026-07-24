@@ -99,4 +99,13 @@ namespace Stainer.SoconBridge
         /// </summary>
         SoconAdapterResult Close();
     }
+
+    internal interface ISoconActionAdapter : ISoconReadOnlyAdapter
+    {
+        SoconAdapterResult MoveAxis(ReadOnlySessionParameters parameters, double positionMm, double speedMmPerSecond, int timeoutMilliseconds);
+        SoconAdapterResult Aspirate(ReadOnlySessionParameters parameters, int volumeUl, int timeoutMilliseconds);
+        SoconAdapterResult Dispense(ReadOnlySessionParameters parameters, int volumeUl, int timeoutMilliseconds);
+        SoconAdapterResult DetectLiquid(ReadOnlySessionParameters parameters, double startMm, double maximumMm, int timeoutMilliseconds);
+        SoconAdapterResult Stop(ReadOnlySessionParameters parameters);
+    }
 }

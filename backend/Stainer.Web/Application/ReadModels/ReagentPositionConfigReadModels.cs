@@ -26,3 +26,13 @@ public sealed record ReagentPositionConfigMutationResponse(
     string EntityType,
     string EntityId,
     string Message);
+
+public sealed record ReagentPositionHardwareActionResponse(
+    bool Ok,
+    string CommandId,
+    bool Replayed,
+    string RackCode,
+    string NeedleCode,
+    string TargetZ,
+    IReadOnlyList<string> CompletedSteps,
+    string Message);

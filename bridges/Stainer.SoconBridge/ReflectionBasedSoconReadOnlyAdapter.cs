@@ -23,7 +23,7 @@ namespace Stainer.SoconBridge
     /// (Init/Move/Wait/LiqDet/Aspirate/Dispense/IO/Scan/Register/SetPerMM/
     /// SetMaxTrip).
     /// </remarks>
-    internal sealed class ReflectionBasedSoconReadOnlyAdapter : ISoconReadOnlyAdapter
+    internal sealed class ReflectionBasedSoconReadOnlyAdapter : ISoconActionAdapter
     {
         private const string SdkApiAssemblyFile = "SOCON.API.dll";
         private const string DeviceTypeName = "SOCON.API.SCDevice";
@@ -248,6 +248,103 @@ namespace Stainer.SoconBridge
             return result;
         }
 
+        public SoconAdapterResult MoveAxis(
+            ReadOnlySessionParameters parameters,
+            double positionMm,
+            double speedMmPerSecond,
+            int timeoutMilliseconds)
+        {
+            AssertNotDisposed();
+            AssertOpened();
+            if (parameters == null) throw new ArgumentNullException("parameters");
+
+            string methodName;
+            switch ((parameters.PhysicalAxis ?? string.Empty).ToUpperInvariant())
+            {
+                case "X": methodName = "MoveX"; break;
+                case "Y": methodName = "MoveY"; break;
+                case "Z": methodName = "MoveZ"; break;
+                default: return new SoconAdapterResult { Success = false, ErrorCode = "AxisNotSupported" };
+            }
+
+            var action = InvokeWithOptionalParameters(
+                methodName,
+                new object[] { parameters.NodeId, Convert.ToSingle(positionMm), Convert.ToSingle(speedMmPerSecond) });
+            var actionResult = ToActionResult(action, methodName + "Failed");
+            return actionResult.Success
+                ? WaitForAction(parameters.NodeId, timeoutMilliseconds)
+                : actionResult;
+        }
+
+        public SoconAdapterResult Aspirate(ReadOnlySessionParameters parameters, int volumeUl, int timeoutMilliseconds)
+        {
+            AssertNotDisposed();
+            AssertOpened();
+            if (parameters == null) throw new ArgumentNullException("parameters");
+
+            // Confirmed vendor Z-SOPA demo parameters. Optional tail arguments
+            // are resolved from the SDK's declared defaults.
+            var raw = InvokeWithOptionalParameters(
+                "AspirateSOCA",
+                new object[]
+                {
+                    parameters.NodeId,
+                    Convert.ToSingle(volumeUl),
+                    5000f,
+                    2000f,
+                    30000f,
+                    false,
+                    true,
+                    false,
+                    0f,
+                    0f,
+                    0f,
+                    3
+                });
+            var result = ToActionResult(raw, "AspirateFailed");
+            return result.Success ? WaitForAction(parameters.NodeId, timeoutMilliseconds) : result;
+        }
+
+        public SoconAdapterResult Dispense(ReadOnlySessionParameters parameters, int volumeUl, int timeoutMilliseconds)
+        {
+            AssertNotDisposed();
+            AssertOpened();
+            if (parameters == null) throw new ArgumentNullException("parameters");
+
+            var raw = InvokeWithOptionalParameters(
+                "DispenseSOCA",
+                new object[] { parameters.NodeId, Convert.ToSingle(volumeUl) });
+            var result = ToActionResult(raw, "DispenseFailed");
+            return result.Success ? WaitForAction(parameters.NodeId, timeoutMilliseconds) : result;
+        }
+
+        public SoconAdapterResult DetectLiquid(
+            ReadOnlySessionParameters parameters,
+            double startMm,
+            double maximumMm,
+            int timeoutMilliseconds)
+        {
+            AssertNotDisposed();
+            AssertOpened();
+            if (parameters == null) throw new ArgumentNullException("parameters");
+
+            var raw = InvokeWithOptionalParameters(
+                "LiqDetSOCA",
+                new object[] { parameters.NodeId, Convert.ToSingle(startMm), Convert.ToSingle(maximumMm) });
+            var result = ToActionResult(raw, "LiquidDetectFailed");
+            return result.Success ? WaitForAction(parameters.NodeId, timeoutMilliseconds) : result;
+        }
+
+        public SoconAdapterResult Stop(ReadOnlySessionParameters parameters)
+        {
+            AssertNotDisposed();
+            AssertOpened();
+            if (parameters == null) throw new ArgumentNullException("parameters");
+            return ToActionResult(
+                InvokeWithOptionalParameters("Stop", new object[] { parameters.NodeId }),
+                "StopFailed");
+        }
+
         public void Dispose()
         {
             if (disposed)
@@ -385,6 +482,101 @@ namespace Stainer.SoconBridge
             }
 
             return null;
+        }
+
+        private object InvokeWithOptionalParameters(string methodName, object[] requiredArguments)
+        {
+            MethodInfo selected = null;
+            foreach (var method in deviceType.GetMethods(BindingFlags.Instance | BindingFlags.Public))
+            {
+                if (!string.Equals(method.Name, methodName, StringComparison.Ordinal)
+                    || method.GetParameters().Length < requiredArguments.Length)
+                {
+                    continue;
+                }
+
+                var candidateParameters = method.GetParameters();
+                var compatible = true;
+                for (var i = 0; i < requiredArguments.Length; i++)
+                {
+                    var argument = requiredArguments[i];
+                    if (argument != null && !candidateParameters[i].ParameterType.IsInstanceOfType(argument))
+                    {
+                        compatible = false;
+                        break;
+                    }
+                }
+
+                if (compatible && (selected == null || candidateParameters.Length < selected.GetParameters().Length))
+                {
+                    selected = method;
+                }
+            }
+
+            if (selected == null)
+            {
+                throw new InvalidOperationException("SOCON binding failed: action method not found.");
+            }
+
+            var methodParameters = selected.GetParameters();
+            var arguments = new object[methodParameters.Length];
+            for (var i = 0; i < arguments.Length; i++)
+            {
+                if (i < requiredArguments.Length)
+                {
+                    arguments[i] = requiredArguments[i];
+                }
+                else if (methodParameters[i].IsOptional)
+                {
+                    arguments[i] = Type.Missing;
+                }
+                else
+                {
+                    throw new InvalidOperationException("SOCON binding failed: required action parameter unavailable.");
+                }
+            }
+
+            return selected.Invoke(deviceInstance, arguments);
+        }
+
+        private SoconAdapterResult WaitForAction(int nodeId, int timeoutMilliseconds)
+        {
+            var raw = InvokeWithOptionalParameters(
+                "WaitActionDone",
+                new object[] { nodeId, timeoutMilliseconds });
+            return ToActionResult(raw, "ActionWaitFailed");
+        }
+
+        private static SoconAdapterResult ToActionResult(object raw, string errorCode)
+        {
+            if (raw == null)
+            {
+                return new SoconAdapterResult { Success = true };
+            }
+
+            if (raw is bool)
+            {
+                var ok = (bool)raw;
+                return new SoconAdapterResult { Success = ok, ErrorCode = ok ? null : errorCode };
+            }
+
+            if (raw is int)
+            {
+                var value = (int)raw;
+                return new SoconAdapterResult { Success = value == 0, ErrorCode = value == 0 ? null : errorCode };
+            }
+
+            var text = raw as string;
+            if (text != null)
+            {
+                return new SoconAdapterResult
+                {
+                    Success = string.IsNullOrWhiteSpace(text),
+                    ErrorCode = string.IsNullOrWhiteSpace(text) ? null : errorCode
+                };
+            }
+
+            return new SoconAdapterResult { Success = false, ErrorCode = errorCode };
         }
     }
 }

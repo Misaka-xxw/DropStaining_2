@@ -13,11 +13,17 @@ namespace Stainer.SoconBridge
         private const string GetConfiguredNodeBasicStatusCommand = "GetConfiguredNodeBasicStatus";
         private const string GetConfiguredAxisPositionsCommand = "GetConfiguredAxisPositions";
         private const string CloseConfiguredReadOnlySessionCommand = "CloseConfiguredReadOnlySession";
+        private const string MoveConfiguredAxisCommand = "MoveConfiguredAxis";
+        private const string AspirateConfiguredCommand = "AspirateConfigured";
+        private const string DispenseConfiguredCommand = "DispenseConfigured";
+        private const string DetectLiquidConfiguredCommand = "DetectLiquidConfigured";
+        private const string StopConfiguredAxisCommand = "StopConfiguredAxis";
 
         private readonly ISdkDeploymentValidator validator;
         private readonly RealReadOnlySessionGate gate;
         private readonly SoconReadOnlyConfig config;
         private readonly Func<ISoconReadOnlyAdapter> adapterFactory;
+        private readonly RealActionSessionGate actionGate;
         private readonly object sessionSync = new object();
 
         private BridgeStatus currentStatus;
@@ -30,7 +36,7 @@ namespace Stainer.SoconBridge
         /// <c>RealReadOnlyNotEnabled</c> because no gate/adapter is wired.
         /// </summary>
         public BridgeRequestProcessor(ISdkDeploymentValidator validator, BridgeStatus initialStatus)
-            : this(validator, initialStatus, null, null, null)
+            : this(validator, initialStatus, null, null, null, null)
         {
         }
 
@@ -45,7 +51,7 @@ namespace Stainer.SoconBridge
             RealReadOnlySessionGate gate,
             SoconReadOnlyConfig config,
             ISdkDeploymentValidator validator)
-            : this(validator, BridgeStatus.Offline, config, gate, WrapAsFactory(adapter))
+            : this(validator, BridgeStatus.Offline, config, gate, WrapAsFactory(adapter), null)
         {
         }
 
@@ -59,6 +65,17 @@ namespace Stainer.SoconBridge
             SoconReadOnlyConfig config,
             RealReadOnlySessionGate gate,
             Func<ISoconReadOnlyAdapter> adapterFactory)
+            : this(validator, initialStatus, config, gate, adapterFactory, null)
+        {
+        }
+
+        internal BridgeRequestProcessor(
+            ISdkDeploymentValidator validator,
+            BridgeStatus initialStatus,
+            SoconReadOnlyConfig config,
+            RealReadOnlySessionGate gate,
+            Func<ISoconReadOnlyAdapter> adapterFactory,
+            RealActionSessionGate actionGate)
         {
             if (validator == null)
             {
@@ -70,6 +87,7 @@ namespace Stainer.SoconBridge
             this.config = config;
             this.gate = gate;
             this.adapterFactory = adapterFactory;
+            this.actionGate = actionGate;
             sessionState = SessionState.Closed;
             cacheValid = false;
         }
@@ -105,6 +123,14 @@ namespace Stainer.SoconBridge
         /// </summary>
         public static BridgeRequestProcessor CreateDefault(string baseDirectory, bool enableRealReadOnlyArg)
         {
+            return CreateDefault(baseDirectory, enableRealReadOnlyArg, false);
+        }
+
+        public static BridgeRequestProcessor CreateDefault(
+            string baseDirectory,
+            bool enableRealReadOnlyArg,
+            bool enableRealActionsArg)
+        {
             var options = new SdkDeploymentValidatorOptions(baseDirectory);
             var deploymentValidator = new SdkDeploymentValidator(
                 options,
@@ -113,7 +139,8 @@ namespace Stainer.SoconBridge
                 new ReflectionOnlyManagedAssemblyLoadProbe());
 
             var loadedConfig = SoconReadOnlyConfig.Load(baseDirectory);
-            var sessionGate = new RealReadOnlySessionGate(loadedConfig, enableRealReadOnlyArg);
+            var sessionGate = new RealReadOnlySessionGate(loadedConfig, enableRealReadOnlyArg || enableRealActionsArg);
+            var realActionGate = new RealActionSessionGate(loadedConfig, enableRealActionsArg);
 
             var sdkDirectory = ResolveSdkDirectoryForFactory(loadedConfig, options);
             Func<ISoconReadOnlyAdapter> factory = delegate
@@ -140,7 +167,8 @@ namespace Stainer.SoconBridge
                 BridgeStatus.Offline,
                 loadedConfig,
                 sessionGate,
-                factory);
+                factory,
+                realActionGate);
         }
 
         private static string ResolveSdkDirectoryForFactory(SoconReadOnlyConfig loadedConfig, SdkDeploymentValidatorOptions options)
@@ -225,6 +253,18 @@ namespace Stainer.SoconBridge
                 lock (sessionSync)
                 {
                     return ProcessCloseSession(requestId, command);
+                }
+            }
+
+            if (string.Equals(command, MoveConfiguredAxisCommand, StringComparison.Ordinal)
+                || string.Equals(command, AspirateConfiguredCommand, StringComparison.Ordinal)
+                || string.Equals(command, DispenseConfiguredCommand, StringComparison.Ordinal)
+                || string.Equals(command, DetectLiquidConfiguredCommand, StringComparison.Ordinal)
+                || string.Equals(command, StopConfiguredAxisCommand, StringComparison.Ordinal))
+            {
+                lock (sessionSync)
+                {
+                    return ProcessAction(requestId, command, request);
                 }
             }
 
@@ -326,9 +366,9 @@ namespace Stainer.SoconBridge
 
             // Gate 2: FRESH deployment validation. Never rely on a historical
             // currentStatus -- the SDK files may have changed since the last
-            // check. Requires Success==true AND no SdkRuntimeDependenciesWarning
-            // (missing SOCON.ScEventBus.dll / C1.C1Zip.4.dll fail-closes the open
-            // even though the validator's diagnostic status stays DeploymentValidated).
+            // check. The 2026-06-15 vendor package intentionally contains only
+            // SOCON.API/SOCON.Utility/can_bootloader; legacy optional dependency
+            // warnings remain diagnostic and no longer block this confirmed package.
             var deployment = validator.Validate();
             currentStatus = deployment.Status;
             Console.WriteLine(
@@ -336,7 +376,7 @@ namespace Stainer.SoconBridge
                 deployment.Status,
                 ContainsRuntimeDependencyWarning(deployment.Warnings));
 
-            if (!deployment.Success || ContainsRuntimeDependencyWarning(deployment.Warnings))
+            if (!deployment.Success)
             {
                 TransitionTo(SessionState.Blocked, "DeploymentNotValidated");
                 return CreateBlockedResponse(requestId, command, "DeploymentNotValidated");
@@ -562,6 +602,143 @@ namespace Stainer.SoconBridge
 
             var details = SessionDetails("Closed", false, false);
             return CreateResponse(requestId, command, true, currentStatus, "SessionClosed", details, new List<string>());
+        }
+
+        private BridgeResponse ProcessAction(string requestId, string command, BridgeRequest request)
+        {
+            if (actionGate == null || !actionGate.IsEnabled)
+            {
+                var disabled = SessionDetails(sessionState.ToString(), sessionState == SessionState.Open, cacheValid);
+                disabled.BlockReason = "RealActionsNotEnabled";
+                return CreateResponse(requestId, command, false, currentStatus, "BLOCKED", disabled, new List<string>());
+            }
+
+            if (sessionState != SessionState.Open || currentAdapter == null)
+            {
+                return StateNotOpenResponse(requestId, command);
+            }
+
+            var preconditionError = config == null ? "ActionConfigInvalid" : config.ValidateActionPreconditions();
+            if (preconditionError != null)
+            {
+                return ActionBlocked(requestId, command, preconditionError);
+            }
+
+            var role = SoconReadOnlyConfig.ParseAxisRole(request.Axis);
+            if (!role.HasValue || !config.IsAxisWhitelisted(role.Value) || !config.IsAxisCalibrated(role.Value))
+            {
+                return ActionBlocked(requestId, command, "ActionAxisNotAuthorized");
+            }
+
+            var parameters = config.BuildParameters(role.Value);
+            var actionAdapter = currentAdapter as ISoconActionAdapter;
+            if (parameters == null || actionAdapter == null)
+            {
+                return ActionBlocked(requestId, command, "ActionAdapterUnavailable");
+            }
+
+            SoconAdapterResult result;
+            try
+            {
+                if (string.Equals(command, MoveConfiguredAxisCommand, StringComparison.Ordinal))
+                {
+                    if (!request.PositionMm.HasValue
+                        || !request.SpeedMmPerSecond.HasValue
+                        || !config.IsPositionAllowed(role.Value, request.PositionMm.Value)
+                        || !config.IsSpeedAllowed(request.SpeedMmPerSecond.Value))
+                    {
+                        return ActionBlocked(requestId, command, "ActionMoveRangeInvalid");
+                    }
+
+                    result = actionAdapter.MoveAxis(
+                        parameters,
+                        request.PositionMm.Value,
+                        request.SpeedMmPerSecond.Value,
+                        config.ActionTimeoutMilliseconds);
+                }
+                else if (string.Equals(command, StopConfiguredAxisCommand, StringComparison.Ordinal))
+                {
+                    result = actionAdapter.Stop(parameters);
+                }
+                else
+                {
+                    if (role.Value != AxisRole.Z1 && role.Value != AxisRole.Z2)
+                    {
+                        return ActionBlocked(requestId, command, "ActionPipetteAxisInvalid");
+                    }
+
+                    if (string.Equals(command, AspirateConfiguredCommand, StringComparison.Ordinal)
+                        || string.Equals(command, DispenseConfiguredCommand, StringComparison.Ordinal))
+                    {
+                        if (!request.VolumeUl.HasValue || !config.IsVolumeAllowed(request.VolumeUl.Value))
+                        {
+                            return ActionBlocked(requestId, command, "ActionVolumeInvalid");
+                        }
+
+                        result = string.Equals(command, AspirateConfiguredCommand, StringComparison.Ordinal)
+                            ? actionAdapter.Aspirate(parameters, request.VolumeUl.Value, config.ActionTimeoutMilliseconds)
+                            : actionAdapter.Dispense(parameters, request.VolumeUl.Value, config.ActionTimeoutMilliseconds);
+                    }
+                    else
+                    {
+                        if (!request.StartMm.HasValue
+                            || !request.MaximumMm.HasValue
+                            || request.StartMm.Value > request.MaximumMm.Value
+                            || !config.IsPositionAllowed(role.Value, request.StartMm.Value)
+                            || !config.IsPositionAllowed(role.Value, request.MaximumMm.Value))
+                        {
+                            return ActionBlocked(requestId, command, "ActionLiquidDetectRangeInvalid");
+                        }
+
+                        result = actionAdapter.DetectLiquid(
+                            parameters,
+                            request.StartMm.Value,
+                            request.MaximumMm.Value,
+                            config.ActionTimeoutMilliseconds);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                BestEffortStop(actionAdapter, parameters);
+                Console.WriteLine("SOCON action exception command={0} type={1}", SanitizeForLog(command), ex.GetType().Name);
+                TransitionTo(SessionState.Blocked, "ActionException");
+                return CreateBlockedResponse(requestId, command, "ActionException");
+            }
+
+            if (result == null || !result.Success)
+            {
+                BestEffortStop(actionAdapter, parameters);
+                var code = result == null ? "ActionFailed" : (result.ErrorCode ?? "ActionFailed");
+                TransitionTo(SessionState.Blocked, code);
+                return CreateBlockedResponse(requestId, command, code);
+            }
+
+            var details = SessionDetails("Open", true, false);
+            details.Action = command;
+            return CreateResponse(requestId, command, true, currentStatus, "ActionCompleted", details, new List<string>());
+        }
+
+        private BridgeResponse ActionBlocked(string requestId, string command, string reason)
+        {
+            var details = SessionDetails(sessionState.ToString(), sessionState == SessionState.Open, cacheValid);
+            details.BlockReason = reason;
+            return CreateResponse(requestId, command, false, currentStatus, "BLOCKED", details, new List<string>());
+        }
+
+        private static void BestEffortStop(ISoconActionAdapter adapter, ReadOnlySessionParameters parameters)
+        {
+            try
+            {
+                if (adapter != null && parameters != null)
+                {
+                    adapter.Stop(parameters);
+                }
+            }
+            catch
+            {
+                // Original action failure remains authoritative.
+            }
         }
 
         // ---- Helpers ----

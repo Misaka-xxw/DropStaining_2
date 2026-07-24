@@ -2,6 +2,8 @@
   "sdkDirectory": "",
   "diagnosticsEnabled": true,
   "realReadOnlyEnabled": false,
+  "realActionsEnabled": false,
+  "pipetteApiMode": "Z-SOPA",
   "usb2can": {
     "connectionType": "CONN_USB",
     "portNumber": 0,
@@ -19,5 +21,16 @@
     "y": false,
     "z1": false,
     "z2": false
+  },
+  "actionLimits": {
+    "minimumXMm": 0,
+    "maximumXMm": 0,
+    "minimumYMm": 0,
+    "maximumYMm": 0,
+    "minimumZMm": 0,
+    "maximumZMm": 0,
+    "maximumSpeedMmPerSecond": 0,
+    "maximumVolumeUl": 0,
+    "actionTimeoutMilliseconds": 0
   }
 }

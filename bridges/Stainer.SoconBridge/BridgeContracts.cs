@@ -16,6 +16,21 @@ namespace Stainer.SoconBridge
         // Accepts only x|y|z1|z2 (case-insensitive). Never accepts COM/NodeID/path.
         [DataMember(Name = "axis", EmitDefaultValue = false, Order = 3)]
         public string Axis { get; set; }
+
+        [DataMember(Name = "positionMm", EmitDefaultValue = false, Order = 4)]
+        public double? PositionMm { get; set; }
+
+        [DataMember(Name = "speedMmPerSecond", EmitDefaultValue = false, Order = 5)]
+        public double? SpeedMmPerSecond { get; set; }
+
+        [DataMember(Name = "volumeUl", EmitDefaultValue = false, Order = 6)]
+        public int? VolumeUl { get; set; }
+
+        [DataMember(Name = "startMm", EmitDefaultValue = false, Order = 7)]
+        public double? StartMm { get; set; }
+
+        [DataMember(Name = "maximumMm", EmitDefaultValue = false, Order = 8)]
+        public double? MaximumMm { get; set; }
     }
 
     [DataContract]
@@ -104,6 +119,9 @@ namespace Stainer.SoconBridge
 
         [DataMember(Name = "blockReason", EmitDefaultValue = false, Order = 17)]
         public string BlockReason { get; set; }
+
+        [DataMember(Name = "action", EmitDefaultValue = false, Order = 18)]
+        public string Action { get; set; }
     }
 
     [DataContract]
@@ -131,6 +149,15 @@ namespace Stainer.SoconBridge
 
         [DataMember(Name = "axisCalibration", EmitDefaultValue = false, Order = 7)]
         public AxisCalibration AxisCalibration { get; set; }
+
+        [DataMember(Name = "realActionsEnabled", EmitDefaultValue = false, Order = 8)]
+        public bool RealActionsEnabled { get; set; }
+
+        [DataMember(Name = "actionLimits", EmitDefaultValue = false, Order = 9)]
+        public ActionLimits ActionLimits { get; set; }
+
+        [DataMember(Name = "pipetteApiMode", EmitDefaultValue = false, Order = 10)]
+        public string PipetteApiMode { get; set; }
     }
 
     [DataContract]
@@ -186,5 +213,36 @@ namespace Stainer.SoconBridge
 
         [DataMember(Name = "z2", EmitDefaultValue = false, Order = 4)]
         public bool Z2 { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class ActionLimits
+    {
+        [DataMember(Name = "minimumXMm", EmitDefaultValue = false, Order = 1)]
+        public double MinimumXMm { get; set; }
+
+        [DataMember(Name = "maximumXMm", EmitDefaultValue = false, Order = 2)]
+        public double MaximumXMm { get; set; }
+
+        [DataMember(Name = "minimumYMm", EmitDefaultValue = false, Order = 3)]
+        public double MinimumYMm { get; set; }
+
+        [DataMember(Name = "maximumYMm", EmitDefaultValue = false, Order = 4)]
+        public double MaximumYMm { get; set; }
+
+        [DataMember(Name = "minimumZMm", EmitDefaultValue = false, Order = 5)]
+        public double MinimumZMm { get; set; }
+
+        [DataMember(Name = "maximumZMm", EmitDefaultValue = false, Order = 6)]
+        public double MaximumZMm { get; set; }
+
+        [DataMember(Name = "maximumSpeedMmPerSecond", EmitDefaultValue = false, Order = 7)]
+        public double MaximumSpeedMmPerSecond { get; set; }
+
+        [DataMember(Name = "maximumVolumeUl", EmitDefaultValue = false, Order = 8)]
+        public int MaximumVolumeUl { get; set; }
+
+        [DataMember(Name = "actionTimeoutMilliseconds", EmitDefaultValue = false, Order = 9)]
+        public int ActionTimeoutMilliseconds { get; set; }
     }
 }

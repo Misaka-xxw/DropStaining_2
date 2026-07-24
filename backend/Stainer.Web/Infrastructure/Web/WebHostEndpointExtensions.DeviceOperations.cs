@@ -34,6 +34,12 @@ public static partial class WebHostEndpointExtensions
                 _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
                 return Results.Ok(await service.GetStateAsync(cancellationToken));
             }));
+        app.MapGet("/api/device/channels/hardware-status", async (HttpContext context, UserSessionService sessionService, ChannelHardwareStatusService service, CancellationToken cancellationToken) =>
+            await ExecuteBusinessAsync(async () =>
+            {
+                _ = await sessionService.RequireAnyRoleAsync(context, ["operator", "admin"], cancellationToken);
+                return Results.Ok(await service.ReadAsync(cancellationToken));
+            }));
         app.MapGet("/api/thermal/state", async (HttpContext context, UserSessionService sessionService, ThermalControlService service, CancellationToken cancellationToken) =>
             await ExecuteBusinessAsync(async () =>
             {
