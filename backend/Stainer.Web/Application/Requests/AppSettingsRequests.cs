@@ -10,4 +10,5 @@ public sealed record SaveAppSettingsRequest(
     decimal? ReagentTargetTempC,
     decimal? WorkTargetTempC,
     decimal? NeedleGapMm,
+    decimal? SafeZMm,
     string Reason);

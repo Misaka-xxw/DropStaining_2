@@ -20,6 +20,7 @@ public sealed class ReagentPositionConfig
     public int? PipetteVolumeUl { get; set; }           // 通道移液测试默认液量 / μL
     public string? PipetteNeedleCode { get; set; }       // 通道移液测试默认控制针（Z1/Z2/双针）
     public string? PipetteLiquidClassCode { get; set; }  // 通道移液测试默认液体类型 code
+    public string? LiquidClassCode { get; set; }        // 孔位移位关联的液体类型
     public bool Enabled { get; set; } = true;
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? UpdatedAtUtc { get; set; }

@@ -9,6 +9,7 @@ public sealed record AppSettingsResponse(
     decimal? ReagentTargetTempC,
     decimal? WorkTargetTempC,
     decimal? NeedleGapMm,
+    decimal? SafeZMm,
     bool Enabled,
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset? UpdatedAtUtc);

@@ -3688,9 +3688,7 @@ function showArmMainDetail() {
   selectedSvgControlId = svgId;
   showSideTab('production');
   const box = document.getElementById('detailBox'); if(!box) return;
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem('digitalTwinArmComConfig') || 'null'); } catch(e) { saved = null; }
-  const cfg = saved || { port:'COM1', baud:'115200', serial:'8 bits / 1 bits / 无' };
+  const cfg = { port:'COM1', baud:'115200', serial:'8 bits / 1 bits / 无' };
   box.innerHTML = `<div class="scanner-detail-title"><strong>${label}</strong><span class="engineering-pill">${svgId}</span></div>
     <div>状态：待机　当前位置：X ${Number(arm.x ?? 0).toFixed(1)} / Y ${Number(arm.y ?? 0).toFixed(1)}</div>
     <div class="object-engineering-panel" id="${svgId}-object-engineering" data-control-id="${svgId}-object-engineering">
@@ -3713,23 +3711,99 @@ function showArmMainDetail() {
       <section class="object-engineering-card" id="${svgId}-communication-card" data-control-id="${svgId}-communication-card">
         <strong>通讯反馈<span class="engineering-pill">前端模拟</span></strong>
         <div class="object-form-grid"><label>通讯状态<input id="${svgId}-status" data-control-id="${svgId}-status" value="待配置 / 模拟" readonly></label><label>串口参数<input id="${svgId}-serial" data-control-id="${svgId}-serial" value="${escapeHtml(cfg.serial || '8 bits / 1 bits / 无')}" readonly></label></div>
-        <div class="test-console" id="${svgId}-console" data-control-id="${svgId}-console">[SIM] 机械臂主体 COM 通讯未连接。\n[SIM] 点击“设置COM口 / 读取COM口 / 重新启动”仅更新前端状态与日志。</div>
+        <div class=”test-console” id=”${svgId}-console” data-control-id=”${svgId}-console”>[后端已连] 机械臂 COM 口设置/读取经 /api/engineering/serial-config/arm 落库（deviceKey=arm）。\n打开时自动从数据库读取；设置COM口→PUT；读取COM口→GET。</div>
       </section>
     </div>`;
   bindArmMainDetailControls(box);
 }
 function showNeedleDetail(needle='Z1') {
   const z = String(needle).toUpperCase() === 'Z2' ? 'Z2' : 'Z1';
-  const idx = z === 'Z1' ? 1 : 2;
-  const currentZ = z === 'Z1' ? arm.z1 : arm.z2;
-  const fluid = z === 'Z1' ? arm.fluid1 : arm.fluid2;
   selectedName = null;
-  selectedSvgControlId = `svg-arm-needle-z${idx}`;
+  selectedSvgControlId = 'svg-arm-needle';
   showSideTab('production');
   const box = document.getElementById('detailBox'); if(!box) return;
-  const baseId = `svg-arm-needle-z${idx}`;
-  box.innerHTML = `<strong>针头 ${z}</strong><div>伸缩状态：${needleStateText(currentZ)}　当前液体：${fluidLabel(fluid)}</div><div class="object-engineering-panel" id="${baseId}-object-engineering" data-control-id="${baseId}-object-engineering"><section class="object-engineering-card" id="${baseId}-arm-card" data-control-id="${baseId}-arm-card"><strong>双针机械臂设置<span class="engineering-pill">${z}</span></strong><div class="object-form-grid three"><label>当前控制针<input value="${z}" readonly></label><label>针间距 / mm<input id="${baseId}-gap" data-control-id="${baseId}-gap" type="number" value="25"></label><label>Z 安全高度<input id="${baseId}-safe-z" data-control-id="${baseId}-safe-z" type="number" value="30"></label></div><div class="object-actions"><button type="button" class="primary-lite" data-object-action="${z} 单独下降" data-object-name="针头${z}">${z}下降</button><button type="button" data-object-action="${z} 单独上升" data-object-name="针头${z}">${z}上升</button><button type="button" class="warn-lite" data-object-action="双针回安全高度" data-object-name="针头${z}">回安全高度</button></div></section><section class="object-engineering-card" id="${baseId}-pipette-card" data-control-id="${baseId}-pipette-card"><strong>通道移液测试<span class="engineering-pill">按针头</span></strong><div class="object-form-grid three"><label>目标孔位<input id="${baseId}-pipette-well" data-control-id="${baseId}-pipette-well" placeholder="点击孔位后自动带入"></label><label>液量 / μL<input id="${baseId}-pipette-volume" data-control-id="${baseId}-pipette-volume" type="number" value="100"></label><label>控制针<input value="${z}" readonly></label></div><div class="object-actions"><button type="button" class="primary-lite" data-object-action="针头吸液" data-object-name="针头${z}">吸液</button><button type="button" data-object-action="针头打液" data-object-name="针头${z}">打液</button><button type="button" data-object-action="针头液面探测" data-object-name="针头${z}">液面探测</button><button type="button" data-object-action="针头打系统液" data-object-name="针头${z}">打系统液</button><button type="button" class="warn-lite" data-object-action="针头清空通道" data-object-name="针头${z}">清空通道</button><button type="button" data-object-action="停止针头动作" data-object-name="针头${z}">停止动作</button></div></section></div>`;
-  bindGenericObjectActionButtons(box);
+  const baseId = 'svg-arm-needle';
+  const needleOptions = (sel) => `<option value="Z1" ${sel==='Z1'?'selected':''}>Z1</option><option value="Z2" ${sel==='Z2'?'selected':''}>Z2</option><option value="双针" ${sel==='双针'?'selected':''}>双针</option>`;
+  box.innerHTML = `<strong>双针机械臂</strong><div>Z1：${needleStateText(arm.z1)} ${fluidLabel(arm.fluid1)}　Z2：${needleStateText(arm.z2)} ${fluidLabel(arm.fluid2)}</div>
+    <div class="object-engineering-panel" id="${baseId}-object-engineering" data-control-id="${baseId}-object-engineering">
+      <section class="object-engineering-card" id="${baseId}-shared-card" data-control-id="${baseId}-shared-card"><strong>双针共用参数 <span class="engineering-pill">Z1+Z2</span></strong><div class="object-form-grid three"><label>针间距 / mm<input id="${baseId}-gap" data-control-id="${baseId}-gap" type="number" step="0.1" value="25"></label><label>Z 安全高度 / mm<input id="${baseId}-safe-z" data-control-id="${baseId}-safe-z" type="number" step="0.1" value="30"></label></div><div class="object-actions"><button type="button" class="ok-lite" data-needle-action="save-params" data-needle-base="${baseId}">保存共用参数</button></div><div class="object-note">针间距 + Z 安全高度为双针共用；保存到 app-settings（needleGapMm + safeZMm）。</div></section>
+      <section class="object-engineering-card" id="${baseId}-arm-card" data-control-id="${baseId}-arm-card"><strong>Z 轴运动控制</strong><div class="object-form-grid three"><label>目标针<select id="${baseId}-needle-select" data-control-id="${baseId}-needle-select">${needleOptions(z)}</select></label></div><div class="object-actions"><button type="button" class="primary-lite" data-needle-action="z-down" data-needle-base="${baseId}">下降</button><button type="button" data-needle-action="z-up" data-needle-base="${baseId}">上升</button><button type="button" class="warn-lite" data-needle-action="safe-z" data-needle-base="${baseId}">回安全高度</button></div></section>
+      <section class="object-engineering-card" id="${baseId}-pipette-card" data-control-id="${baseId}-pipette-card"><strong>通道移液测试</strong><div class="object-form-grid three"><label>目标孔位<input id="${baseId}-pipette-well" data-control-id="${baseId}-pipette-well" placeholder="点击孔位后自动带入"></label><label>液量 / μL<input id="${baseId}-pipette-volume" data-control-id="${baseId}-pipette-volume" type="number" value="100"></label><label>控制针<select id="${baseId}-pipette-needle" data-control-id="${baseId}-pipette-needle">${needleOptions(z)}</select></label><label>液体类型（吸液/打液必填）<select id="${baseId}-pipette-liquid-class" data-control-id="${baseId}-pipette-liquid-class"></select></label></div><div class="object-actions"><button type="button" class="primary-lite" data-needle-action="pipette-aspirate" data-needle-base="${baseId}">吸液</button><button type="button" data-needle-action="pipette-dispense" data-needle-base="${baseId}">打液</button><button type="button" data-needle-action="pipette-liquid-detect" data-needle-base="${baseId}">液面探测</button><button type="button" data-needle-action="pipette-flush" data-needle-base="${baseId}">打系统液</button><button type="button" class="warn-lite" data-needle-action="pipette-wash" data-needle-base="${baseId}">清空通道</button><button type="button" class="warn-lite" data-needle-action="stop" data-needle-base="${baseId}">停止动作</button></div></section>
+    </div>`;
+  bindNeedleDetailActions(box, baseId);
+  loadNeedleSharedParams(baseId);
+  const lcEl = document.getElementById(`${baseId}-pipette-liquid-class`);
+  if(lcEl) refreshLiquidClassOptionsCache().then(() => rebuildLiquidClassSelect(lcEl, currentLiquidClassCode));
+}
+// 针头详情按钮统一分发：共用参数真连 app-settings；移液真连 pipetting-tests（从下拉选针头）；Z轴运动诚实标注。
+function bindNeedleDetailActions(root, baseId) {
+  root.querySelectorAll('[data-needle-action]').forEach(btn => {
+    if(btn.dataset.needleBound === 'true') return;
+    btn.dataset.needleBound = 'true';
+    btn.addEventListener('click', async () => {
+      flashControl(btn);
+      const action = btn.getAttribute('data-needle-action');
+      try {
+        if(action === 'save-params') return await saveNeedleSharedParams(baseId);
+        if(action && action.startsWith('pipette-')) {
+          const z = document.getElementById(`${baseId}-pipette-needle`)?.value || 'Z1';
+          return await runNeedlePipette(action.replace('pipette-',''), z, baseId);
+        }
+        if(action === 'stop') { log('停止动作：Mock 模式无独立停止端点', 'warn'); return; }
+        const zSel = document.getElementById(`${baseId}-needle-select`)?.value || 'Z1';
+        log(`${zSel} ${action === 'z-down' ? '下降' : action === 'z-up' ? '上升' : '回安全高度'}：机械臂 Z 轴运动指令暂未接入后端（需真实运动控制端点）`, 'warn');
+      } catch(e) { /* routed by writeApi */ }
+    });
+  });
+}
+// 双针共用参数（针间距 + Z 安全高度）↔ 后端 app-settings（needleGapMm + safeZMm）。
+async function loadNeedleSharedParams(baseId) {
+  try {
+    const s = await backendApi('/api/engineering/app-settings');
+    const setVal = (id, v) => { const el = document.getElementById(`${baseId}-${id}`); if(el && v != null && v !== '') el.value = v; };
+    setVal('gap', s?.needleGapMm); setVal('safe-z', s?.safeZMm);
+  } catch(_) { /* 未配置过：保持默认 */ }
+}
+async function saveNeedleSharedParams(baseId) {
+  const gap = Number(document.getElementById(`${baseId}-gap`)?.value);
+  const safeZ = Number(document.getElementById(`${baseId}-safe-z`)?.value);
+  await writeApi('/api/engineering/app-settings', { method:'PUT', body: JSON.stringify({
+    commandId: makeCommandId('needle-shared'),
+    needleGapMm: Number.isFinite(gap) ? gap : null,
+    safeZMm: Number.isFinite(safeZ) ? safeZ : null,
+    reason: '双针共用参数：针间距 + Z安全高度'
+  }) });
+  log(`双针共用参数已保存到数据库：针间距=${gap}mm Z安全高度=${safeZ}mm`, 'ok');
+  await loadNeedleSharedParams(baseId);
+}
+async function loadNeedleArmCom(baseId) {
+  try {
+    const cfg = await backendApi('/api/engineering/serial-config/arm');
+    const setVal = (id, v) => { const el = document.getElementById(`${baseId}-${id}`); if(el && v != null && v !== '') el.value = String(v); };
+    setVal('com-port', cfg?.portName); setVal('com-baud', cfg?.baudRate);
+    const s = document.getElementById(`${baseId}-com-status`); if(s) s.value = `${cfg?.portName || '未配置'} @ ${cfg?.baudRate || 115200}（已从数据库读取）`;
+  } catch(_) { const s = document.getElementById(`${baseId}-com-status`); if(s) s.value = '未配置 / 模拟'; }
+}
+async function saveNeedleArmCom(baseId) {
+  const port = document.getElementById(`${baseId}-com-port`)?.value || null;
+  const baud = Number(document.getElementById(`${baseId}-com-baud`)?.value) || 115200;
+  await writeApi('/api/engineering/serial-config/arm', { method:'PUT', body: JSON.stringify({ commandId: makeCommandId('arm-com'), portName: port, baudRate: baud, dataBits: 8, parity: 'None', stopBits: 'One', handshake: 'None', reason: '机械臂对象详情：设置COM口' }) });
+  log(`机械臂 COM 已保存到数据库：${port || '未配置'} @ ${baud}`, 'ok');
+  await loadNeedleArmCom(baseId);
+}
+async function runNeedlePipette(op, z, baseId) {
+  const channel = z === 'Z2' ? '2' : '1';
+  const needleCode = z === 'Z2' ? 'Needle2' : 'Needle1';
+  const volume = Number(document.getElementById(`${baseId}-pipette-volume`)?.value) || 100;
+  const rawWell = (document.getElementById(`${baseId}-pipette-well`)?.value || '').trim();
+  const well = uiHoleToDbPoint(rawWell.toUpperCase()) || rawWell.toUpperCase(); // s14→R4, R11→A-04, 直接写R4也通过
+  const liquidClass = (document.getElementById(`${baseId}-pipette-liquid-class`)?.value || '').trim();
+  const endpoint = ({ 'aspirate':'aspirate','dispense':'dispense','liquid-detect':'liquid-detect','flush':'flush','wash':'wash' })[op];
+  if(!endpoint) { log(`未知操作：${op}`, 'warn'); return; }
+  if((endpoint === 'aspirate' || endpoint === 'dispense') && !liquidClass) { log(`吸液/打液需要先选择液体类型`, 'warn'); return; }
+  if(!(await ensureModuleEngineeringSession(`pipetting-test:${endpoint}:${well}`, `针头${z}移液测试`))) return;
+  await writeApi(`/api/engineering/pipetting-tests/${endpoint}`, { method:'POST', body: JSON.stringify({ commandId: makeCommandId('needle-pipette'), channel, needleCode, liquidClassCode: liquidClass || null, position: well || null, coordinatePointCode: well || null, volumeUl: Number.isFinite(volume) ? volume : null, reason: `针头${z} 移液测试 ${op}`, target: `pipetting-test:${endpoint}:${well}`, dangerousOperationConfirmed: true }) });
+  log(`${z} ${op}（${well || '无孔位'}）已下发，通道${channel} ${volume}μL ${needleCode}${liquidClass ? ' '+liquidClass : ''}`, 'ok');
 }
 function bindGenericObjectActionButtons(root=document) {
   root.querySelectorAll('[data-object-action]').forEach(btn => {
@@ -4202,20 +4276,20 @@ function updateArmVisual() {
   const [p1x,p1y] = mmToPx(arm.x, arm.y);
   const [p2x,p2y] = mmToPx(arm.x, arm.y + 25);
   const [,railY] = mmToPx(arm.x, -5);
-  const ext1 = 8 + arm.z1 * 22, ext2 = 8 + arm.z2 * 22;
+  const ext1 = Math.min(14, 6 + arm.z1 * 4), ext2 = Math.min(14, 6 + arm.z2 * 4);
   g.appendChild(el('rect', { id:'svg-arm-main-body-hit', 'data-control-id':'svg-arm-main-body-hit', x:p1x-24, y:railY-22, width:48, height:(p2y + 36) - (railY - 22), rx:10, class:'arm-main-hit' }));
   g.appendChild(el('line', { id:'svg-arm-y-axis', 'data-control-id':'svg-arm-y-axis', x1:p1x, y1:railY, x2:p1x, y2:p2y+30, class:'arm-y' }));
   g.appendChild(el('rect', { id:'svg-arm-head', 'data-control-id':'svg-arm-head', x:p1x-18, y:railY-15, width:36, height:30, rx:8, class:'arm-head' }));
   g.appendChild(el('line', { id:'svg-arm-needle-z1-stroke', x1:p1x, y1:p1y-ext1, x2:p1x, y2:p1y+ext1, class:'needle-line' }));
   g.appendChild(el('line', { id:'svg-arm-needle-z2-stroke', x1:p2x, y1:p2y-ext2, x2:p2x, y2:p2y+ext2, class:'needle-line' }));
   const n1 = clickableGroup('g', controlAttrs('svg-arm-needle-z1'));
-  n1.appendChild(el('circle', { id:'svg-arm-needle-z1-shell', cx:p1x, cy:p1y, r:6 + arm.z1 * 4, class:`needle-shell ${fluidClass(arm.fluid1)}` }));
-  n1.appendChild(el('circle', { id:'svg-arm-needle-z1-liquid-ring', cx:p1x, cy:p1y, r:10 + arm.z1 * 2, class:'needle-liquid-ring', stroke:arm.fluid1 ? '#0f172a' : '#cbd5e1' }));
+  n1.appendChild(el('circle', { id:'svg-arm-needle-z1-shell', cx:p1x, cy:p1y, r:6, class:`needle-shell ${fluidClass(arm.fluid1)}` }));
+  n1.appendChild(el('circle', { id:'svg-arm-needle-z1-liquid-ring', cx:p1x, cy:p1y, r:8, class:'needle-liquid-ring', stroke:arm.fluid1 ? '#0f172a' : '#cbd5e1' }));
   n1.addEventListener('click', evt => { evt.stopPropagation(); selectedName = null; selectSvgControl(n1); showNeedleDetail('Z1'); });
   g.appendChild(n1);
   const n2 = clickableGroup('g', controlAttrs('svg-arm-needle-z2'));
-  n2.appendChild(el('circle', { id:'svg-arm-needle-z2-shell', cx:p2x, cy:p2y, r:6 + arm.z2 * 4, class:`needle-shell ${fluidClass(arm.fluid2)}` }));
-  n2.appendChild(el('circle', { id:'svg-arm-needle-z2-liquid-ring', cx:p2x, cy:p2y, r:10 + arm.z2 * 2, class:'needle-liquid-ring', stroke:arm.fluid2 ? '#0f172a' : '#cbd5e1' }));
+  n2.appendChild(el('circle', { id:'svg-arm-needle-z2-shell', cx:p2x, cy:p2y, r:6, class:`needle-shell ${fluidClass(arm.fluid2)}` }));
+  n2.appendChild(el('circle', { id:'svg-arm-needle-z2-liquid-ring', cx:p2x, cy:p2y, r:8, class:'needle-liquid-ring', stroke:arm.fluid2 ? '#0f172a' : '#cbd5e1' }));
   n2.addEventListener('click', evt => { evt.stopPropagation(); selectedName = null; selectSvgControl(n2); showNeedleDetail('Z2'); });
   g.appendChild(n2);
   addNeedleTag(g, p1x, p1y - 16, `Z1 · ${fluidLabel(arm.fluid1)}`, 'svg-arm-needle-z1-label');
@@ -5072,7 +5146,7 @@ async function runArmInspection(name) {
 // 试剂位对象配置（坐标修正 X/Y + 孔位 Z 高度）↔ 后端 reagent_position_configs（简单单行 GET/PUT，不走 coordinate 版本治理）
 async function loadReagentPositionConfig(item, baseId) {
   const rackCode = itemToPointCode(item);
-  if(!rackCode || !/^(R\d+|[A-D]-0[1-4])$/.test(rackCode)) return;
+  if(!rackCode || !/^[A-Za-z0-9_-]{1,32}$/.test(rackCode)) return;
   try {
     const c = await backendApi(`/api/engineering/reagent-position-config/${encodeURIComponent(rackCode)}`);
     const setVal = (id, v) => { const el = document.getElementById(id); if(el && v != null && v !== '') el.value = v; };
@@ -5083,12 +5157,13 @@ async function loadReagentPositionConfig(item, baseId) {
     setVal(`${baseId}-barcode-roi-left`, c?.roiLeft); setVal(`${baseId}-barcode-roi-top`, c?.roiTop);
     setVal(`${baseId}-barcode-roi-width`, c?.roiWidth); setVal(`${baseId}-barcode-roi-height`, c?.roiHeight);
     setVal(`${baseId}-pipette-volume`, c?.pipetteVolumeUl); setVal(`${baseId}-pipette-needle`, c?.pipetteNeedleCode); setVal(`${baseId}-pipette-liquid-class`, c?.pipetteLiquidClassCode);
+    setVal(`${baseId}-liquid-class`, c?.liquidClassCode);
     log(`[孔位回读✓] ${item.name}(→${rackCode}) X=${c?.calibratedXMm} Y=${c?.calibratedYMm} safeZ=${c?.safeZMm} liquidDetectZ=${c?.liquidDetectZMm} dispenseZ=${c?.dispenseZMm}`, 'ok');
   } catch(e) { /* 未配置过：保持默认 */ }
 }
 async function saveReagentPositionConfig(item, baseId, xInputId, yInputId) {
   const rackCode = itemToPointCode(item);
-  if(!rackCode || !/^(R\d+|[A-D]-0[1-4])$/.test(rackCode)) { log(`${item?.name || ''} 无对应试剂位码，无法保存`, 'warn'); return; }
+  if(!rackCode || !/^[A-Za-z0-9_-]{1,32}$/.test(rackCode)) { log(`${item?.name || ''} 无对应坐标点码，无法保存`, 'warn'); return; }
   const num = id => { const v = Number(document.getElementById(id)?.value); return Number.isFinite(v) ? v : null; };
   const body = {
     commandId: makeCommandId('reagent-pos-cfg'),
@@ -5100,6 +5175,7 @@ async function saveReagentPositionConfig(item, baseId, xInputId, yInputId) {
     pipetteVolumeUl: num(`${baseId}-pipette-volume`),
     pipetteNeedleCode: (document.getElementById(`${baseId}-pipette-needle`)?.value || '').trim() || null,
     pipetteLiquidClassCode: (document.getElementById(`${baseId}-pipette-liquid-class`)?.value || '').trim() || null,
+    liquidClassCode: (document.getElementById(`${baseId}-liquid-class`)?.value || '').trim() || null,
     reason: `试剂位对象配置 ${item.name}→${rackCode}`
   };
   await writeApi(`/api/engineering/reagent-position-config/${encodeURIComponent(rackCode)}`, { method:'PUT', body: JSON.stringify(body) });
@@ -7508,7 +7584,7 @@ function bindArmMainDetailControls(root=document) {
   root.querySelectorAll('[data-arm-main-action]').forEach(btn => {
     if(btn.dataset.armMainBound === 'true') return;
     btn.dataset.armMainBound = 'true';
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       flashControl(btn);
       const action = btn.getAttribute('data-arm-main-action') || '';
       const portEl = document.getElementById('svg-arm-main-com');
@@ -7516,34 +7592,42 @@ function bindArmMainDetailControls(root=document) {
       const serialEl = document.getElementById('svg-arm-main-serial');
       const statusEl = document.getElementById('svg-arm-main-status');
       const consoleNode = document.getElementById('svg-arm-main-console');
-      const current = {
-        port: portEl?.value || 'COM1',
-        baud: baudEl?.value || '115200',
-        serial: serialEl?.value || '8 bits / 1 bits / 无'
-      };
-      let saved = null;
-      try { saved = JSON.parse(localStorage.getItem('digitalTwinArmComConfig') || 'null'); } catch(e) { saved = null; }
+      const writeLine = line => { if(consoleNode) consoleNode.textContent += '\n' + line; };
       const stamp = new Date().toLocaleTimeString();
-      let message = '';
-      if(action === 'set-com') {
-        try { localStorage.setItem('digitalTwinArmComConfig', JSON.stringify(current)); } catch(e) {}
-        if(statusEl) statusEl.value = `已设置 / ${current.port} @ ${current.baud}`;
-        message = `设置机械臂 COM：${current.port} @ ${current.baud}，${current.serial}`;
-      } else if(action === 'read-com') {
-        const cfg = saved || current;
-        if(portEl) portEl.value = cfg.port || 'COM1';
-        if(baudEl) baudEl.value = cfg.baud || '115200';
-        if(serialEl) serialEl.value = cfg.serial || '8 bits / 1 bits / 无';
-        if(statusEl) statusEl.value = `已读取 / ${cfg.port || 'COM1'} @ ${cfg.baud || '115200'}`;
-        message = `读取机械臂 COM：${cfg.port || 'COM1'} @ ${cfg.baud || '115200'}，${cfg.serial || '8 bits / 1 bits / 无'}`;
-      } else if(action === 'restart-com') {
-        if(statusEl) statusEl.value = `重启完成 / ${current.port} @ ${current.baud}`;
-        message = `机械臂通讯已重启（模拟）：${current.port} @ ${current.baud}`;
-      }
-      if(consoleNode && message) consoleNode.textContent += `\n[${stamp}] ${message}`;
-      if(message) log(message, 'ok');
+      try {
+        if(action === 'set-com') {
+          const port = portEl?.value || null;
+          const baud = Number(baudEl?.value) || 115200;
+          await writeApi('/api/engineering/serial-config/arm', { method:'PUT', body: JSON.stringify({ commandId: makeCommandId('arm-main-com'), portName: port, baudRate: baud, dataBits: 8, parity: 'None', stopBits: 'One', handshake: 'None', reason: '机械臂主体对象详情：设置COM口' }) });
+          if(statusEl) statusEl.value = `已保存到数据库 / ${port || '未配置'} @ ${baud}`;
+          writeLine(`[${stamp}] 设置COM口 → ${port || '未配置'} @ ${baud}（已写入数据库）`);
+          log(`机械臂 COM 已保存到数据库：${port || '未配置'} @ ${baud}`, 'ok');
+        } else if(action === 'read-com') {
+          const cfg = await backendApi('/api/engineering/serial-config/arm');
+          if(portEl && cfg?.portName) portEl.value = cfg.portName;
+          if(baudEl && cfg?.baudRate) baudEl.value = String(cfg.baudRate);
+          if(serialEl) serialEl.value = `${cfg?.dataBits || 8} bits / ${cfg?.stopBits === 'Two' ? 2 : 1} bits / ${(!cfg?.parity || cfg?.parity === 'None') ? '无' : cfg?.parity}`;
+          if(statusEl) statusEl.value = `${cfg?.portName || '未配置'} @ ${cfg?.baudRate || 115200}（已从数据库读取）`;
+          writeLine(`[${stamp}] 读取COM口 → ${cfg?.portName || '未配置'} @ ${cfg?.baudRate || 115200}`);
+          log(`已读取机械臂 COM：${cfg?.portName || '未配置'} @ ${cfg?.baudRate || 115200}`, 'ok');
+        } else if(action === 'restart-com') {
+          writeLine(`[${stamp}] 重新启动：串口配置无独立重启接口，仅记录意图`);
+          log('机械臂通讯重启：串口配置无独立重启接口，仅记录意图', 'warn');
+        }
+      } catch(e) { writeLine(`[${stamp}] 请求失败：${e?.message || e}`); }
     });
   });
+  // 打开时自动从数据库读取 COM 配置
+  backendApi('/api/engineering/serial-config/arm').then(cfg => {
+    const portEl = document.getElementById('svg-arm-main-com');
+    const baudEl = document.getElementById('svg-arm-main-baud');
+    const serialEl = document.getElementById('svg-arm-main-serial');
+    const statusEl = document.getElementById('svg-arm-main-status');
+    if(portEl && cfg?.portName) portEl.value = cfg.portName;
+    if(baudEl && cfg?.baudRate) baudEl.value = String(cfg.baudRate);
+    if(serialEl) serialEl.value = `${cfg?.dataBits || 8} bits / ${cfg?.stopBits === 'Two' ? 2 : 1} bits / ${(!cfg?.parity || cfg?.parity === 'None') ? '无' : cfg?.parity}`;
+    if(statusEl) statusEl.value = `${cfg?.portName || '未配置'} @ ${cfg?.baudRate || 115200}（已从数据库读取）`;
+  }).catch(() => {});
 }
 
 // 机械臂 COM：与主控/扫码器同机制，deviceKey='arm'。GET/PUT /api/engineering/serial-config/arm，落库。
@@ -7684,9 +7768,14 @@ async function dispatchEngineeringAction(action, btn) {
 //   洗针: 洗针孔1-4 → WashOuterLeft/Right、WashInnerLeft/Right（§11.5 措辞，按外/内顺序）
 //   排毒孔/废液孔/清洗孔: 无对应坐标点 → null（不校正）。
 function uiHoleToDbPoint(code) {
-  const c = String(code || '').trim();
+  let c = String(code || '').trim();
   if(!c) return null;
-  const dab = { 'P11':'M1','P12':'M2','P21':'M3','P22':'M4','P31':'M5','P32':'M6','P41':'M7','P42':'M8','A液':'DabA','B液':'DabB' };
+  // 配液_R{row}_C{col} → P{row}{col} → dab 字典 → M{1-8}
+  const mMix = c.match(/^配液_R(\d+)_C(\d+)$/);
+  if(mMix) c = `P${mMix[1]}${mMix[2]}`;
+  // 大写化（处理 s14 → S14）
+  c = c.toUpperCase();
+  const dab = { 'P11':'M1','P12':'M2','P21':'M3','P22':'M4','P31':'M5','P32':'M6','P41':'M7','P42':'M8','A液':'DABA','B液':'DABB' };
   if(dab[c]) return dab[c];
   const wash = { '洗针孔1':'WashOuterLeft','洗针孔2':'WashOuterRight','洗针孔3':'WashInnerLeft','洗针孔4':'WashInnerRight' };
   if(wash[c]) return wash[c];

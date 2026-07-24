@@ -1005,6 +1005,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.ReagentTargetTempC).HasColumnName("reagent_target_temp_c").HasColumnType("TEXT");
         entity.Property(x => x.WorkTargetTempC).HasColumnName("work_target_temp_c").HasColumnType("TEXT");
         entity.Property(x => x.NeedleGapMm).HasColumnName("needle_gap_mm").HasColumnType("TEXT");
+        entity.Property(x => x.SafeZMm).HasColumnName("safe_z_mm").HasColumnType("TEXT");
         entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
@@ -1031,6 +1032,7 @@ public sealed class StainerDbContext(DbContextOptions<StainerDbContext> options)
         entity.Property(x => x.PipetteVolumeUl).HasColumnName("pipette_volume_ul");
         entity.Property(x => x.PipetteNeedleCode).HasColumnName("pipette_needle_code").HasMaxLength(16);
         entity.Property(x => x.PipetteLiquidClassCode).HasColumnName("pipette_liquid_class_code").HasMaxLength(64);
+        entity.Property(x => x.LiquidClassCode).HasColumnName("liquid_class_code").HasMaxLength(64);
         entity.Property(x => x.Enabled).HasColumnName("enabled").IsRequired();
         entity.Property(x => x.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         entity.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");

@@ -16,6 +16,7 @@ public sealed record SaveReagentPositionConfigRequest(
     int? PipetteVolumeUl,
     string? PipetteNeedleCode,
     string? PipetteLiquidClassCode,
+    string? LiquidClassCode,
     string Reason);
 
 public sealed record MoveReagentPositionHardwareRequest(

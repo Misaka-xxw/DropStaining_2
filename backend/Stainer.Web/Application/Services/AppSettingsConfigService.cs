@@ -44,6 +44,7 @@ public sealed class AppSettingsConfigService(
                 var reagentTargetTempC = ValidateDecimalRange(request.ReagentTargetTempC, "reagentTargetTempC", 0, 200m);
                 var workTargetTempC = ValidateDecimalRange(request.WorkTargetTempC, "workTargetTempC", 0, 200m);
                 var needleGapMm = ValidateDecimalRange(request.NeedleGapMm, "needleGapMm", 0, 100m);
+                var safeZMm = ValidateDecimalRange(request.SafeZMm, "safeZMm", 0, 200m);
 
                 var profile = await dbContext.AppSettingsProfiles
                     .SingleOrDefaultAsync(x => x.ScopeKey == AppSettingsScopeKeys.Default, cancellationToken);
@@ -65,6 +66,7 @@ public sealed class AppSettingsConfigService(
                 if (reagentTargetTempC.HasValue) profile.ReagentTargetTempC = reagentTargetTempC;
                 if (workTargetTempC.HasValue) profile.WorkTargetTempC = workTargetTempC;
                 if (needleGapMm.HasValue) profile.NeedleGapMm = needleGapMm;
+                if (safeZMm.HasValue) profile.SafeZMm = safeZMm;
                 profile.Enabled = true;
                 profile.UpdatedAtUtc = DateTimeOffset.UtcNow;
 
@@ -86,12 +88,12 @@ public sealed class AppSettingsConfigService(
 
     private static AppSettingsResponse ToResponse(AppSettingsProfile p) => new(
         p.ScopeKey, p.DataInterface, p.HostAddress, p.HeartbeatSec, p.ReagentBottleCapacityMl,
-        p.ReagentTargetTempC, p.WorkTargetTempC, p.NeedleGapMm, p.Enabled, p.CreatedAtUtc, p.UpdatedAtUtc);
+        p.ReagentTargetTempC, p.WorkTargetTempC, p.NeedleGapMm, p.SafeZMm, p.Enabled, p.CreatedAtUtc, p.UpdatedAtUtc);
 
     private static object ToAudit(AppSettingsProfile p) => new
     {
         p.ScopeKey, p.DataInterface, p.HostAddress, p.HeartbeatSec,
-        p.ReagentBottleCapacityMl, p.ReagentTargetTempC, p.WorkTargetTempC, p.NeedleGapMm, p.Enabled
+        p.ReagentBottleCapacityMl, p.ReagentTargetTempC, p.WorkTargetTempC, p.NeedleGapMm, p.SafeZMm, p.Enabled
     };
 
     private void AddAudit(AuthenticatedUser actor, string action, string entityType, string entityId, object? before, object after, string reason)
