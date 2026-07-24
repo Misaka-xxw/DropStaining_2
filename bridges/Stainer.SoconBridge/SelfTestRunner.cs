@@ -495,7 +495,7 @@ namespace Stainer.SoconBridge
                 var config = SoconReadOnlyConfig.FromBridgeConfig(rawConfig);
                 var fake = new FakeActionAdapter();
                 var processor = new BridgeRequestProcessor(
-                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    ValidatedDeployment(),
                     BridgeStatus.Offline,
                     config,
                     new RealReadOnlySessionGate(config, true),
