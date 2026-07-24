@@ -366,17 +366,25 @@ namespace Stainer.SoconBridge
 
             // Gate 2: FRESH deployment validation. Never rely on a historical
             // currentStatus -- the SDK files may have changed since the last
-            // check. The 2026-06-15 vendor package intentionally contains only
-            // SOCON.API/SOCON.Utility/can_bootloader; legacy optional dependency
-            // warnings remain diagnostic and no longer block this confirmed package.
+            // check. Requires Success==true AND no BLOCKING runtime dependency
+            // missing. The blocking subset (C1.C1Zip.4.dll) is reported via the
+            // structured Details.BlockingRuntimeDependenciesPresent flag, which
+            // the validator always populates on this success path. An advisory
+            // dependency (SOCON.ScEventBus.dll) still surfaces as
+            // SdkRuntimeDependenciesWarning but does NOT block -- it is only
+            // reachable via SOCON.Utility.Common.CheckRet, never on the OpenPort
+            // path. != true fail-closes when the flag is null (validator did not
+            // attest blocking deps present).
             var deployment = validator.Validate();
             currentStatus = deployment.Status;
+            var blockingRuntimeDependencyMissing = deployment.Details.BlockingRuntimeDependenciesPresent != true;
             Console.WriteLine(
-                "OpenConfiguredReadOnlySession deployment status={0} runtimeWarning={1}",
+                "OpenConfiguredReadOnlySession deployment status={0} blockingRuntimeDependencyMissing={1} runtimeWarning={2}",
                 deployment.Status,
+                blockingRuntimeDependencyMissing,
                 ContainsRuntimeDependencyWarning(deployment.Warnings));
 
-            if (!deployment.Success)
+            if (!deployment.Success || blockingRuntimeDependencyMissing)
             {
                 TransitionTo(SessionState.Blocked, "DeploymentNotValidated");
                 return CreateBlockedResponse(requestId, command, "DeploymentNotValidated");

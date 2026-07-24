@@ -137,12 +137,23 @@ The local configuration file is deployment-specific and must not be committed.
 
 `OpenConfiguredReadOnlySession` calls `ValidateSdkDeployment` internally. It does
 NOT rely on a prior `ValidateSdkDeployment` (BRG-01) result. The fresh validation
-must return status `DeploymentValidated` (`Success==true`).
+must return status `DeploymentValidated` (`Success==true`) **and**
+`details.blockingRuntimeDependenciesPresent == true`. The blocking runtime
+dependency is `C1.C1Zip.4.dll`. When it is missing, open fails closed
+(blockReason `DeploymentNotValidated`) before any adapter is constructed.
 
-Note: older packages referenced `SOCON.ScEventBus.dll` and `C1.C1Zip.4.dll`.
-The confirmed 2026-06-15 package omits them, so their warning remains diagnostic
-and does not by itself block opening. Core file, PE and managed-type failures
-remain hard blocks.
+`SOCON.ScEventBus.dll` is an **advisory** runtime dependency: it is referenced
+only by `SOCON.Utility.Common.CheckRet`, which is never on the `OpenPort` /
+connection path. When only `SOCON.ScEventBus.dll` is missing the warning is still
+returned, but `OpenConfiguredReadOnlySession` proceeds into the adapter factory /
+Open phase. This prevents SDK files changing after a prior validation while not
+over-blocking on a non-connection dependency.
+
+Note: `ValidateSdkDeployment` keeps its own diagnostic semantics — when either
+runtime DLL is missing it still returns `DeploymentValidated` **with**
+`SdkRuntimeDependenciesWarning`. `OpenConfiguredReadOnlySession` distinguishes
+the two classes via `details.blockingRuntimeDependenciesPresent`, not by parsing
+the warning text.
 
 ### Gate 3 — Connection-parameter fail-closed validation
 
@@ -182,4 +193,4 @@ It does not mean a device is connected, the SDK is loaded, NodeID is configured,
 
 ## Warning Codes
 
-- `SdkRuntimeDependenciesWarning`: core checks passed, but `SOCON.ScEventBus.dll` or `C1.C1Zip.4.dll` is missing. `ValidateSdkDeployment` still returns `DeploymentValidated` when this warning is present, but `OpenConfiguredReadOnlySession` treats it as a hard block (Gate 2, above).
+- `SdkRuntimeDependenciesWarning`: core checks passed, but `SOCON.ScEventBus.dll` (advisory) and/or `C1.C1Zip.4.dll` (blocking) is missing. `ValidateSdkDeployment` still returns `DeploymentValidated` when this warning is present. `OpenConfiguredReadOnlySession` blocks only when a blocking dependency (`C1.C1Zip.4.dll`) is missing, as reported by `details.blockingRuntimeDependenciesPresent == false`; an advisory-only miss (`SOCON.ScEventBus.dll`) does not block (Gate 2, above).

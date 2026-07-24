@@ -122,6 +122,16 @@ namespace Stainer.SoconBridge
 
         [DataMember(Name = "action", EmitDefaultValue = false, Order = 18)]
         public string Action { get; set; }
+
+        // Structured classification of the runtime dependencies, appended for
+        // backward compatibility. Distinct from runtimeDependenciesPresent:
+        // only the BLOCKING subset (currently C1.C1Zip.4.dll) gates
+        // OpenConfiguredReadOnlySession. Advisory deps (SOCON.ScEventBus.dll)
+        // still surface as SdkRuntimeDependenciesWarning but do not block.
+        // Consumers decide the open gate on this field rather than by parsing
+        // warning text. True = every blocking runtime dep is present.
+        [DataMember(Name = "blockingRuntimeDependenciesPresent", EmitDefaultValue = false, Order = 19)]
+        public bool? BlockingRuntimeDependenciesPresent { get; set; }
     }
 
     [DataContract]

@@ -50,12 +50,17 @@ namespace Stainer.SoconBridge
                 RequiredTypeFailureIsReported();
                 DeploymentValidatedWithCompleteFakeFiles();
                 DeploymentValidatedWithRuntimeWarnings();
+                DeploymentValidatedWhenOnlyScEventBusMissing();
+                BlockingRuntimeDependencyReportedWhenC1ZipMissing();
                 ActionCommandsAreNotSupported();
                 ReadOnlySessionGateFailsClosed();
                 ReadOnlySessionDispatchesOnlyFakeAdapter();
+                ReadOnlySessionOpensWhenOnlyScEventBusMissing();
+                ReadOnlySessionBlockedWhenC1ZipMissing();
+                ReadOnlySessionBlockedWhenBothRuntimeDepsMissing();
+                ReadOnlySessionFailsClosedWhenBlockingPresenceNotAttested();
                 LengthPrefixedProtocolRejectsMalformedRequests();
                 ConfiguredSdkRuntimeValidation();
-                ReadOnlySessionAcceptsCurrentVendorPackageWarning();
                 ReadOnlySessionRejectedWhenPortOrBaudInvalid();
                 ReadOnlySessionCloseFailsWhenClosePortReturnsFalse();
                 ActionSessionDispatchesWhitelistedCommands();
@@ -204,6 +209,46 @@ namespace Stainer.SoconBridge
                     Assert(Contains(result.Warnings, BridgeWarningCodes.SdkRuntimeDependenciesWarning), "Runtime dependency warning should be returned.");
                     Assert(Contains(result.Details.MissingFiles, "SOCON.ScEventBus.dll"), "Missing SOCON.ScEventBus.dll should be reported.");
                     Assert(Contains(result.Details.MissingFiles, "C1.C1Zip.4.dll"), "Missing C1.C1Zip.4.dll should be reported.");
+                    Assert(result.Details.BlockingRuntimeDependenciesPresent == false, "A blocking runtime dependency is missing when both are absent.");
+                });
+            }
+
+            private void DeploymentValidatedWhenOnlyScEventBusMissing()
+            {
+                WithTempDirectory(delegate(string sdkDirectory)
+                {
+                    WriteCoreFakeSdk(sdkDirectory);
+                    WriteTextFile(Path.Combine(sdkDirectory, "C1.C1Zip.4.dll"), "fake");
+                    // SOCON.ScEventBus.dll intentionally absent (advisory only).
+
+                    var validator = CreateValidator(sdkDirectory, sdkDirectory, true);
+                    var result = validator.Validate();
+
+                    Assert(result.Status == BridgeStatus.DeploymentValidated, "Only ScEventBus missing should still validate.");
+                    Assert(Contains(result.Warnings, BridgeWarningCodes.SdkRuntimeDependenciesWarning), "Advisory dependency warning should still be returned.");
+                    Assert(Contains(result.Details.MissingFiles, "SOCON.ScEventBus.dll"), "Missing SOCON.ScEventBus.dll should be reported.");
+                    Assert(!Contains(result.Details.MissingFiles, "C1.C1Zip.4.dll"), "C1.C1Zip.4.dll must not be reported when present.");
+                    Assert(result.Details.BlockingRuntimeDependenciesPresent == true, "No blocking runtime dependency is missing when only ScEventBus is absent.");
+                    Assert(result.Details.RuntimeDependenciesPresent == false, "An advisory dependency is still missing, so the union flag stays false.");
+                });
+            }
+
+            private void BlockingRuntimeDependencyReportedWhenC1ZipMissing()
+            {
+                WithTempDirectory(delegate(string sdkDirectory)
+                {
+                    WriteCoreFakeSdk(sdkDirectory);
+                    WriteTextFile(Path.Combine(sdkDirectory, "SOCON.ScEventBus.dll"), "fake");
+                    // C1.C1Zip.4.dll intentionally absent (blocking).
+
+                    var validator = CreateValidator(sdkDirectory, sdkDirectory, true);
+                    var result = validator.Validate();
+
+                    Assert(result.Status == BridgeStatus.DeploymentValidated, "C1Zip missing should not change core validation status.");
+                    Assert(Contains(result.Warnings, BridgeWarningCodes.SdkRuntimeDependenciesWarning), "Runtime dependency warning should be returned.");
+                    Assert(Contains(result.Details.MissingFiles, "C1.C1Zip.4.dll"), "Missing C1.C1Zip.4.dll should be reported.");
+                    Assert(!Contains(result.Details.MissingFiles, "SOCON.ScEventBus.dll"), "SOCON.ScEventBus.dll must not be reported when present.");
+                    Assert(result.Details.BlockingRuntimeDependenciesPresent == false, "A blocking runtime dependency is missing when C1Zip is absent.");
                 });
             }
 
@@ -266,7 +311,7 @@ namespace Stainer.SoconBridge
                 var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
                 var fake = new FakeReadOnlyAdapter();
                 var processor = new BridgeRequestProcessor(
-                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    ValidatedDeployment(),
                     BridgeStatus.Offline,
                     config,
                     new RealReadOnlySessionGate(config, true),
@@ -317,8 +362,94 @@ namespace Stainer.SoconBridge
                 Assert(fake.CloseCount == 1, "Close must be called exactly once.");
             }
 
-            private void ReadOnlySessionAcceptsCurrentVendorPackageWarning()
+            private void ReadOnlySessionOpensWhenOnlyScEventBusMissing()
             {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var factoryCalls = 0;
+                var fake = new FakeReadOnlyAdapter();
+                var processor = new BridgeRequestProcessor(
+                    ValidatorWithRuntimeState(true, new List<string> { "SOCON.ScEventBus.dll" }),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        factoryCalls++;
+                        return fake;
+                    });
+
+                var response = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-only-sceventbus-open",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+
+                Assert(response.Success, "Only ScEventBus missing must NOT block open.");
+                Assert(factoryCalls == 1, "Adapter factory must be invoked (enters Open) when only ScEventBus is missing.");
+                Assert(fake.OpenCount == 1, "Adapter Open must be called when only ScEventBus is missing.");
+                Assert(response.Details.SessionState == "Open", "Session must be Open when only ScEventBus is missing.");
+            }
+
+            private void ReadOnlySessionBlockedWhenC1ZipMissing()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var factoryCalls = 0;
+                var processor = new BridgeRequestProcessor(
+                    ValidatorWithRuntimeState(false, new List<string> { "C1.C1Zip.4.dll" }),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        factoryCalls++;
+                        return new FakeReadOnlyAdapter();
+                    });
+
+                var response = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-c1zip-missing-block",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+
+                Assert(!response.Success, "Missing C1.C1Zip.4.dll must block open.");
+                Assert(factoryCalls == 0, "Adapter must not be constructed when C1.C1Zip.4.dll is missing.");
+                Assert(response.Details.SessionState == "Blocked", "Session must be blocked when C1.C1Zip.4.dll is missing.");
+                Assert(response.Details.BlockReason == "DeploymentNotValidated", "Block reason must be DeploymentNotValidated.");
+            }
+
+            private void ReadOnlySessionBlockedWhenBothRuntimeDepsMissing()
+            {
+                var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
+                var factoryCalls = 0;
+                var processor = new BridgeRequestProcessor(
+                    ValidatorWithRuntimeState(false, new List<string> { "C1.C1Zip.4.dll", "SOCON.ScEventBus.dll" }),
+                    BridgeStatus.Offline,
+                    config,
+                    new RealReadOnlySessionGate(config, true),
+                    delegate
+                    {
+                        factoryCalls++;
+                        return new FakeReadOnlyAdapter();
+                    });
+
+                var response = processor.Process(new BridgeRequest
+                {
+                    RequestId = "self-test-both-runtime-missing-block",
+                    Command = "OpenConfiguredReadOnlySession"
+                });
+
+                Assert(!response.Success, "Missing both runtime dependencies must block open.");
+                Assert(factoryCalls == 0, "Adapter must not be constructed when C1.C1Zip.4.dll is among the missing deps.");
+                Assert(response.Details.SessionState == "Blocked", "Session must be blocked when both runtime deps are missing.");
+                Assert(response.Details.BlockReason == "DeploymentNotValidated", "Block reason must be DeploymentNotValidated.");
+            }
+
+            private void ReadOnlySessionFailsClosedWhenBlockingPresenceNotAttested()
+            {
+                // A validator that returns DeploymentValidated with a runtime
+                // warning but does NOT populate BlockingRuntimeDependenciesPresent
+                // (null) must fail closed: the processor cannot prove no blocking
+                // dependency is missing, so it blocks before OpenPort.
                 var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
                 var factoryCalls = 0;
                 var processor = new BridgeRequestProcessor(
@@ -334,13 +465,14 @@ namespace Stainer.SoconBridge
 
                 var response = processor.Process(new BridgeRequest
                 {
-                    RequestId = "self-test-runtime-warning-reject",
+                    RequestId = "self-test-blocking-presence-unknown",
                     Command = "OpenConfiguredReadOnlySession"
                 });
 
-                Assert(response.Success, "Current vendor package warning must not reject open.");
-                Assert(factoryCalls == 1, "Adapter must be constructed for the confirmed current vendor package.");
-                Assert(response.Details.SessionState == "Open", "Session must open when only legacy optional dependencies are absent.");
+                Assert(!response.Success, "Unknown blocking-presence must fail closed.");
+                Assert(factoryCalls == 0, "Adapter must not be constructed when blocking presence is not attested.");
+                Assert(response.Details.SessionState == "Blocked", "Session must be blocked when blocking presence is not attested.");
+                Assert(response.Details.BlockReason == "DeploymentNotValidated", "Block reason must be DeploymentNotValidated.");
             }
 
             private void ActionSessionDispatchesWhitelistedCommands()
@@ -412,7 +544,7 @@ namespace Stainer.SoconBridge
                     var config = SoconReadOnlyConfig.FromBridgeConfig(baseConfig);
                     var factoryCalls = 0;
                     var processor = new BridgeRequestProcessor(
-                        new CountingValidator(BridgeStatus.DeploymentValidated),
+                        ValidatedDeployment(),
                         BridgeStatus.Offline,
                         config,
                         new RealReadOnlySessionGate(config, true),
@@ -441,7 +573,7 @@ namespace Stainer.SoconBridge
                     var config = SoconReadOnlyConfig.FromBridgeConfig(baseConfig);
                     var factoryCalls = 0;
                     var processor = new BridgeRequestProcessor(
-                        new CountingValidator(BridgeStatus.DeploymentValidated),
+                        ValidatedDeployment(),
                         BridgeStatus.Offline,
                         config,
                         new RealReadOnlySessionGate(config, true),
@@ -469,7 +601,7 @@ namespace Stainer.SoconBridge
                 var config = SoconReadOnlyConfig.FromBridgeConfig(CreateReadOnlyConfig());
                 var fake = new FakeReadOnlyAdapter(false);
                 var processor = new BridgeRequestProcessor(
-                    new CountingValidator(BridgeStatus.DeploymentValidated),
+                    ValidatedDeployment(),
                     BridgeStatus.Offline,
                     config,
                     new RealReadOnlySessionGate(config, true),
@@ -546,6 +678,34 @@ namespace Stainer.SoconBridge
                     new FixedArchitectureProbe(isX86Process),
                     new PeArchitectureInspector(),
                     new FixedManagedAssemblyLoadProbe(managedLoadSucceeds, requiredTypesAvailable));
+            }
+
+            // A deployment-validated validator that positively attests no
+            // blocking runtime dependency is missing (the normal validated
+            // state). Used by happy-path Open tests so Gate 2 passes.
+            private static ISdkDeploymentValidator ValidatedDeployment()
+            {
+                return new CountingValidator(
+                    BridgeStatus.DeploymentValidated,
+                    null,
+                    new BridgeResponseDetails { BlockingRuntimeDependenciesPresent = true });
+            }
+
+            // A deployment-validated validator that simulates a specific runtime
+            // dependency state: blockingPresent drives the structured gate
+            // signal, missingFiles drives both the warning and the reported
+            // MissingFiles list.
+            private static ISdkDeploymentValidator ValidatorWithRuntimeState(bool blockingPresent, List<string> missingFiles)
+            {
+                var warnings = (missingFiles == null || missingFiles.Count == 0)
+                    ? new List<string>()
+                    : new List<string> { BridgeWarningCodes.SdkRuntimeDependenciesWarning };
+                var details = new BridgeResponseDetails
+                {
+                    BlockingRuntimeDependenciesPresent = blockingPresent,
+                    MissingFiles = missingFiles
+                };
+                return new CountingValidator(BridgeStatus.DeploymentValidated, warnings, details);
             }
 
             private void ConfiguredSdkRuntimeValidation()
@@ -707,11 +867,16 @@ namespace Stainer.SoconBridge
                 }
             }
 
-            private static void WriteCompleteFakeSdk(string sdkDirectory, bool includeRuntimeDependencies)
+            private static void WriteCoreFakeSdk(string sdkDirectory)
             {
                 WriteTextFile(Path.Combine(sdkDirectory, "SOCON.API.dll"), "fake");
                 WriteTextFile(Path.Combine(sdkDirectory, "SOCON.Utility.dll"), "fake");
                 WriteFakePe(Path.Combine(sdkDirectory, "can_bootloader.dll"), X86Machine);
+            }
+
+            private static void WriteCompleteFakeSdk(string sdkDirectory, bool includeRuntimeDependencies)
+            {
+                WriteCoreFakeSdk(sdkDirectory);
 
                 if (includeRuntimeDependencies)
                 {
@@ -924,16 +1089,23 @@ namespace Stainer.SoconBridge
         {
             private readonly BridgeStatus status;
             private readonly List<string> warnings;
+            private readonly BridgeResponseDetails details;
 
             public CountingValidator(BridgeStatus status)
-                : this(status, null)
+                : this(status, null, null)
             {
             }
 
             public CountingValidator(BridgeStatus status, List<string> warnings)
+                : this(status, warnings, null)
+            {
+            }
+
+            public CountingValidator(BridgeStatus status, List<string> warnings, BridgeResponseDetails details)
             {
                 this.status = status;
                 this.warnings = warnings ?? new List<string>();
+                this.details = details;
             }
 
             public int Count { get; private set; }
@@ -941,7 +1113,7 @@ namespace Stainer.SoconBridge
             public SdkDeploymentValidationResult Validate()
             {
                 Count++;
-                return new SdkDeploymentValidationResult(status, new BridgeResponseDetails(), warnings);
+                return new SdkDeploymentValidationResult(status, details ?? new BridgeResponseDetails(), warnings);
             }
         }
 
